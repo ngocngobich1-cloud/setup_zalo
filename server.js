@@ -1046,7 +1046,7 @@ server.listen(port, "0.0.0.0", async () => {
   const {
     taoNhacZalo, taoBinhChonZalo, docBinhChonZalo, chotBinhChonZalo, taoGhiChuZalo,
     timNguoiTheoSo, conLuotTraSo, xemNguoiChoDuyet, duyetNguoiVaoNhom, taoNhomZalo,
-    xemThanhVienNhom, themNguoiVaoNhom, xoaNguoiKhoiNhom,
+    xemThanhVienNhom, themNguoiVaoNhom, xoaNguoiKhoiNhom, doiTenNhomZalo,
   } = await import("./lib/zalo-service.js");
 
   capHinhScheduler({ gui: sendChatMessage, thongBaoAdmin: nhanRiengChoAdmin });
@@ -1062,6 +1062,7 @@ server.listen(port, "0.0.0.0", async () => {
     thanhVien: xemThanhVienNhom,
     them: themNguoiVaoNhom,
     xoa: xoaNguoiKhoiNhom,
+    doiTen: doiTenNhomZalo,
   });
   batDauScheduler();
 });
