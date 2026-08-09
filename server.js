@@ -1045,7 +1045,7 @@ server.listen(port, "0.0.0.0", async () => {
     await import("./lib/admin-command.js");
   const {
     taoNhacZalo, taoBinhChonZalo, docBinhChonZalo, chotBinhChonZalo, taoGhiChuZalo,
-    timNguoiTheoSo, conLuotTraSo, xemNguoiChoDuyet, duyetNguoiVaoNhom,
+    timNguoiTheoSo, conLuotTraSo, xemNguoiChoDuyet, duyetNguoiVaoNhom, taoNhomZalo,
   } = await import("./lib/zalo-service.js");
 
   capHinhScheduler({ gui: sendChatMessage, thongBaoAdmin: nhanRiengChoAdmin });
@@ -1054,6 +1054,6 @@ server.listen(port, "0.0.0.0", async () => {
   capHinhBinhChon({ tao: taoBinhChonZalo, doc: docBinhChonZalo, chot: chotBinhChonZalo });
   capHinhGhiChu(taoGhiChuZalo);
   capHinhTimNguoi({ tim: timNguoiTheoSo, conLuot: conLuotTraSo });
-  capHinhNhom({ xemCho: xemNguoiChoDuyet, duyet: duyetNguoiVaoNhom });
+  capHinhNhom({ xemCho: xemNguoiChoDuyet, duyet: duyetNguoiVaoNhom, tao: taoNhomZalo });
   batDauScheduler();
 });
