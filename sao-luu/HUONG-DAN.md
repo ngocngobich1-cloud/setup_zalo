@@ -115,3 +115,39 @@ Thêm dòng:
 ## Nhật ký
 
 Mỗi lần chạy đều ghi vào `D:\zalo-web-sao-luu\nhat-ky.txt`. Nghi ngờ sao lưu không chạy thì mở file đó ra xem.
+
+---
+
+## Phục hồi trên VPS (Linux)
+
+Máy chị dùng `phuc-hoi.ps1` (file `.zip`). VPS dùng `phuc-hoi.sh` (file `.tar.gz`).
+
+**Thử trước, không đụng dữ liệu:**
+
+```bash
+./sao-luu/phuc-hoi.sh /duong/dan/zalo-web-2026-08-09.tar.gz --chi-kiem
+```
+
+**Phục hồi thật:**
+
+```bash
+./sao-luu/phuc-hoi.sh /duong/dan/zalo-web-2026-08-09.tar.gz
+```
+
+Dữ liệu hiện tại **không bị xoá** — nó được đổi tên thành
+`data-truoc-khi-phuc-hoi-<ngày giờ>`. Phục hồi nhầm thì vẫn còn đường lui.
+
+### Hai lớp kiểm tra
+
+| | Kiểm gì | Vì sao cần |
+|---|---|---|
+| 1 | Cơ sở dữ liệu còn nguyên vẹn | File không hỏng, đếm được số tin nhắn, hồ sơ khách |
+| 2 | **Có giải mã được bí mật không** | Đây mới là lớp quan trọng |
+
+Lớp 2 tồn tại vì lớp 1 **không đủ**: mọi bí mật (đăng nhập Zalo, Zoho, SMTP) đều
+mã hoá bằng `APP_SECRET_KEY`. Phục hồi bằng một khoá khác thì cơ sở dữ liệu vẫn
+"nguyên vẹn" mà bot không đăng nhập được Zalo, không gọi được Zoho — và chị chỉ
+phát hiện ra đúng lúc đang cần nhất.
+
+Kiểm lớp 2 hỏng thì script vẫn cho phục hồi, chỉ báo trước là sẽ phải quét lại QR
+Zalo và nhập lại Zoho/SMTP.

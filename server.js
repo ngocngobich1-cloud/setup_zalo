@@ -1062,10 +1062,19 @@ server.listen(port, "0.0.0.0", async () => {
   const actualPort = server.address().port;
   console.log("Zalo Web Chat dang chay");
   console.log(`Mo trinh duyet: http://127.0.0.1:${actualPort}`);
-  await tryLoginWithSavedCredentials();
+  // Dang nhap Zalo co han gio ben trong. Nuot loi o day: dang nhap hong thi app
+  // van phai chay tiep de bat bo hen gio va mo giao dien - khong duoc keo ca
+  // chuoi khoi dong chet theo.
+  try {
+    await tryLoginWithSavedCredentials();
+  } catch (error) {
+    console.warn("[server] Dang nhap Zalo luc khoi dong khong xong:", error.message);
+  }
 
-  // Dong ho canh so hen. Bat SAU khi dang nhap Zalo xong, khong thi vong quet
-  // dau tien se co gui tin trong luc chua co ket noi.
+  // Dong ho canh so hen. Bat SAU khi dang nhap Zalo, de vong quet dau tien da co
+  // ket noi san. Nhung KHONG phu thuoc vao viec dang nhap co thanh cong hay
+  // khong: dang nhap hong ma bo hen gio cung khong chay thi lich cua chi im lang
+  // ca ngay, tren VPS thi khong ai nhin thay.
   const { batDauScheduler, capHinhScheduler } = await import("./lib/scheduler.js");
   const { capHinhBaoAdmin } = await import("./lib/email-check.js");
   const { getAdminZalo } = await import("./lib/db.js");
