@@ -19,6 +19,15 @@ services:
       # vao data/.secret-key va keu canh bao - chay duoc nhung mat tac dung
       # bao ve ban sao luu, vi khoa nam chung cho voi du lieu.
       APP_SECRET_KEY: "${APP_SECRET_KEY:-}"
+      # App KHONG dung TLS_MODE de chay - Caddy moi la ben cap chung chi. Nhung
+      # app phai NHIN THAY duoc gia tri nay de kiem cau hinh trien khai luc khoi
+      # dong (xem kiemCauHinhTrienKhai trong server.js). Thieu dong nay thi app
+      # tuong TLS_MODE chua duoc dat va tu chan minh, du .env da co.
+      TLS_MODE: "${TLS_MODE:-internal}"
+      # Tai khoan quan tri cho lan chay dau tren CSDL trong. Khong dat thi app
+      # tu sinh mat khau ngau nhien va in ra log dung mot lan.
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
     ports:
       # Chi mo tren may noi bo. Tren VPS thi bo han dong nay: chi Caddy duoc
       # tiep xuc voi internet.
