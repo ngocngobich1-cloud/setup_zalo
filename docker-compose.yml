@@ -1,0 +1,59 @@
+services:
+  zalo-web:
+    build: .
+    container_name: zalo-web-chat
+    restart: unless-stopped
+    depends_on:
+      - opencode
+    environment:
+      # Mui gio. Container Linux mac dinh chay UTC, lech gio Viet Nam 7 tieng.
+      # Khong dat thi bo hen gio se gui sai: chi hen "8h sang" -> may hieu la
+      # 8h UTC -> tin bay ra luc 3h chieu.
+      TZ: "${TZ:-Asia/Ho_Chi_Minh}"
+      # Bat khi chay sau HTTPS (Caddy). De sai gia tri thi trinh duyet khong gui
+      # cookie va khong dang nhap duoc, nen phai dat tuong minh.
+      COOKIE_SECURE: "${COOKIE_SECURE:-false}"
+      # Dung de day HTTP sang HTTPS khi ai do vao thang cong 3790 theo thoi quen.
+      APP_DOMAIN: "${APP_DOMAIN:-localhost}"
+      # Khoa ma hoa bi mat trong data/. De trong thi app tu sinh khoa du phong
+      # vao data/.secret-key va keu canh bao - chay duoc nhung mat tac dung
+      # bao ve ban sao luu, vi khoa nam chung cho voi du lieu.
+      APP_SECRET_KEY: "${APP_SECRET_KEY:-}"
+    ports:
+      # Chi mo tren may noi bo. Tren VPS thi bo han dong nay: chi Caddy duoc
+      # tiep xuc voi internet.
+      - "127.0.0.1:3790:3790"
+    volumes:
+      - ./data:/app/data
+
+  opencode:
+    build: ./opencode
+    container_name: zalo-web-opencode
+    restart: unless-stopped
+    # KHONG mo cong ra ngoai. Chi zalo-web goi vao qua mang noi bo Docker
+    # bang ten dich vu: http://opencode:4096
+    # OpenCode co the chay lenh va dang giu key API, mo cong ra la mo cua cho nguoi la.
+    expose:
+      - "4096"
+    volumes:
+      # Key API nam trong config -> bat buoc phai mount, khong thi dung lai
+      # container la mat sach key.
+      - ./opencode-data/config:/root/.config/opencode
+      - ./opencode-data/share:/root/.local/share/opencode
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: zalo-web-caddy
+    restart: unless-stopped
+    depends_on:
+      - zalo-web
+    environment:
+      APP_DOMAIN: "${APP_DOMAIN:-localhost}"
+      TLS_MODE: "${TLS_MODE:-internal}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-data:/data
+      - ./caddy-config:/config
