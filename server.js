@@ -1041,7 +1041,19 @@ server.listen(port, "0.0.0.0", async () => {
     await sendChatMessage({ threadId: admin.uid, threadType: 0, text });
   };
 
+  const { capHinhTaoNhac, capHinhBinhChon, capHinhGhiChu, capHinhTimNguoi, capHinhNhom } =
+    await import("./lib/admin-command.js");
+  const {
+    taoNhacZalo, taoBinhChonZalo, docBinhChonZalo, chotBinhChonZalo, taoGhiChuZalo,
+    timNguoiTheoSo, conLuotTraSo, xemNguoiChoDuyet, duyetNguoiVaoNhom,
+  } = await import("./lib/zalo-service.js");
+
   capHinhScheduler({ gui: sendChatMessage, thongBaoAdmin: nhanRiengChoAdmin });
   capHinhBaoAdmin(nhanRiengChoAdmin);
+  capHinhTaoNhac(taoNhacZalo);
+  capHinhBinhChon({ tao: taoBinhChonZalo, doc: docBinhChonZalo, chot: chotBinhChonZalo });
+  capHinhGhiChu(taoGhiChuZalo);
+  capHinhTimNguoi({ tim: timNguoiTheoSo, conLuot: conLuotTraSo });
+  capHinhNhom({ xemCho: xemNguoiChoDuyet, duyet: duyetNguoiVaoNhom });
   batDauScheduler();
 });
