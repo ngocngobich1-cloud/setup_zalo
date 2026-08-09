@@ -1041,12 +1041,13 @@ server.listen(port, "0.0.0.0", async () => {
     await sendChatMessage({ threadId: admin.uid, threadType: 0, text });
   };
 
-  const { capHinhTaoNhac, capHinhBinhChon, capHinhGhiChu, capHinhTimNguoi, capHinhNhom } =
+  const { capHinhTaoNhac, capHinhBinhChon, capHinhGhiChu, capHinhTimNguoi, capHinhNhom, capHinhNhan } =
     await import("./lib/admin-command.js");
   const {
     taoNhacZalo, taoBinhChonZalo, docBinhChonZalo, chotBinhChonZalo, taoGhiChuZalo,
     timNguoiTheoSo, conLuotTraSo, xemNguoiChoDuyet, duyetNguoiVaoNhom, taoNhomZalo,
     xemThanhVienNhom, themNguoiVaoNhom, xoaNguoiKhoiNhom, doiTenNhomZalo,
+    xemNhanZalo, ganNhanZalo, boNhanZalo,
   } = await import("./lib/zalo-service.js");
 
   capHinhScheduler({ gui: sendChatMessage, thongBaoAdmin: nhanRiengChoAdmin });
@@ -1064,5 +1065,10 @@ server.listen(port, "0.0.0.0", async () => {
     xoa: xoaNguoiKhoiNhom,
     doiTen: doiTenNhomZalo,
   });
+  capHinhNhan({ xem: xemNhanZalo, gan: ganNhanZalo, bo: boNhanZalo });
+
+  // Khach gui PDF -> tu dan nhan "Bai test" len hoi thoai do.
+  const { capHinhGanNhan } = await import("./lib/ai-chat.js");
+  capHinhGanNhan(ganNhanZalo);
   batDauScheduler();
 });
