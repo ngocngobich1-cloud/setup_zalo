@@ -29,9 +29,22 @@ Vì sao không giữ tất cả: dữ liệu hỏng mà 3 tuần sau mới phát
 |---|---|
 | `zalo.db` | Toàn bộ tin nhắn, hồ sơ khách hàng, Soul, tri thức, tài khoản đăng nhập |
 | `credentials.json` | Đăng nhập Zalo — mất thì phải quét lại QR |
-| `opencode.jsonc` | Key API — mất thì phải dán lại key |
 
-Không chứa file `.env` (khoá bí mật). Cố ý như vậy — xem file **KHOA BI MAT - ZALO WEB.txt** trên desktop.
+## Bản sao lưu KHÔNG chứa gì, và vì sao
+
+**Không chứa `.env`** (khoá mã hoá). Để chung thì ai lấy được bản sao lưu là có
+cả khoá lẫn dữ liệu. Xem file **KHOA BI MAT - ZALO WEB.txt** trên desktop.
+
+**Không chứa `opencode.jsonc`** (API key của nhà cung cấp AI). Trước ngày
+09/08/2026 bản sao lưu **có** chứa file này — đó là một lỗ hổng: gói sao lưu
+không mã hoá, lại còn được đẩy lên Google Drive, nên ai nhặt được một bản là
+dùng được key ngay, phát sinh chi phí trên tài khoản của chị.
+
+> **Sau khi phục hồi, chị phải vào tab AI Chat nhập lại API key.**
+> Một lần gõ lại key, đổi lấy việc bản sao lưu không còn là miếng mồi.
+
+Nếu chị còn giữ bản sao lưu **cũ** (tạo trước 09/08/2026), trong đó có key —
+nên xoá những bản đó đi, kể cả bản trên Google Drive.
 
 Cũng không chứa `node_modules` và cache phiên trò chuyện, vì hai thứ đó tự tạo lại được. Nhờ vậy bản sao lưu chỉ khoảng **0,05 MB** thay vì 58 MB.
 

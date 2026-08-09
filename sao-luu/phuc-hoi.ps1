@@ -50,9 +50,13 @@ try {
   $ketQua | ForEach-Object { Ghi "  $_" }
 
   $coCred = Test-Path (Join-Path $Tam "credentials.json")
-  $coKey  = Test-Path (Join-Path $Tam "opencode-config\opencode.jsonc")
   Ghi "  credentials.json (dang nhap Zalo): $(if($coCred){'co'}else{'KHONG CO'})"
-  Ghi "  opencode.jsonc (key API): $(if($coKey){'co'}else{'KHONG CO'})"
+
+  # Ban sao luu CO TINH khong chua opencode.jsonc - file do giu API key dang chu
+  # thuong, de trong goi khong ma hoa la ai nhat duoc cung dung duoc.
+  # Ban cu (tao truoc 09/08/2026) co the con file do; van bo qua cho an toan.
+  $coKeyCu = Test-Path (Join-Path $Tam "opencode-config\opencode.jsonc")
+  if ($coKeyCu) { Ghi "  (ban sao luu cu co chua opencode.jsonc - se KHONG phuc hoi file nay)" }
 
   if ($ChiKiemTra) {
     Ghi "Chi kiem tra - KHONG dung toi du lieu that. Ban sao luu dung duoc."
@@ -73,15 +77,14 @@ try {
 
   Copy-Item $db (Join-Path $DuAn "data\zalo.db")
   if ($coCred) { Copy-Item (Join-Path $Tam "credentials.json") (Join-Path $DuAn "data\credentials.json") }
-  if ($coKey) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $DuAn "opencode-data\config") | Out-Null
-    Copy-Item (Join-Path $Tam "opencode-config\opencode.jsonc") (Join-Path $DuAn "opencode-data\config\opencode.jsonc") -Force
-  }
 
   Ghi "Dang bat lai..."
   docker compose -f (Join-Path $DuAn "docker-compose.yml") --project-directory $DuAn up -d | Out-Null
-  Ghi "Xong. Neu app bao phai dang nhap Zalo lai bang QR, nghia la file .env"
-  Ghi "khong con dung khoa APP_SECRET_KEY luc tao ban sao luu nay."
+  Ghi "Xong."
+  Ghi "VIEC PHAI LAM TIEP: mo app, vao tab AI Chat va NHAP LAI API key."
+  Ghi "  Ban sao luu co tinh khong chua key do (de goi sao luu khong thanh mieng moi)."
+  Ghi "Neu app bao phai dang nhap Zalo lai bang QR, nghia la file .env khong con"
+  Ghi "  dung khoa APP_SECRET_KEY luc tao ban sao luu nay."
 }
 finally {
   Remove-Item $Tam -Recurse -Force -ErrorAction SilentlyContinue

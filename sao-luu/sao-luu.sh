@@ -94,14 +94,14 @@ fi
 # 2. Cookie Zalo (da ma hoa)
 [ -f "$DU_AN/data/credentials.json" ] && cp "$DU_AN/data/credentials.json" "$TAM/"
 
-# 3. Cau hinh OpenCode - noi giu key API. CHI lay file cau hinh, bo qua
-#    node_modules (tai lai duoc) va share (phien tro chuyen, dung xong bo).
-if [ -d "$DU_AN/opencode-data/config" ]; then
-  mkdir -p "$TAM/opencode-config"
-  for f in opencode.jsonc package.json package-lock.json; do
-    [ -f "$DU_AN/opencode-data/config/$f" ] && cp "$DU_AN/opencode-data/config/$f" "$TAM/opencode-config/"
-  done
-fi
+# 3. KHONG lay opencode-data/config.
+#    Truoc day co lay, va do la mot lo hong that: opencode.jsonc giu API key cua
+#    nha cung cap AI duoi dang chu thuong. Goi sao luu nay khong ma hoa va con
+#    duoc day len Google Drive - ai nhat duoc mot ban la dung duoc key ngay.
+#    Nghich ly la ngay ben duoi da co tinh loai .env ra vi "chua khoa", trong khi
+#    van chep mot khoa khac vao.
+#    Doi lai: phuc hoi xong phai nhap lai API key trong tab AI Chat. Mot lan go
+#    lai key doi lay viec ban sao luu khong con la mieng moi - dang.
 
 # 4. Nen. KHONG kem .env: file do chua khoa ma hoa, de chung thi ai lay duoc
 #    ban sao luu la co ca khoa lan du lieu.

@@ -73,6 +73,44 @@ async function layKhoaSession() {
   return moi;
 }
 
+/**
+ * Cong chan cau hinh truoc khi mo dich vu.
+ *
+ * Chay o nha thi APP_DOMAIN=localhost, TLS noi bo, cookie khong Secure - deu
+ * dung. Nhung day len VPS ma chi doi moi APP_DOMAIN thi ba thu nay van giu
+ * nguyen mac dinh: Caddy cap chung chi noi bo (trinh duyet bao do), cookie di
+ * qua HTTP (ai nam giua duong doc duoc phien dang nhap).
+ *
+ * Hong kieu do KHONG bao loi - web van mo, van dang nhap duoc, chi la khong an
+ * toan. Nen chan ngay o day: sai cau hinh thi dung han, con hon chay am tham.
+ */
+function kiemCauHinhTrienKhai() {
+  const mien = String(process.env.APP_DOMAIN || "localhost").trim();
+  const laNoiBo = !mien || mien === "localhost" || /^127\./.test(mien) || mien === "::1";
+  if (laNoiBo) return;
+
+  const loi = [];
+  if (process.env.COOKIE_SECURE !== "true") {
+    loi.push(`APP_DOMAIN="${mien}" (miền công khai) nhưng COOKIE_SECURE chưa bật.
+     -> Cookie đăng nhập sẽ đi qua HTTP, ai chặn được đường truyền là đọc được phiên.
+     -> Sửa: đặt COOKIE_SECURE=true trong .env`);
+  }
+  if (!process.env.TLS_MODE || process.env.TLS_MODE === "internal") {
+    loi.push(`APP_DOMAIN="${mien}" (miền công khai) nhưng TLS_MODE đang là "internal".
+     -> Caddy sẽ cấp chứng chỉ tự ký, trình duyệt của khách báo trang không an toàn.
+     -> Sửa: đặt TLS_MODE=<email của chị> trong .env để Caddy xin chứng chỉ thật.`);
+  }
+  if (!loi.length) return;
+
+  console.error("\n" + "=".repeat(70));
+  console.error("  DUNG LAI - CAU HINH TRIEN KHAI CHUA AN TOAN");
+  console.error("=".repeat(70));
+  for (const d of loi) console.error("\n  * " + d);
+  console.error("\n" + "=".repeat(70) + "\n");
+  process.exit(1);
+}
+kiemCauHinhTrienKhai();
+
 // Sau reverse proxy (Caddy) thi req.ip va req.secure moi doc dung.
 app.set("trust proxy", 1);
 
@@ -468,9 +506,7 @@ app.post("/api/ai-chat", async (req, res) => {
     }
 
     const { saveAiChatConfig, getAiChatConfig, clearOpencodeSessions } = await import("./lib/db.js");
-    const truoc = await getAiChatConfig();
     await saveAiChatConfig({
-      groqApiKey: truoc?.groqApiKey || "",
       allowedTopics, roleTone, allowedGroupId, allowedSenderIds, useKnowledge, knowledgeFileIds,
       soul, opencodeBaseUrl, opencodeAgent, opencodeModel,
     });

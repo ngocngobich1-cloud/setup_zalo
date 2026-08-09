@@ -27,7 +27,15 @@ function moBuocOtp(channels) {
     button.type = "button";
     button.className = "otp-channel";
     button.dataset.channel = channel.id;
-    button.innerHTML = `<strong>${channel.label}</strong><span>${channel.target}</span>`;
+    // Dung textContent chu KHONG dung innerHTML: channel.label la ten hien thi
+    // cua mot lien he Zalo - do nguoi khac dat, ho de gi vao cung duoc. Ghep
+    // thang vao innerHTML thi mot cai ten chua the <script> se chay tren dung
+    // trang nhap ma OTP.
+    const ten = document.createElement("strong");
+    ten.textContent = channel.label || "";
+    const dich = document.createElement("span");
+    dich.textContent = channel.target || "";
+    button.replaceChildren(ten, dich);
     button.addEventListener("click", () => guiMa(channel));
     otpChannels.append(button);
   }

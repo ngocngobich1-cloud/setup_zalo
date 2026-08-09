@@ -52,20 +52,13 @@ try {
   $cred = Join-Path $DuAn "data\credentials.json"
   if (Test-Path $cred) { Copy-Item $cred $Tam }
 
-  # 3. Cau hinh OpenCode - chinh la noi giu key API.
-  #    CHI lay may file cau hinh. Khong dung toi opencode-data\config\node_modules
-  #    (52 MB, tai lai duoc, va co symlink Linux ma Windows khong doc noi) cung
-  #    khong lay opencode-data\share (phien tro chuyen - tu Dot 3 thi phien la
-  #    thu dung xong bo, mat cung tu dung lai duoc tu zalo.db).
-  $ocCfg = Join-Path $DuAn "opencode-data\config"
-  if (Test-Path $ocCfg) {
-    $dichCfg = Join-Path $Tam "opencode-config"
-    New-Item -ItemType Directory -Force -Path $dichCfg | Out-Null
-    foreach ($ten in @("opencode.jsonc", "package.json", "package-lock.json")) {
-      $f = Join-Path $ocCfg $ten
-      if (Test-Path $f) { Copy-Item $f $dichCfg }
-    }
-  }
+  # 3. KHONG lay opencode-data\config.
+  #    Truoc day co lay, va do la mot lo hong that: opencode.jsonc giu API key cua
+  #    nha cung cap AI duoi dang chu thuong. File nen nay khong ma hoa va con duoc
+  #    day len Google Drive - ai nhat duoc mot ban la dung duoc key ngay.
+  #    Nghich ly la ngay ben duoi da co tinh loai .env ra vi "chua khoa", trong khi
+  #    van chep mot khoa khac vao.
+  #    Doi lai: phuc hoi xong phai nhap lai API key trong tab AI Chat.
 
   # 4. Nen lai
   $zip = Join-Path $DichCuoi "zalo-web-$Nhan.zip"

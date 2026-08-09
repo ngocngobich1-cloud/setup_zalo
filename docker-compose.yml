@@ -49,6 +49,11 @@ services:
       - zalo-web
     environment:
       APP_DOMAIN: "${APP_DOMAIN:-localhost}"
+      # "internal" = chung chi tu ky, CHI dung khi chay o nha (localhost).
+      # Len VPS voi ten mien that thi phai dat TLS_MODE=<email> trong .env, Caddy
+      # se tu xin chung chi that. De nguyen "internal" tren mien cong khai thi
+      # trinh duyet cua khach bao trang khong an toan - va app se tu chan khong
+      # cho chay (xem kiemCauHinhTrienKhai trong server.js).
       TLS_MODE: "${TLS_MODE:-internal}"
     ports:
       - "80:80"
