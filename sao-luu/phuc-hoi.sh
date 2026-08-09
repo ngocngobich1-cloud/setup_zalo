@@ -27,7 +27,17 @@ TAM="$(mktemp -d)"
 trap 'rm -rf "$TAM"' EXIT
 
 ghi "Dang mo goi: $(basename "$GOI")"
-tar -xzf "$GOI" -C "$TAM" || chet "Khong giai nen duoc. Goi co the bi hong."
+# Nhan ca hai dinh dang: .tar.gz do sao-luu.sh (VPS) tao, va .zip do sao-luu.ps1
+# (may Windows) tao. Chuyen tu may nha len VPS thi goi la .zip.
+case "$GOI" in
+  *.zip)
+    command -v unzip >/dev/null 2>&1 || chet "Chua co unzip. Cai bang: apt install -y unzip"
+    unzip -q "$GOI" -d "$TAM" || chet "Khong giai nen duoc .zip. Goi co the bi hong."
+    ;;
+  *)
+    tar -xzf "$GOI" -C "$TAM" || chet "Khong giai nen duoc .tar.gz. Goi co the bi hong."
+    ;;
+esac
 
 DB="$TAM/zalo.db"
 [ -f "$DB" ] || chet "Trong goi khong co zalo.db - day khong phai ban sao luu hop le."
