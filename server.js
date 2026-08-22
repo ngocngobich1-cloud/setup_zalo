@@ -506,6 +506,16 @@ app.post("/api/ai-chat", async (req, res) => {
     }
 
     const { saveAiChatConfig, getAiChatConfig, clearOpencodeSessions } = await import("./lib/db.js");
+
+    // PHAI doc cau hinh CU truoc khi ghi de, vi doan duoi so sanh Soul cu voi
+    // Soul moi de quyet dinh co xoa phien OpenCode hay khong.
+    // Dong nay tung bi xoa nham o commit c688397 (luc bo Groq key): luc do
+    // `truoc` chi con phuc vu moi truong groqApiKey nen bi don di, nhung cho
+    // dung o `soulDoi` ben duoi thi bo sot. Hau qua: moi lan bam Luu deu nem
+    // ReferenceError -> API tra 500, va phien OpenCode cu KHONG BAO GIO bi xoa
+    // nen doi Soul xong bot van noi theo Soul cu.
+    const truoc = await getAiChatConfig();
+
     await saveAiChatConfig({
       allowedTopics, roleTone, allowedGroupId, allowedSenderIds, useKnowledge, knowledgeFileIds,
       soul, opencodeBaseUrl, opencodeAgent, opencodeModel,
