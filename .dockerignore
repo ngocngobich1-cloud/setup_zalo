@@ -1,0 +1,10 @@
+node_modules
+data
+opencode
+opencode-data
+caddy
+caddy-data
+caddy-config
+.git
+.env
+npm-debug.log*

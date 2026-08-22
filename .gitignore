@@ -1,0 +1,11 @@
+node_modules/
+data/credentials.json
+data/.secret-key
+data/*.db
+data/*.db-*
+npm-debug.log*
+
+.env
+caddy-data
+caddy-config
+opencode-data

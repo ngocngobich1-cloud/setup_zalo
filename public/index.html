@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zalo Web Chat</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="app-shell" id="app-shell">
+      <aside class="app-sidebar" id="app-sidebar">
+        <div class="account-bar">
+          <button id="account-toggle" class="account-toggle" type="button" aria-haspopup="true" aria-expanded="false">
+            <div id="account-avatar" class="avatar avatar-small">A</div>
+            <span id="account-name" class="account-name">—</span>
+            <span class="account-caret" aria-hidden="true">▾</span>
+          </button>
+          <div id="account-menu" class="account-menu hidden" role="menu">
+            <button class="account-menu-item" type="button" data-action="profile" role="menuitem">Thông tin cá nhân</button>
+            <button class="account-menu-item" type="button" data-action="settings" role="menuitem">Cấu hình</button>
+            <button class="account-menu-item account-menu-danger" type="button" data-action="logout" role="menuitem">Đăng xuất</button>
+          </div>
+        </div>
+
+        <div class="bot-switch">
+          <button id="bot-toggle" class="bot-toggle" type="button" role="switch" aria-checked="false">
+            <span class="bot-label">
+              <strong id="bot-state">Bot đang TẮT</strong>
+              <small id="bot-hint">không tự trả lời khách</small>
+            </span>
+            <span class="bot-track" aria-hidden="true"><span class="bot-knob"></span></span>
+          </button>
+        </div>
+
+        <nav class="module-nav" id="module-nav">
+          <button class="module-item active" type="button" data-module="zalo">
+            <span class="module-icon" aria-hidden="true">💬</span>
+            <span class="module-label">Chat Zalo</span>
+          </button>
+          <button class="module-item" type="button" data-module="training">
+            <span class="module-icon" aria-hidden="true">🎓</span>
+            <span class="module-label">Huấn luyện bot</span>
+          </button>
+          <button class="module-item" type="button" data-module="email">
+            <span class="module-icon" aria-hidden="true">📧</span>
+            <span class="module-label">Email</span>
+          </button>
+          <button class="module-item" type="button" data-module="note">
+            <span class="module-icon" aria-hidden="true">📝</span>
+            <span class="module-label">Note - Ghi chú</span>
+          </button>
+        </nav>
+      </aside>
+
+      <div class="app-resizer" id="app-resizer" role="separator" aria-orientation="vertical"
+           tabindex="0" title="Kéo để đổi độ rộng"></div>
+
+      <main class="app-main" id="app-main">
+        <section class="module-panel" id="module-zalo">
+          <section id="login-screen" class="login-screen">
+            <div class="login-card">
+              <h1>Zalo Web</h1>
+              <button id="btn-login" class="primary-button" type="button">LOGIN</button>
+              <div id="qr-panel" class="qr-panel hidden">
+                <img id="qr-image" alt="Ma QR dang nhap Zalo" />
+                <p id="qr-status"></p>
+                <button id="btn-retry-qr" class="secondary-button hidden" type="button">Tao lai QR</button>
+              </div>
+            </div>
+          </section>
+
+          <section id="chat-app" class="chat-app hidden">
+            <aside class="thread-list">
+              <div class="profile">
+                <div id="my-avatar" class="avatar avatar-small"></div>
+                <div class="profile-info">
+                  <div id="my-name" class="profile-name">Zalo Web</div>
+                  <div id="zalo-status" class="zalo-status">
+                    <span id="zalo-status-dot" class="zalo-dot" aria-hidden="true"></span>
+                    <span id="zalo-status-text">Đang kiểm tra…</span>
+                  </div>
+                </div>
+                <button id="btn-zalo-reconnect" class="icon-button hidden" type="button"
+                  title="Kết nối lại Zalo">⚡</button>
+                <button id="btn-zalo-logout" class="icon-button" type="button"
+                  title="Đăng xuất khỏi ZALO — phải quét lại mã QR. Khác với Đăng xuất app.">⏻</button>
+                <button id="btn-refresh-threads" class="icon-button" type="button"
+                  title="Làm mới danh sách — lấy lại tên nhóm mới nhất từ Zalo">⟳</button>
+              </div>
+              <input id="thread-search" class="thread-search" placeholder="Tim kiem" autocomplete="off" />
+              <ul id="threads" class="threads"></ul>
+              <p id="thread-empty" class="empty-hint">Chua co cuoc tro chuyen...</p>
+            </aside>
+
+            <main class="chat-main">
+              <div id="chat-empty" class="chat-empty">Chon mot cuoc tro chuyen de xem tin nhan</div>
+              <div id="chat-panel" class="chat-panel hidden">
+                <header class="chat-header">
+                  <div id="chat-avatar" class="avatar avatar-medium"></div>
+                  <h2 id="chat-title-text"></h2>
+                </header>
+                <div id="messages" class="messages"></div>
+                <form id="send-form" class="send-form">
+                  <input id="message-input" placeholder="Nhap tin nhan" autocomplete="off" />
+                  <button class="primary-button send-button" type="submit">Gui</button>
+                </form>
+              </div>
+            </main>
+          </section>
+        </section>
+
+        <section class="module-panel hidden" id="module-training">
+          <div class="training-panel">
+            <header class="training-header">
+              <div>
+                <h2>Huấn luyện bot</h2>
+                <p id="training-meta" class="training-meta"></p>
+              </div>
+              <div class="training-actions">
+                <button id="btn-training-synth" class="secondary-button" type="button">Tổng hợp thành Soul</button>
+                <button id="btn-training-reset" class="secondary-button" type="button">Phiên mới</button>
+              </div>
+            </header>
+
+            <div id="training-log" class="training-log"></div>
+
+            <form id="training-form" class="training-form">
+              <div id="training-files" class="training-files hidden"></div>
+              <div class="training-input-row">
+                <textarea id="training-text" rows="2"
+                  placeholder="Dán ảnh chat mẫu bằng Ctrl+V, hoặc gõ lời dặn về giọng điệu…"></textarea>
+                <div class="training-buttons">
+                  <input type="file" id="training-file-input" class="hidden" multiple
+                    accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv" />
+                  <button type="button" id="btn-training-attach" class="secondary-button" title="Đính tệp">📎</button>
+                  <button type="submit" class="primary-button">Gửi</button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <section class="module-panel hidden" id="module-email">
+          <div class="email-panel" id="email-panel"></div>
+        </section>
+
+        <section class="module-panel hidden" id="module-note">
+          <div class="module-placeholder">
+            <div class="module-placeholder-icon" aria-hidden="true">📝</div>
+            <h2>Note - Ghi chú</h2>
+            <p>Phân hệ này đang được xây dựng.</p>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="settings-modal" class="modal hidden">
+      <div class="modal-content">
+        <header class="modal-header">
+          <h2>Cấu hình</h2>
+          <button id="btn-close-settings" class="close-button" type="button">&times;</button>
+        </header>
+        <div class="modal-tabs" id="modal-tabs-container"></div>
+        <div class="modal-body" id="modal-body-container"></div>
+      </div>
+    </div>
+
+    <div id="knowledge-preview-modal" class="modal hidden">
+      <div class="modal-content">
+        <header class="modal-header">
+          <h2 id="kp-title">Nội dung file</h2>
+          <button id="kp-close" class="close-button" type="button">&times;</button>
+        </header>
+        <div class="modal-body">
+          <p id="kp-meta" class="kp-meta"></p>
+          <pre id="kp-content" class="kp-content"></pre>
+        </div>
+      </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Đăng nhập — Zalo Web Chat</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <section class="login-screen">
+      <form class="login-card auth-card" id="auth-form">
+        <h1>Zalo Web</h1>
+        <p class="auth-subtitle">Đăng nhập để sử dụng ứng dụng</p>
+
+        <div class="form-group">
+          <label for="auth-username">Tên đăng nhập</label>
+          <input id="auth-username" class="auth-input" type="text" autocomplete="username" required autofocus />
+        </div>
+
+        <div class="form-group">
+          <label for="auth-password">Mật khẩu</label>
+          <input id="auth-password" class="auth-input" type="password" autocomplete="current-password" required />
+        </div>
+
+        <p id="auth-error" class="auth-error"></p>
+        <button id="auth-submit" class="primary-button" type="submit">Đăng nhập</button>
+      </form>
+
+      <form class="login-card auth-card hidden" id="otp-form">
+        <h1>Xác thực</h1>
+        <p class="auth-subtitle">Chọn nơi nhận mã xác thực</p>
+
+        <div id="otp-channels" class="otp-channels"></div>
+
+        <div id="otp-code-group" class="form-group hidden">
+          <label for="otp-code">Mã xác thực (6 số)</label>
+          <input id="otp-code" class="auth-input" type="text" inputmode="numeric" autocomplete="one-time-code"
+                 maxlength="6" placeholder="______" />
+          <p id="otp-sent-to" class="field-hint"></p>
+        </div>
+
+        <p id="otp-error" class="auth-error"></p>
+        <div class="otp-actions">
+          <button id="otp-back" class="secondary-button" type="button">Quay lại</button>
+          <button id="otp-resend" class="secondary-button hidden" type="button">Gửi lại mã</button>
+          <button id="otp-submit" class="primary-button hidden" type="submit">Xác nhận</button>
+        </div>
+      </form>
+    </section>
+
+    <script src="/login.js"></script>
+  </body>
+</html>

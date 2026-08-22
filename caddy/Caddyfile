@@ -1,0 +1,13 @@
+{
+	# Tat trang admin, khong can va la mot cong mo them.
+	admin off
+}
+
+{$APP_DOMAIN:localhost} {
+	# Domain that -> Caddy tu xin chung chi Let's Encrypt.
+	# localhost   -> dung chung chi noi bo, trinh duyet se canh bao mot lan.
+	tls {$TLS_MODE:internal}
+
+	encode gzip
+	reverse_proxy zalo-web:3790
+}

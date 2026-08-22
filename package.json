@@ -1,0 +1,28 @@
+{
+  "name": "zalo-web",
+  "version": "1.0.0",
+  "description": "Local Zalo Web Chat client with QR login, SQLite history, and realtime UI.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "express": "^4.19.2",
+    "express-session": "^1.19.0",
+    "markitdown-ts": "^0.0.10",
+    "multer": "^2.2.0",
+    "nodemailer": "^9.0.5",
+    "socket.io": "^4.7.5",
+    "sqlite3": "^5.1.7",
+    "zca-js": "^2.1.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
