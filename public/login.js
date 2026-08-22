@@ -16,6 +16,60 @@ const otpBack = document.querySelector("#otp-back");
 
 let chonKenh = null;
 
+/* --- Buoc bat buoc doi mat khau lan dau --- */
+const doiMkForm = document.querySelector("#doi-mk-form");
+const mkMoi = document.querySelector("#mk-moi");
+const mkXacNhan = document.querySelector("#mk-xac-nhan");
+const mkError = document.querySelector("#mk-error");
+const mkSubmit = document.querySelector("#mk-submit");
+let matKhauVuaDung = "";
+
+function moBuocDoiMatKhau() {
+  form.classList.add("hidden");
+  otpForm.classList.add("hidden");
+  doiMkForm.classList.remove("hidden");
+  mkError.textContent = "";
+  mkMoi.value = "";
+  mkXacNhan.value = "";
+  mkMoi.focus();
+}
+
+doiMkForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  mkError.textContent = "";
+
+  if (mkMoi.value !== mkXacNhan.value) {
+    mkError.textContent = "Hai ô mật khẩu không khớp.";
+    return;
+  }
+
+  mkSubmit.disabled = true;
+  mkSubmit.textContent = "Đang đổi...";
+  try {
+    const res = await fetch("/api/auth/change-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        currentPassword: matKhauVuaDung,
+        newPassword: mkMoi.value,
+        confirmPassword: mkXacNhan.value,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Đổi mật khẩu thất bại.");
+    matKhauVuaDung = "";
+    window.location.href = "/";
+  } catch (error) {
+    mkError.textContent = error.message;
+    mkMoi.value = "";
+    mkXacNhan.value = "";
+    mkMoi.focus();
+  } finally {
+    mkSubmit.disabled = false;
+    mkSubmit.textContent = "Đổi mật khẩu và vào ứng dụng";
+  }
+});
+
 function moBuocOtp(channels) {
   form.classList.add("hidden");
   otpForm.classList.remove("hidden");
@@ -89,6 +143,14 @@ form.addEventListener("submit", async (event) => {
     if (data.otpRequired) {
       password.value = "";
       moBuocOtp(data.channels || []);
+      return;
+    }
+    if (data.mustChangePassword) {
+      // Giu lai mat khau vua go de goi API doi mat khau san co (no doi
+      // currentPassword). Khong tao endpoint thu hai chi de bo qua buoc nay.
+      matKhauVuaDung = password.value;
+      password.value = "";
+      moBuocDoiMatKhau();
       return;
     }
     window.location.href = "/";

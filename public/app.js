@@ -1,4 +1,4 @@
-import { CONFIG_TABS, pushActivityLog } from "./config.js";
+import { CONFIG_TABS, pushActivityLog, refreshAiChatEntities } from "./config.js";
 import { napHuanLuyen } from "./training.js";
 import { napEmail } from "./email.js";
 const socket = io();
@@ -484,6 +484,9 @@ function renderSettingsTabs() {
 renderSettingsTabs();
 
 function openSettings() {
+  // Hoi lai Zalo danh sach nhom/nick moi lan mo. KHONG await: modal phai bat
+  // len ngay, danh sach tu dien vao khi mang tra ve.
+  refreshAiChatEntities();
   els.settingsModal.classList.remove("hidden");
 }
 
@@ -523,15 +526,63 @@ els.accountMenu?.addEventListener("click", async (event) => {
     alert("Thông tin cá nhân đang được xây dựng.");
     return;
   }
-  if (action === "settings") {
-    openSettings();
-    return;
-  }
+  // Khong con nhanh "settings" o day: muc Cau hinh da go khoi menu avatar.
+  // openSettings() van duoc giu nguyen va van do icon banh rang goi (o duoi).
   if (action === "logout") {
     if (!confirm("Đăng xuất khỏi ứng dụng?")) return;
     await fetch("/api/auth/logout", { method: "POST" });
     window.location.href = "/login";
   }
+});
+
+// --- Nut Cau hinh + menu Dang xuat o cuoi thanh dieu huong ---
+//
+// Hai muc trong menu Dang xuat KHONG tu goi API. Chung bam thang vao hai nut
+// cu (nut "Dang xuat" trong menu tai khoan va #btn-zalo-logout) - hai nut do
+// gio an di nhung van nam trong DOM. Lam vay de dung lai NGUYEN VEN hop xac
+// nhan, endpoint, redirect va cach bao loi san co, khong viet lai logout lan
+// thu hai. Day la HAI viec khac han nhau:
+//   - Dang xuat app  -> POST /api/auth/logout, thoat phien dang nhap web
+//   - Dang xuat Zalo -> POST /api/zalo/logout, bot ngung nhan tin cho toi khi
+//                       quet lai ma QR
+// Khong duoc gom chung thanh mot lenh.
+
+const railSettings = document.querySelector("#rail-settings");
+const railLogoutToggle = document.querySelector("#rail-logout-toggle");
+const railLogoutMenu = document.querySelector("#rail-logout-menu");
+
+railSettings?.addEventListener("click", openSettings);
+
+function toggleRailLogoutMenu(open) {
+  if (!railLogoutMenu) return;
+  const next = open ?? railLogoutMenu.classList.contains("hidden");
+  railLogoutMenu.classList.toggle("hidden", !next);
+  railLogoutToggle.setAttribute("aria-expanded", String(next));
+}
+
+railLogoutToggle?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleRailLogoutMenu();
+});
+
+document.addEventListener("click", (event) => {
+  if (!railLogoutMenu || railLogoutMenu.classList.contains("hidden")) return;
+  if (railLogoutMenu.contains(event.target) || railLogoutToggle.contains(event.target)) return;
+  toggleRailLogoutMenu(false);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") toggleRailLogoutMenu(false);
+});
+
+railLogoutMenu?.addEventListener("click", (event) => {
+  const kieu = event.target.closest("[data-logout]")?.dataset.logout;
+  if (!kieu) return;
+  toggleRailLogoutMenu(false);
+
+  // Bam ho nut cu -> chay dung handler cu, ke ca hop confirm cua no.
+  if (kieu === "app") document.querySelector('#account-menu [data-action="logout"]')?.click();
+  if (kieu === "zalo") els.btnZaloLogout?.click();
 });
 
 // --- Chuyen phan he ---

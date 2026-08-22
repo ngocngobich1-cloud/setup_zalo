@@ -34,6 +34,7 @@ import * as activityLog from "./lib/activity-log.js";
 import {
   bootstrapState,
   configureZaloService,
+  chuHienTai,
   getMessagesForThread,
   getPublicState,
   refreshThreads,
@@ -177,9 +178,15 @@ function completeLogin(req, res, user) {
     if (error) return res.status(500).json({ error: "Không tạo được phiên đăng nhập." });
     req.session.userId = user.id;
     req.session.username = user.username;
+    // Doc tu CSDL luc dang nhap. Con nay quyet dinh app co bi khoa lai hay khong.
+    req.session.mustChangePassword = Boolean(user.mustChangePassword);
     req.session.save((saveError) => {
       if (saveError) return res.status(500).json({ error: "Không lưu được phiên đăng nhập." });
-      res.json({ ok: true, user: publicUser(user) });
+      res.json({
+        ok: true,
+        user: publicUser(user),
+        mustChangePassword: Boolean(user.mustChangePassword),
+      });
     });
   });
 }
@@ -222,7 +229,7 @@ app.post("/api/auth/login", async (req, res) => {
 
   if (!user.otpEnabled) return completeLogin(req, res, user);
 
-  const channels = availableChannels(user);
+  const channels = availableChannels(await phuNickZaloTheoTaiKhoan(user));
   if (channels.length === 0) {
     // Fail closed: bat OTP ma khong con kenh nao thi TU CHOI, khong am tham bo qua
     // lop bao ve thu hai. Man hinh Tai khoan da chan luu o trang thai nay.
@@ -243,18 +250,32 @@ app.post("/api/auth/login", async (req, res) => {
 
 // Hai route duoi day PHAI nam truoc cong chan: luc nay nguoi dung moi qua buoc
 // mat khau, chua co userId nen chua duoc coi la da dang nhap.
+
+/**
+ * Nick Zalo nhan OTP la thu THUOC VE tai khoan Zalo dang dang nhap, khong phai
+ * thuoc ve tai khoan app. Phu gia tri cua dung tai khoan hien tai len ho so
+ * nguoi dung truoc khi dung. Chua dang nhap Zalo -> khong co kenh Zalo (dong cua).
+ */
+async function phuNickZaloTheoTaiKhoan(user) {
+  if (!user) return user;
+  const { getAccountConfig } = await import("./lib/db.js");
+  const c = await getAccountConfig(chuHienTai());
+  return { ...user, otpZaloThreadId: c.otpZaloThreadId, otpZaloLabel: c.otpZaloLabel };
+}
+
 app.post("/api/auth/otp/send", async (req, res) => {
   if (!req.session.pendingUserId) return res.status(401).json({ error: "Phiên xác thực đã hết hạn." });
   const user = await getUserById(req.session.pendingUserId);
   if (!user) return res.status(401).json({ error: "Phiên xác thực không hợp lệ." });
 
   const channel = String(req.body?.channel || "");
-  if (!availableChannels(user).some((item) => item.id === channel)) {
+  const userOtp = await phuNickZaloTheoTaiKhoan(user);
+  if (!availableChannels(userOtp).some((item) => item.id === channel)) {
     return res.status(400).json({ error: "Kênh nhận OTP chưa được cấu hình." });
   }
 
   try {
-    const result = await sendChallenge(req.session, user, channel);
+    const result = await sendChallenge(req.session, userOtp, channel);
     res.json({ ok: true, ...result });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -281,6 +302,38 @@ app.use((req, res, next) => {
   return res.redirect("/login");
 });
 
+// Chi nhung thu can de DOI MAT KHAU moi di qua khi tai khoan con bi bat doi.
+const DUONG_DOI_MAT_KHAU = new Set([
+  "/api/auth/change-password",
+  "/api/auth/logout",
+  "/api/auth/me",
+  "/login",
+  "/login.html",
+  "/login.js",
+  "/style.css",
+  "/favicon.ico",
+]);
+
+/**
+ * Cong chan bat buoc doi mat khau.
+ *
+ * Phai chan o day chu KHONG chi o giao dien: neu chi dua vao trinh duyet tu
+ * chuyen huong, thi bat ky ai goi thang /api/bootstrap bang mat khau admin/admin
+ * mac dinh deu doc duoc cuoc tro chuyen Zalo, ho so khach va cau hinh - dung
+ * cai lo hong ma mat khau mac dinh sinh ra.
+ */
+app.use((req, res, next) => {
+  if (!req.session?.mustChangePassword) return next();
+  if (DUONG_DOI_MAT_KHAU.has(req.path)) return next();
+  if (req.path.startsWith("/api/")) {
+    return res.status(403).json({
+      error: "Phải đổi mật khẩu mặc định trước khi dùng ứng dụng.",
+      mustChangePassword: true,
+    });
+  }
+  return res.redirect("/login");
+});
+
 /* --- Tu day tro xuong: bat buoc da dang nhap --- */
 
 app.post("/api/auth/logout", (req, res) => {
@@ -291,19 +344,26 @@ app.post("/api/auth/logout", (req, res) => {
 });
 
 app.get("/api/auth/me", (req, res) => {
-  res.json({ user: { id: req.session.userId, username: req.session.username } });
+  res.json({
+    user: { id: req.session.userId, username: req.session.username },
+    mustChangePassword: Boolean(req.session.mustChangePassword),
+  });
 });
 
 app.get("/api/auth/otp-settings", async (req, res) => {
   const user = await getUserById(req.session.userId);
+  // Nick Zalo nhan OTP va nick duoc ra lenh cho bot thuoc ve TAI KHOAN ZALO
+  // dang dang nhap, khong thuoc ve tai khoan app. Chua dang nhap Zalo -> rong.
+  const { getAccountConfig } = await import("./lib/db.js");
+  const cauHinhTk = await getAccountConfig(chuHienTai());
   const smtp = await getSmtpConfig();
   res.json({
     otpEnabled: user.otpEnabled,
-    otpZaloThreadId: user.otpZaloThreadId,
-    otpZaloLabel: user.otpZaloLabel,
+    otpZaloThreadId: cauHinhTk.otpZaloThreadId,
+    otpZaloLabel: cauHinhTk.otpZaloLabel,
     otpEmail: user.otpEmail,
-    adminZaloUid: user.adminZaloUid,
-    adminZaloLabel: user.adminZaloLabel,
+    adminZaloUid: cauHinhTk.adminZaloUid,
+    adminZaloLabel: cauHinhTk.adminZaloLabel,
     // Khong bao gio tra mat khau SMTP ve client.
     smtp: {
       host: smtp.host,
@@ -341,6 +401,20 @@ app.post("/api/auth/otp-settings", async (req, res) => {
     });
   }
 
+  // Nick Zalo nhan OTP luu THEO TAI KHOAN ZALO. Chon nick khi chua dang nhap
+  // Zalo la khong xac dinh duoc no thuoc ve ai -> chan lai.
+  const chuOtp = chuHienTai();
+  if (zalo && !chuOtp) {
+    return res.status(400).json({ error: "Chưa đăng nhập Zalo nên chưa chọn được nick nhận OTP." });
+  }
+  if (chuOtp) {
+    const { saveAccountConfig } = await import("./lib/db.js");
+    await saveAccountConfig(chuOtp, {
+      otpZaloThreadId: zalo,
+      otpZaloLabel: String(otpZaloLabel || "").trim(),
+    });
+  }
+
   await updateUserOtpSettings(req.session.userId, {
     otpEnabled: Boolean(otpEnabled),
     otpZaloThreadId: zalo,
@@ -349,7 +423,7 @@ app.post("/api/auth/otp-settings", async (req, res) => {
   });
 
   const { setAdminZalo } = await import("./lib/db.js");
-  await setAdminZalo(req.body?.adminZaloUid, req.body?.adminZaloLabel);
+  await setAdminZalo(chuHienTai(), req.body?.adminZaloUid, req.body?.adminZaloLabel);
   res.json({ ok: true });
 });
 
@@ -379,7 +453,10 @@ app.post("/api/auth/change-password", async (req, res) => {
   const { currentPassword, newPassword, confirmPassword } = req.body || {};
   const result = await changePassword(req.session.userId, currentPassword, newPassword, confirmPassword);
   if (!result.ok) return res.status(400).json({ error: result.error });
-  res.json({ ok: true });
+  // Doi xong thi mo khoa app. updateUserPassword() da go co trong CSDL bang
+  // cung mot cau lenh; day chi la go not ban dang giu trong phien.
+  req.session.mustChangePassword = false;
+  req.session.save(() => res.json({ ok: true }));
 });
 
 app.use(express.static(path.join(__dirname, "public")));
@@ -478,7 +555,10 @@ app.post("/api/bot/toggle", async (req, res) => {
   try {
     const { setBotEnabled } = await import("./lib/db.js");
     const bat = Boolean(req.body?.enabled);
-    await setBotEnabled(bat);
+    // Cong tac bot thuoc ve DUNG tai khoan Zalo dang dang nhap.
+    const chuBot = chuHienTai();
+    if (!chuBot) return res.status(400).json({ error: "Chua dang nhap Zalo - khong doi duoc cong tac bot." });
+    await setBotEnabled(chuBot, bat);
     await aiChat.refreshConfig();
     await activityLog.addLog({
       event: bat ? "bot_on" : "bot_off",
@@ -810,7 +890,7 @@ app.delete("/api/lich-hen/:id", async (req, res) => {
 app.get("/api/customer-memory", async (_req, res) => {
   try {
     const { listCustomerMemories } = await import("./lib/db.js");
-    res.json({ customers: await listCustomerMemories() });
+    res.json({ customers: await listCustomerMemories(chuHienTai()) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -824,7 +904,9 @@ app.put("/api/customer-memory/:uid", async (req, res) => {
     if (profile.length > HO_SO_MAX_CHARS) {
       return res.status(400).json({ error: `Hồ sơ tối đa ${HO_SO_MAX_CHARS} ký tự.` });
     }
-    const customer = await saveCustomerMemory({
+    const chuHoSo = chuHienTai();
+    if (!chuHoSo) return res.status(400).json({ error: "Chua dang nhap Zalo." });
+    const customer = await saveCustomerMemory(chuHoSo, {
       uid: req.params.uid,
       profile,
       locked: req.body?.locked,
@@ -848,7 +930,7 @@ app.delete("/api/customer-memory/:uid", async (req, res) => {
   try {
     const { deleteCustomerMemory } = await import("./lib/db.js");
     const { quenTatCaPhien } = await import("./lib/customer-memory.js");
-    await deleteCustomerMemory(req.params.uid);
+    await deleteCustomerMemory(chuHienTai(), req.params.uid);
     quenTatCaPhien();
     await activityLog.addLog({
       event: "customer_memory",
@@ -1039,7 +1121,7 @@ app.delete("/api/logs", async (_req, res) => {
 
 io.on("connection", async (socket) => {
   socket.emit("state", getPublicState());
-  socket.emit("threads", await listThreads({ recentOnly: true }));
+  socket.emit("threads", await listThreads(chuHienTai(), { recentOnly: true }));
 
   // Chi vua mo app -> kiem tra duong day Zalo con song khong. Day la luoi
   // an toan cho truong hop laptop ngu day: luc dut thi app dang dong bang nen
@@ -1105,7 +1187,7 @@ server.listen(port, "0.0.0.0", async () => {
     xemNhanZalo, ganNhanZalo, boNhanZalo,
   } = await import("./lib/zalo-service.js");
 
-  capHinhScheduler({ gui: sendChatMessage, thongBaoAdmin: nhanRiengChoAdmin });
+  capHinhScheduler({ gui: sendChatMessage, thongBaoAdmin: nhanRiengChoAdmin, layChu: chuHienTai });
   capHinhBaoAdmin(nhanRiengChoAdmin);
   capHinhTaoNhac(taoNhacZalo);
   capHinhBinhChon({ tao: taoBinhChonZalo, doc: docBinhChonZalo, chot: chotBinhChonZalo });

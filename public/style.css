@@ -1,36 +1,46 @@
 :root {
   color-scheme: light;
 
-  /* 4 mau goc cua bang mau */
-  --cream: #fff1ca;
-  --amber: #ffb823;
-  --sage: #708a58;
-  --forest: #2d4f2b;
+  /* Bang mau moi: xanh duong kieu ung dung nhan tin. Thanh dieu huong la khoi
+     mau dam duy nhat; toan bo phan con lai la trang / xam rat nhat de tin nhan
+     noi len. */
+  --nav-blue: #0068ff;
+  --nav-blue-hover: #2a85ff;
+  --selected-bg: #e6f0ff;
+  --chat-bg: #eef1f6;
+  --bubble-self: #dbe9ff;
+  --bubble-self-line: #c3dbff;
 
-  /* Sac do phai sinh: 4 mau khong du cho mot giao dien, can them
-     nen nhat hon cream de o nhap trong long ra, va mot muc kem dam
-     hon cho trang thai di chuot / dang chon. */
-  --bg: #fffbf0;
-  --surface: var(--cream);
-  --surface-2: #fbe3a8;
-  --line: #e6d6a8;
+  /* Bon ten mau cu duoc giu lai va tro sang tong xanh. Khong xoa vi con vai
+     cho tham chieu toi chung; doi gia tri la du. */
+  --cream: #ffffff;
+  --amber: var(--nav-blue);
+  --sage: #127a52;
+  --forest: #0f1c2e;
 
-  --text: var(--forest);
-  /* Sage nguyen ban tren nen kem chi dat tuong phan ~3.2, ban #5f7a4b duoc 3.81 -
-     van duoi nguong 4.5 cho chu 13px. Dam them mot nac de dat 4.8. */
-  --muted: #4f6a3b;
+  /* --bg hoi lech trang mot chut de nhung o nhap / khoi log long ra khoi nen
+     trang thuan cua --surface. */
+  --bg: #f7f9fc;
+  --surface: #ffffff;
+  --surface-2: #eaeff5;
+  --line: #e2e7ee;
 
-  --accent: var(--amber);
-  /* Chu tren nen vang phai la xanh dam; chu trang tren vang gan nhu khong doc duoc. */
-  --on-accent: var(--forest);
+  --text: #0f1c2e;
+  /* Tren nen trang dat tuong phan ~5.0, du cho chu 12-13px. */
+  --muted: #63707f;
+
+  --accent: var(--nav-blue);
+  /* Nen xanh dam thi chu phai trang. */
+  --on-accent: #ffffff;
   --other: #ffffff;
 
-  --ok: var(--sage);
-  --warn: #c9821a;
-  /* Bang mau khong co mau bao loi. Lay do gach de hoa voi tong am ma van noi. */
-  --danger: #b3402b;
+  /* Ba mau trang thai deu duoc lam dam cho du tuong phan khi dung lam MAU CHU
+     tren nen trang (email.js va config.js co dung chung lam mau chu). */
+  --ok: #127a52;
+  --warn: #9a6a00;
+  --danger: #d13438;
 
-  --shadow: rgba(45, 79, 43, 0.18);
+  --shadow: rgba(15, 28, 46, 0.14);
 }
 
 * {
@@ -145,12 +155,13 @@ input {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 16px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--line);
 }
 
 .profile-name {
   font-weight: 700;
+  font-size: 14px;
 }
 
 .profile-status,
@@ -273,14 +284,36 @@ input {
   font-size: 12px;
 }
 
+.thread-search-wrap {
+  position: relative;
+  margin: 10px 12px;
+}
+
+.thread-search-wrap svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+
 .thread-search {
-  width: calc(100% - 24px);
-  margin: 12px;
-  padding: 11px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
+  width: 100%;
+  margin: 0;
+  padding: 10px 14px 10px 36px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--surface-2);
   color: var(--text);
+}
+
+.thread-search:focus {
+  outline: none;
+  border-color: var(--nav-blue);
+  background: var(--surface);
 }
 
 .threads {
@@ -292,18 +325,22 @@ input {
 
 .thread-item {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 11px;
   align-items: center;
-  min-height: 64px;
-  padding: 10px;
-  border-radius: 8px;
+  min-height: 66px;
+  padding: 9px 10px;
+  border-radius: 10px;
   cursor: pointer;
 }
 
-.thread-item:hover,
-.thread-item.active {
+.thread-item:hover {
   background: var(--surface-2);
+}
+
+/* Cuoc tro chuyen dang mo: xanh rat nhat, khac han mau di chuot. */
+.thread-item.active {
+  background: var(--selected-bg);
 }
 
 .thread-title,
@@ -315,7 +352,9 @@ input {
 }
 
 .thread-title {
+  margin-bottom: 3px;
   font-weight: 700;
+  font-size: 14px;
 }
 
 .thread-preview {
@@ -330,7 +369,8 @@ input {
 .chat-main {
   min-width: 0;
   position: relative;
-  background: var(--bg);
+  /* Nen xam-xanh rat nhat de bong bong tin nhan trang noi han len. */
+  background: var(--chat-bg);
 }
 
 .chat-empty {
@@ -352,26 +392,26 @@ input {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 18px;
+  padding: 12px 20px;
   border-bottom: 1px solid var(--line);
   background: var(--surface);
 }
 
 .chat-header h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 17px;
 }
 
 .messages {
   overflow-y: auto;
-  padding: 18px;
+  padding: 20px 22px;
 }
 
 .bubble-row {
   display: flex;
   gap: 8px;
   align-items: flex-end;
-  margin: 8px 0;
+  margin: 10px 0;
 }
 
 .bubble-row.self {
@@ -383,22 +423,30 @@ input {
 }
 
 .bubble {
-  padding: 10px 12px;
-  border-radius: 8px;
+  padding: 9px 13px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
   background: var(--other);
-  line-height: 1.4;
+  box-shadow: 0 1px 1px rgba(15, 28, 46, 0.04);
+  line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
+/* Tin cua minh: xanh RAT NHAT chu khong phu xanh dam ca bong bong, de chu van
+   la chu den doc thoai mai. */
 .self .bubble {
-  background: var(--accent);
+  background: var(--bubble-self);
+  border-color: var(--bubble-self-line);
+  color: var(--text);
 }
 
 .bubble.bubble-sticker,
 .self .bubble.bubble-sticker {
   padding: 4px;
   background: transparent;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .sticker {
@@ -421,19 +469,20 @@ input {
   font-size: 11px;
 }
 
+/* Bong bong cua minh gio la nen sang, nen gio khong con dung mau chu tren nen
+   dam nua - dung chung mau phu voi phia ben kia. */
 .self .bubble-time {
   text-align: right;
-  /* Chu phu mau sage tren nen vang chi dat tuong phan ~2.6, khong doc noi o co 11px */
-  color: var(--on-accent);
-  opacity: 0.75;
+  color: var(--muted);
+  opacity: 1;
 }
 
 .date-divider {
   margin: 18px auto 12px;
   width: fit-content;
   max-width: 100%;
-  padding: 5px 10px;
-  border-radius: 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
   background: var(--surface-2);
   color: var(--muted);
   font-size: 12px;
@@ -443,22 +492,29 @@ input {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
-  padding: 12px;
+  padding: 12px 16px;
   border-top: 1px solid var(--line);
   background: var(--surface);
 }
 
 #message-input {
   min-width: 0;
-  padding: 12px;
+  padding: 12px 16px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 999px;
   background: var(--bg);
   color: var(--text);
 }
 
+#message-input:focus {
+  outline: none;
+  border-color: var(--nav-blue);
+  background: var(--surface);
+}
+
 .send-button {
-  min-width: 72px;
+  min-width: 84px;
+  border-radius: 999px;
 }
 
 .avatar {
@@ -466,8 +522,8 @@ input {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: var(--forest);
-  color: var(--cream);
+  background: var(--nav-blue);
+  color: #ffffff;
   font-weight: 700;
   overflow: hidden;
 }
@@ -495,7 +551,7 @@ input {
 
 @media (max-width: 760px) {
   .chat-app {
-    grid-template-columns: 118px minmax(0, 1fr);
+    grid-template-columns: 96px minmax(0, 1fr);
   }
 
   .profile > div,
@@ -504,13 +560,30 @@ input {
     display: none;
   }
 
+  .thread-search-wrap {
+    margin: 8px;
+  }
+
+  /* Khong con cho cho icon kinh lup ben trong o tim kiem hep nay. */
+  .thread-search-wrap svg {
+    display: none;
+  }
+
   .thread-search {
-    padding: 9px;
+    padding: 9px 10px;
   }
 
   .thread-item {
-    grid-template-columns: 44px;
+    grid-template-columns: 46px;
     justify-content: center;
+  }
+
+  .messages {
+    padding: 14px 12px;
+  }
+
+  .send-form {
+    padding: 10px 12px;
   }
 
   .bubble-wrap {
@@ -524,9 +597,15 @@ input {
   --sidebar-width: 240px;
   height: 100vh;
   display: grid;
+  /* Rail dieu huong rong CO DINH 64px. Co tinh dung so that thay vi
+     var(--sidebar-width): app.js van ghi bien do vao inline style tu localStorage
+     cu, neu de bien o day thi mo lai trang rail se phinh ra 180-480px. */
+  /* CHI CON 2 COT. Thanh keo o giua da bi an bang display:none, ma phan tu
+     display:none thi KHONG duoc xep vao luoi nua - de nguyen 3 cot thi .app-main
+     tut xuong o thu hai va bi bop con 0px, mat sach vung noi dung. */
   /* Hang phai bi chan chieu cao, neu khong cot noi dung se cao theo noi dung
      va day o nhap tin nhan xuong duoi man hinh. */
-  grid-template-columns: var(--sidebar-width) 5px minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
@@ -539,67 +618,65 @@ input {
 .app-sidebar {
   min-width: 0;
   display: grid;
-  /* thanh tai khoan · cong tac bot · danh sach phan he */
-  grid-template-rows: auto auto minmax(0, 1fr);
-  border-right: 1px solid var(--line);
-  background: var(--surface);
-  overflow: hidden;
+  /* avatar · danh sach phan he · nhom duoi (bot, cau hinh, dang xuat) */
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: var(--nav-blue);
+  /* Khong duoc cat: hai menu tha (tai khoan / dang xuat) bung ra ben phai rail. */
+  overflow: visible;
 }
 
 .account-bar {
   position: relative;
-  padding: 12px;
-  border-bottom: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  padding: 12px 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
 }
 
 .account-toggle {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px;
-  border: 1px solid transparent;
-  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  padding: 3px;
+  border: 2px solid transparent;
+  border-radius: 50%;
   background: transparent;
-  color: var(--text);
-  font-size: 14px;
-  text-align: left;
+  color: #ffffff;
   cursor: pointer;
 }
 
 .account-toggle:hover,
 .account-toggle[aria-expanded="true"] {
-  border-color: var(--line);
-  background: var(--bg);
+  border-color: rgba(255, 255, 255, 0.75);
+  background: transparent;
 }
 
-.account-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 700;
+/* Avatar tren nen xanh phai dao mau lai, neu khong no tang vao nen rail. */
+.account-toggle .avatar {
+  background: #ffffff;
+  color: var(--nav-blue);
 }
 
+/* Rail chi rong 64px: ten va mui ten khong con cho. app.js van ghi chu vao
+   #account-name nhu cu, chi la khong hien ra. */
+.account-name,
 .account-caret {
-  color: var(--muted);
-  font-size: 11px;
+  display: none;
 }
 
 .account-menu {
   position: absolute;
   z-index: 900;
-  top: calc(100% - 4px);
-  right: 12px;
-  left: 12px;
+  top: 8px;
+  left: calc(100% + 8px);
+  right: auto;
+  width: 210px;
   display: flex;
   flex-direction: column;
   padding: 6px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
-  box-shadow: 0 10px 24px var(--shadow);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 12px 28px var(--shadow);
 }
 
 .account-menu-item {
@@ -614,7 +691,7 @@ input {
 }
 
 .account-menu-item:hover {
-  background: var(--surface);
+  background: var(--surface-2);
 }
 
 .account-menu-danger {
@@ -627,63 +704,67 @@ input {
 /* Cong tac tong cua bot. De ngay duoi ten tai khoan, luon nhin thay - thu nay
    phai voi toi duoc trong mot giay, khong duoc chon trong menu Cau hinh. */
 .bot-switch {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--line);
+  width: 100%;
+  padding: 8px 2px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
 }
 
 .bot-toggle {
   width: 100%;
   display: flex;
+  /* Trong rail hep thi xep doc: dong chu trang thai o tren, nut gat o duoi. */
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--text);
-  text-align: left;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 2px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: #ffffff;
+  text-align: center;
   cursor: pointer;
 }
 
 .bot-toggle:hover {
-  border-color: var(--sage);
+  border-color: transparent;
+  background: var(--nav-blue-hover);
 }
 
 .bot-toggle[aria-checked="true"] {
-  border-color: var(--sage);
-  background: var(--surface-2);
+  border-color: transparent;
+  background: transparent;
 }
 
 /* Nut gat */
 .bot-track {
   flex: none;
   position: relative;
-  width: 42px;
-  height: 24px;
+  width: 34px;
+  height: 19px;
   border-radius: 999px;
-  background: var(--line);
+  background: rgba(255, 255, 255, 0.35);
   transition: background 0.15s ease;
 }
 
 .bot-knob {
   position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 18px;
-  height: 18px;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
   border-radius: 50%;
   background: var(--other);
-  box-shadow: 0 1px 3px var(--shadow);
+  box-shadow: 0 1px 3px rgba(15, 28, 46, 0.35);
   transition: transform 0.15s ease;
 }
 
 .bot-toggle[aria-checked="true"] .bot-track {
-  background: var(--ok);
+  background: #3ddc97;
 }
 
 .bot-toggle[aria-checked="true"] .bot-knob {
-  transform: translateX(18px);
+  transform: translateX(15px);
 }
 
 .bot-toggle:disabled {
@@ -694,76 +775,174 @@ input {
 .bot-label {
   display: flex;
   flex-direction: column;
+  align-items: center;
   min-width: 0;
 }
 
+/* Chu nho nhung VAN GIU: day la cong tac quan trong nhat, nguoi dung phai doc
+   duoc bot dang BAT hay TAT ma khong can di chuot len. */
 .bot-label strong {
-  font-size: 13px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.25;
 }
 
+/* Cau giai thich dai khong con cho trong rail; van con o thuoc tinh title. */
 .bot-label small {
-  color: var(--muted);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: none;
 }
 
 .module-nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 4px;
   padding: 10px 8px;
   overflow-y: auto;
 }
 
 .module-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px;
+  width: 100%;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  padding: 0;
   border: none;
-  border-radius: 8px;
+  border-radius: 10px;
   background: transparent;
-  color: var(--muted);
-  font-size: 14px;
-  text-align: left;
+  color: rgba(255, 255, 255, 0.82);
   cursor: pointer;
 }
 
 .module-item:hover {
-  background: var(--bg);
-  color: var(--text);
+  background: var(--nav-blue-hover);
+  color: #ffffff;
 }
 
+/* Muc dang mo: mang trang mo hon han luc di chuot, khong chi dam hon mot chut. */
 .module-item.active {
-  background: var(--bg);
-  color: var(--text);
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
   font-weight: 700;
 }
 
 .module-icon {
   flex: none;
-  font-size: 16px;
+  display: grid;
+  place-items: center;
 }
 
+.module-icon svg {
+  display: block;
+  width: 23px;
+  height: 23px;
+}
+
+/* Rail chi con icon; ten phan he nam o title/aria-label de van doc duoc bang
+   chuot va bang trinh doc man hinh. */
 .module-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: none;
 }
 
+/* --- Nhom duoi cua rail: cong tac bot, cau hinh, dang xuat --- */
+
+.rail-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 10px;
+}
+
+.rail-item {
+  width: 100%;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+}
+
+.rail-item:hover {
+  background: var(--nav-blue-hover);
+  color: #ffffff;
+}
+
+.rail-item[aria-expanded="true"] {
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+
+.rail-item svg {
+  display: block;
+  width: 22px;
+  height: 22px;
+}
+
+.rail-logout {
+  position: relative;
+  width: 100%;
+}
+
+.rail-menu {
+  position: absolute;
+  z-index: 950;
+  bottom: 0;
+  left: calc(100% + 8px);
+  width: 216px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 12px 28px var(--shadow);
+}
+
+.rail-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rail-menu-item svg {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  color: var(--muted);
+}
+
+.rail-menu-item:hover {
+  background: var(--surface-2);
+}
+
+/* Dang xuat Zalo la viec khac han dang xuat app - to do de khong bam nham. */
+.rail-menu-danger,
+.rail-menu-danger svg {
+  color: var(--danger);
+}
+
+.rail-menu-danger:hover {
+  background: #fdeceb;
+}
+
+/* Rail rong co dinh nen khong con gi de keo. Giu the trong DOM (xem index.html)
+   de cac listener cu khong bao loi. */
 .app-resizer {
-  background: var(--line);
-  cursor: col-resize;
-}
-
-.app-resizer:hover,
-.app-resizer:focus-visible,
-.app-shell.is-resizing .app-resizer {
-  background: var(--accent);
-  outline: none;
+  display: none;
 }
 
 .app-main {
@@ -1216,30 +1395,32 @@ input {
 .modal {
   position: fixed;
   inset: 0;
-  background: rgba(45, 79, 43, 0.45);
+  background: rgba(15, 28, 46, 0.45);
   display: grid;
   place-items: center;
   z-index: 1000;
-  padding: 16px;
+  padding: 24px;
 }
 
 .modal-content {
   background: var(--bg);
-  width: 100%;
-  max-width: 600px;
-  max-height: 90vh;
-  border-radius: 12px;
+  /* Rong hon han ban cu 600px - bay 7 tab cau hinh deu la form dai. Van chua
+     90vw nen luon con vien ho tho hai ben. */
+  width: min(90vw, 1080px);
+  max-width: 100%;
+  max-height: 88vh;
+  border-radius: 14px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 10px 30px var(--shadow);
+  box-shadow: 0 18px 44px var(--shadow);
 }
 
 .modal-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 24px;
+  padding: 18px 28px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
@@ -1264,8 +1445,9 @@ input {
 
 .modal-tabs {
   display: flex;
+  flex-wrap: wrap;
   background: var(--surface);
-  padding: 0 16px;
+  padding: 0 20px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1280,14 +1462,12 @@ input {
 }
 
 .tab-button.active {
-  /* Vang lam mau CHU tren nen sang chi dat tuong phan ~1.7, khong doc duoc.
-     Vang chi dung lam nen hoac duong gach chan; chu van la xanh dam. */
-  color: var(--text);
-  border-bottom-color: var(--accent);
+  color: var(--nav-blue);
+  border-bottom-color: var(--nav-blue);
 }
 
 .modal-body {
-  padding: 24px;
+  padding: 26px 28px;
   overflow-y: auto;
 }
 
@@ -1441,28 +1621,48 @@ textarea {
    bao gio co tac dung. */
 @media (max-width: 760px) {
   .app-shell {
-    grid-template-columns: 56px 5px minmax(0, 1fr);
+    grid-template-columns: 56px minmax(0, 1fr);
   }
 
   .module-label,
   .account-name,
-  .account-caret,
-  .bot-label {
+  .account-caret {
     display: none;
   }
 
-  .bot-toggle {
-    justify-content: center;
+  .module-item {
+    height: 42px;
   }
 
-  .module-item,
-  .account-toggle {
-    justify-content: center;
+  .module-icon svg {
+    width: 21px;
+    height: 21px;
   }
 
-  .account-menu {
+  .rail-item {
+    height: 40px;
+  }
+
+  /* Hai menu tha van bung sang phai rail, chi thu hep lai cho vua man hinh. */
+  .account-menu,
+  .rail-menu {
+    left: calc(100% + 6px);
     right: auto;
-    left: 8px;
-    width: 200px;
+    width: min(200px, calc(100vw - 70px));
+  }
+
+  .modal {
+    padding: 12px;
+  }
+
+  .modal-content {
+    width: 100%;
+    max-height: 92vh;
+  }
+
+  .modal-header,
+  .modal-body {
+    padding-left: 16px;
+    padding-right: 16px;
   }
 }

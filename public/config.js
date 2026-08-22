@@ -5,6 +5,20 @@ export function pushActivityLog(entry) {
   if (activityLogSink) activityLogSink(entry);
 }
 
+// Tab AI Chat dang ky ham nap lai danh sach nhom/nick vao day; app.js goi moi
+// khi mo Cau hinh.
+//
+// Vi sao can: ca 7 tab deu mount MOT LAN luc tai trang, nen loadGroups() cung
+// chi chay dung mot lan o thoi diem do. Neu luc ay Zalo chua dang nhap thi
+// /api/zalo/groups tra 401, o chon nhom hien "Can dang nhap Zalo..." roi ket
+// o do VINH VIEN - quet ma QR xong cung khong co gi nap lai, tru khi tai lai
+// ca trang.
+let aiEntityRefreshSink = null;
+
+export function refreshAiChatEntities() {
+  if (aiEntityRefreshSink) aiEntityRefreshSink();
+}
+
 export const CONFIG_TABS = [
   {
     id: "auto-reply",
@@ -719,7 +733,46 @@ export const CONFIG_TABS = [
         }
       });
 
-      loadConfig();
+      // Nap lai danh sach nhom + nick moi khi mo Cau hinh. Dung lai dung
+      // loadGroups() / loadMembers() san co, khong viet them duong fetch nao.
+      let dangNapLai = false;
+      let napBanDau = null; // promise cua luot nap dau tien, gan o cuoi mount
+      aiEntityRefreshSink = async () => {
+        // Mo Cau hinh hai lan that nhanh thi hai luot nap se cung append vao
+        // mot o chon -> danh sach nhan doi. Chan bang mot co don gian.
+        if (dangNapLai) return;
+        dangNapLai = true;
+        try {
+          // Bam Cau hinh ngay khi trang vua tai thi loadConfig() luc mount con
+          // dang cho mang; no se append SAU khi ta don o chon -> danh sach nhan
+          // doi. Cho luot nap dau tien xong roi hang lam. Lan sau promise nay
+          // da xong san nen khong cho them gi.
+          await napBanDau;
+
+          const nhomDangChon = groupSelect.value;
+          const nickDangChon = Array.from(sendersSelect.selectedOptions)
+            .map((o) => o.value)
+            .filter((v) => v !== "");
+
+          // loadGroups() chi APPEND chu khong don o chon, nen phai tu don o day
+          // - ke ca dong bao loi 401 con sot lai tu luot nap truoc. Giu option
+          // dau tien vi do la muc tinh "— Tat ca (khong gioi han nhom) —" viet
+          // san trong HTML.
+          while (groupSelect.options.length > 1) groupSelect.remove(1);
+
+          await loadGroups();
+
+          // Nhom cu khong con trong danh sach nua thi value tu tro ve rong,
+          // khong nem loi. Chi nap lai nick khi that su con mot nhom hop le.
+          groupSelect.value = nhomDangChon;
+          if (groupSelect.value) await loadMembers(groupSelect.value, nickDangChon);
+        } finally {
+          dangNapLai = false;
+        }
+      };
+
+      // Giu lai promise cua luot nap dau tien de ham refresh o tren cho no.
+      napBanDau = loadConfig();
     }
   },
   {
