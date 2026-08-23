@@ -30,23 +30,53 @@ New-Item -ItemType Directory -Force -Path $Tam | Out-Null
 try {
   Ghi "Bat dau sao luu"
 
-  # 1. Chup CSDL bang VACUUM INTO. Chep thang file .db khi app dang chay se
-  #    bat duoc ban do dang: phan du lieu moi nhat con nam trong file -wal.
-  #    VACUUM INTO tao ra mot ban sao lien mach, an toan ngay ca luc dang ghi.
+  # 1. Chup CSDL bang VACUUM INTO - LUON LUON, du app dang chay hay da tat.
+  #
+  #    KHONG BAO GIO chep thang data\zalo.db. SQLite chay che do WAL: du lieu vua
+  #    ghi con nam trong zalo.db-wal, con file zalo.db co the cu hon nhieu. Ban cu
+  #    cua script nay chep thang file khi container da tat, va do la mot cai bay
+  #    thuc su: ngay 23/08/2026, CSDL that co 12 cuoc tro chuyen / 512 tin nhan
+  #    nhung ban sao luu chi co 9 / 459 - thieu 53 tin ma khong bao loi gi.
+  #    Kieu hong nay chi lo ra dung luc can phuc hoi, tuc la luc muon nhat.
+  #
+  #    VACUUM INTO doc qua ket noi OPEN_READONLY nen gop ca phan trong WAL, va
+  #    tao ra mot file .db doc lap - phuc hoi khong can file -wal di kem.
+  $dichChup = Join-Path $Tam "zalo.db"
   $dangChay = (docker ps --filter "name=$Container" --filter "status=running" --format "{{.Names}}") -eq $Container
+
   if ($dangChay) {
-    Ghi "Dang chup CSDL tu container (an toan khi app dang chay)"
-    # Dat trong /app chu khong phai /tmp: require('sqlite3') chi tim thay
-    # /app/node_modules khi file nam trong cay thu muc do.
-    docker cp (Join-Path $PSScriptRoot "chup-csdl.js") "${Container}:/app/_chup-csdl.js" | Out-Null
-    docker exec $Container node /app/_chup-csdl.js /app/data/zalo.db /app/data/_chup.db | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Khong chup duoc CSDL" }
-    docker cp "${Container}:/app/data/_chup.db" (Join-Path $Tam "zalo.db") | Out-Null
-    docker exec $Container rm -f /app/data/_chup.db /app/_chup-csdl.js | Out-Null
+    Ghi "Dang chup CSDL tu container dang chay (VACUUM INTO)"
+    # Ghi ra /app chu khong phai /app/data: /app/data la thu muc that cua chi
+    # duoc mount vao, khong nen vut file tam vao do.
+    docker exec $Container node /app/sao-luu/chup-csdl.js /app/data/zalo.db /app/_chup.db | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Khong chup duoc CSDL tu container dang chay" }
+    docker cp "${Container}:/app/_chup.db" $dichChup | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Khong lay duoc ban chup ra khoi container" }
+    docker exec $Container rm -f /app/_chup.db | Out-Null
   } else {
-    Ghi "Container khong chay - chep thang file CSDL"
-    Copy-Item (Join-Path $DuAn "data\zalo.db") (Join-Path $Tam "zalo.db") -ErrorAction SilentlyContinue
+    Ghi "Container da tat - chup bang container tam (van VACUUM INTO)"
+    # Lay dung image ma dich vu dang dung. Container da tat van con metadata.
+    $Image = (docker inspect $Container --format "{{.Config.Image}}" 2>$null)
+    if (-not $Image) {
+      # Container bi xoa han -> hoi compose xem image ten gi.
+      Push-Location $DuAn
+      $Image = (docker compose config --images 2>$null | Select-Object -First 1)
+      Pop-Location
+    }
+    if (-not $Image) {
+      throw "Khong xac dinh duoc image de chup CSDL. KHONG chep thang zalo.db vi ban do se thieu du lieu trong WAL."
+    }
+    # data mount CHI DOC: chup xong khong duoc de lai dau vet gi trong thu muc that.
+    docker run --rm `
+      -v "${DuAn}\data:/app/data:ro" `
+      -v "${Tam}:/out" `
+      $Image node /app/sao-luu/chup-csdl.js /app/data/zalo.db /out/zalo.db | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Khong chup duoc CSDL bang container tam" }
   }
+
+  # Khong co file chup = khong co ban sao luu. Tuyet doi khong di tiep bang ban cu.
+  if (-not (Test-Path $dichChup)) { throw "Khong tao duoc ban chup CSDL" }
+  if ((Get-Item $dichChup).Length -lt 1024) { throw "Ban chup CSDL rong hoac hong" }
 
   # 2. Cookie Zalo (da ma hoa)
   $cred = Join-Path $DuAn "data\credentials.json"

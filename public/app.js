@@ -1,8 +1,15 @@
-import { CONFIG_TABS, pushActivityLog, refreshAiChatEntities } from "./config.js";
+import { CONFIG_TABS, pushActivityLog, refreshSettingsDynamicData } from "./config.js";
 import { napHuanLuyen } from "./training.js";
 import { napEmail } from "./email.js";
 const socket = io();
-socket.on("activity-log", pushActivityLog);
+// Chi hien log CUA TAI KHOAN ZALO DANG XEM. Dong log sinh ra ngay truoc khi doi
+// tai khoan van co the toi muon, khong duoc de no lot vao man LOG cua tai khoan moi.
+socket.on("activity-log", (entry) => {
+  if (!entry) return;
+  if (entry.ownerUid && state.uid && String(entry.ownerUid) !== String(state.uid)) return;
+  if (entry.ownerUid && !state.uid) return;
+  pushActivityLog(entry);
+});
 
 const state = {
   loggedIn: false,
@@ -484,9 +491,10 @@ function renderSettingsTabs() {
 renderSettingsTabs();
 
 function openSettings() {
-  // Hoi lai Zalo danh sach nhom/nick moi lan mo. KHONG await: modal phai bat
-  // len ngay, danh sach tu dien vao khi mang tra ve.
-  refreshAiChatEntities();
+  // Nap lai TOAN BO du lieu dong theo tai khoan Zalo: nhom/nick AI Chat, lich hen,
+  // khach hang, nhat ky, nick OTP/Admin. KHONG await: modal phai bat len ngay,
+  // du lieu tu dien vao khi mang tra ve.
+  refreshSettingsDynamicData();
   els.settingsModal.classList.remove("hidden");
 }
 

@@ -19,6 +19,37 @@ export function refreshAiChatEntities() {
   if (aiEntityRefreshSink) aiEntityRefreshSink();
 }
 
+/**
+ * So dang ky cac ham nap lai du lieu dong cua tung tab.
+ *
+ * Cung mot ly do voi khoi ben tren, nhung khong chi rieng tab AI Chat: lich hen,
+ * khach hang, nhat ky va nick OTP/Admin deu la du lieu THEO TAI KHOAN ZALO. Mount
+ * mot lan luc tai trang nghia la neu doi tai khoan Zalo giua chung, cac tab do
+ * van hien du lieu cua tai khoan cu cho toi khi tai lai ca trang.
+ *
+ * Day KHONG phai event bus: chi la mot mang ham, moi tab dang ky dung mot lan
+ * trong mount() nen khong bao gio nhan doi.
+ */
+const soDangKyLamMoi = [];
+
+function dangKyLamMoi(ten, fn) {
+  soDangKyLamMoi.push({ ten, fn });
+}
+
+/**
+ * app.js goi moi khi mo Cau hinh. KHONG chan viec mo modal: moi ham chay doc lap,
+ * hong cai nao thi chi cai do trong, khong keo do cac tab con lai.
+ */
+export function refreshSettingsDynamicData() {
+  for (const muc of soDangKyLamMoi) {
+    try {
+      Promise.resolve(muc.fn()).catch((e) => console.warn("[cau-hinh] Khong nap lai duoc " + muc.ten, e));
+    } catch (e) {
+      console.warn("[cau-hinh] Loi khi nap lai " + muc.ten, e);
+    }
+  }
+}
+
 export const CONFIG_TABS = [
   {
     id: "auto-reply",
@@ -772,6 +803,8 @@ export const CONFIG_TABS = [
       };
 
       // Giu lai promise cua luot nap dau tien de ham refresh o tren cho no.
+      // Nhom/nick cua AI Chat: dung lai chinh ham refresh da co.
+      dangKyLamMoi("AI Chat", () => refreshAiChatEntities());
       napBanDau = loadConfig();
     }
   },
@@ -1006,6 +1039,7 @@ export const CONFIG_TABS = [
       }
 
       panel.querySelector("#lh-reload").addEventListener("click", napDanhSach);
+      dangKyLamMoi("lich hen", napDanhSach);
       napDanhSach();
     }
   },
@@ -1168,6 +1202,7 @@ export const CONFIG_TABS = [
       }
 
       panel.querySelector("#cm-reload").addEventListener("click", napDanhSach);
+      dangKyLamMoi("khach hang", napDanhSach);
       napDanhSach();
     }
   },
@@ -1257,6 +1292,7 @@ export const CONFIG_TABS = [
         list.prepend(renderEntry(entry));
       };
 
+      dangKyLamMoi("nhat ky", fetchLogs);
       fetchLogs();
     }
   },
@@ -1608,6 +1644,8 @@ export const CONFIG_TABS = [
         }
       });
 
+      // Nick OTP/Admin lay tu danh sach hoi thoai da gan tai khoan -> phai nap lai.
+      dangKyLamMoi("tai khoan (OTP/Admin)", napCaiDatOtp);
       napCaiDatOtp();
     }
   }

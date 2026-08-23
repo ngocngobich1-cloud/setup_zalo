@@ -585,7 +585,21 @@ app.post("/api/ai-chat", async (req, res) => {
       return res.status(400).json({ error: "Đã bật dùng tri thức thì phải chọn ít nhất 1 file" });
     }
 
-    const { saveAiChatConfig, getAiChatConfig, clearOpencodeSessions } = await import("./lib/db.js");
+    const { saveAiChatConfig, saveAccountConfig, getAiChatConfig, clearOpencodeSessions } = await import("./lib/db.js");
+
+    // Nhom/nick duoc phep thuoc ve TUNG TAI KHOAN Zalo, khong phai cau hinh chung.
+    // Truoc day hai truong nay bi ghi vao bang toan cuc trong khi luc doc lai doc
+    // tu account_config, nen lua chon cua nguoi dung khong bao gio co tac dung.
+    const chuAi = chuHienTai();
+    const coChonThucThe = Boolean(
+      String(allowedGroupId || "").trim() ||
+      (Array.isArray(allowedSenderIds) && allowedSenderIds.length)
+    );
+    if (coChonThucThe && !chuAi) {
+      return res.status(400).json({
+        error: "Chưa đăng nhập Zalo nên chưa lưu được lựa chọn nhóm/nick. Hãy kết nối Zalo trước.",
+      });
+    }
 
     // PHAI doc cau hinh CU truoc khi ghi de, vi doan duoi so sanh Soul cu voi
     // Soul moi de quyet dinh co xoa phien OpenCode hay khong.
@@ -596,10 +610,19 @@ app.post("/api/ai-chat", async (req, res) => {
     // nen doi Soul xong bot van noi theo Soul cu.
     const truoc = await getAiChatConfig();
 
+    // Truong CHUNG cho moi tai khoan.
     await saveAiChatConfig({
-      allowedTopics, roleTone, allowedGroupId, allowedSenderIds, useKnowledge, knowledgeFileIds,
+      allowedTopics, roleTone, useKnowledge, knowledgeFileIds,
       soul, opencodeBaseUrl, opencodeAgent, opencodeModel,
     });
+
+    // Truong RIENG tung tai khoan Zalo.
+    if (chuAi) {
+      await saveAccountConfig(chuAi, {
+        allowedGroupId: String(allowedGroupId || ""),
+        allowedSenderIds: Array.isArray(allowedSenderIds) ? allowedSenderIds : [],
+      });
+    }
 
     // Soul/chu de/tri thuc chi duoc nap MOT lan luc tao session. Doi noi dung do
     // ma giu session cu thi agent van chay theo Soul cu -> bo het de nap lai.
@@ -835,7 +858,7 @@ app.post("/api/zoho/tra-cuu", async (req, res) => {
 app.get("/api/zoho/lich-su", async (_req, res) => {
   try {
     const { listTraCuu } = await import("./lib/db.js");
-    res.json({ lichSu: await listTraCuu(60) });
+    res.json({ lichSu: await listTraCuu(chuHienTai(), 60) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -844,7 +867,7 @@ app.get("/api/zoho/lich-su", async (_req, res) => {
 app.delete("/api/zoho/lich-su", async (_req, res) => {
   try {
     const { xoaLichSuTraCuu } = await import("./lib/db.js");
-    const soDong = await xoaLichSuTraCuu();
+    const soDong = await xoaLichSuTraCuu(chuHienTai());
     await activityLog.addLog({
       event: "email_lich_su_xoa",
       level: "warn",
@@ -862,7 +885,7 @@ app.delete("/api/zoho/lich-su", async (_req, res) => {
 app.get("/api/lich-hen", async (_req, res) => {
   try {
     const { listLichHen } = await import("./lib/db.js");
-    res.json({ lich: await listLichHen({ gioiHan: 100 }) });
+    res.json({ lich: await listLichHen(chuHienTai(), { gioiHan: 100 }) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -871,7 +894,7 @@ app.get("/api/lich-hen", async (_req, res) => {
 app.delete("/api/lich-hen/:id", async (req, res) => {
   try {
     const { huyLichHen } = await import("./lib/db.js");
-    const daHuy = await huyLichHen(req.params.id);
+    const daHuy = await huyLichHen(chuHienTai(), req.params.id);
     if (!daHuy) return res.status(400).json({ error: "Lịch này đã gửi hoặc đã huỷ rồi." });
     await activityLog.addLog({
       event: "lich_huy",
@@ -1112,7 +1135,7 @@ app.get("/api/logs", async (req, res) => {
 
 app.delete("/api/logs", async (_req, res) => {
   try {
-    await clearActivityLogs();
+    await clearActivityLogs(chuHienTai());
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
