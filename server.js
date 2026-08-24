@@ -880,6 +880,203 @@ app.delete("/api/zoho/lich-su", async (_req, res) => {
   }
 });
 
+/* --- ZOOM (Server-to-Server OAuth) ---
+ *
+ * Vong nay CHI lo ket noi: luu chia khoa, kiem tra, ngat. Khong co duong nao
+ * tao phong hop - viec do de danh cho P2B.
+ *
+ * Cac route nay nam SAU cong chan dang nhap o dau file nen tu dong duoc bao ve
+ * giong moi API cau hinh khac.
+ */
+
+/** Tra ve trang thai AN TOAN. Khong bao gio kem Client Secret hay access token. */
+app.get("/api/zoom", async (_req, res) => {
+  try {
+    const { getZoomConfig, zoomCongKhai } = await import("./lib/zoom.js");
+    res.json({ config: zoomCongKhai(await getZoomConfig()) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/** Luu cau hinh. O nhap de trong = giu nguyen gia tri cu. Khong goi Zoom o day. */
+app.post("/api/zoom/luu", async (req, res) => {
+  const zoom = await import("./lib/zoom.js");
+  try {
+    await zoom.saveZoomConfig({
+      accountId: req.body?.accountId,
+      clientId: req.body?.clientId,
+      clientSecret: req.body?.clientSecret,
+      hostEmail: req.body?.hostEmail,
+    });
+    // Nhat ky KHONG duoc mang theo gia tri nao cua chia khoa.
+    await activityLog.addLog({
+      event: "zoom_cau_hinh",
+      level: "info",
+      summary: "Đã lưu thông tin kết nối Zoom",
+    });
+    res.json({ ok: true, config: zoom.zoomCongKhai(await zoom.getZoomConfig()) });
+  } catch (error) {
+    if (error instanceof zoom.LoiZoom) {
+      return res.status(400).json({ error: error.message, ma: error.ma });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/** Kiem tra that: xin token roi tra cuu dung tai khoan host da cau hinh. */
+app.post("/api/zoom/kiem-tra", async (_req, res) => {
+  const zoom = await import("./lib/zoom.js");
+  try {
+    res.json({ ok: true, tk: await zoom.testZoomConnection() });
+  } catch (error) {
+    if (error instanceof zoom.LoiZoom) {
+      await activityLog.addLog({
+        event: "zoom_loi",
+        level: "warn",
+        summary: `Kiểm tra Zoom thất bại — ${error.ma}`,
+      });
+      return res.status(400).json({ error: error.message, ma: error.ma });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/** Ngat ket noi: chi xoa bon o cua Zoom. */
+app.post("/api/zoom/ngat", async (_req, res) => {
+  try {
+    const { clearZoomConfig, getZoomConfig, zoomCongKhai } = await import("./lib/zoom.js");
+    await clearZoomConfig();
+    await activityLog.addLog({ event: "zoom_ngat", level: "warn", summary: "Đã ngắt kết nối Zoom" });
+    res.json({ ok: true, config: zoomCongKhai(await getZoomConfig()) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Tao mot cuoc hop Zoom da len lich (P2B).
+ *
+ * Trinh duyet CHI duoc gui: topic, date, time, duration, timezone. Host lay tu
+ * cau hinh da luu o backend - nhan host tu trinh duyet la cho ai dang nhap app
+ * chon host Zoom tuy y. Mot request = toi da MOT lan POST sang Zoom, khong tu
+ * thu lai (tao trung con te hon bao loi).
+ */
+app.post("/api/zoom/tao-cuoc-hop", async (req, res) => {
+  const zoom = await import("./lib/zoom.js");
+  try {
+    const cuocHop = await zoom.taoZoomMeeting({
+      topic: req.body?.topic,
+      date: req.body?.date,
+      time: req.body?.time,
+      duration: req.body?.duration,
+      timezone: req.body?.timezone,
+    });
+    // Nhat ky: ten + ID la du de doi soat. KHONG ghi start_url (khong co de ghi
+    // - da bi vut tu lib/zoom.js), khong ghi join_url de link khong nam trong log.
+    await activityLog.addLog({
+      event: "zoom_tao_hop",
+      level: "ok",
+      summary: `Đã tạo cuộc họp Zoom "${cuocHop.topic}" (ID ${cuocHop.meetingId})`,
+      detail: { meetingId: cuocHop.meetingId, startTime: cuocHop.startTime, duration: cuocHop.duration },
+    });
+    res.json(cuocHop);
+  } catch (error) {
+    if (error instanceof zoom.LoiZoom) {
+      await activityLog.addLog({
+        event: "zoom_loi",
+        level: "warn",
+        summary: `Tạo cuộc họp Zoom thất bại — ${error.ma}`,
+      });
+      return res.status(400).json({ error: error.message, ma: error.ma });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/* --- ZOOM P2D: provider la nguon danh sach duy nhat --- */
+
+function trangThaiLoiZoom(error) {
+  const ma = String(error?.ma || "");
+  if (ma === "ZOOM_MEETING_NOT_OWNED" || ma === "ZOOM_HOST_NOT_FOUND") return 404;
+  if (ma === "ZOOM_SCOPE_MISSING") return 403;
+  if (ma === "ZOOM_PROVIDER_UNAVAILABLE") return 503;
+  if (ma === "ZOOM_MEETING_LIST_TOO_LARGE") return 502;
+  return 400;
+}
+
+function traLoiLoiZoom(res, zoom, error) {
+  if (error instanceof zoom.LoiZoom) {
+    return res.status(trangThaiLoiZoom(error)).json({ error: error.message, ma: error.ma });
+  }
+  return res.status(500).json({ error: "Zoom gặp lỗi không mong đợi." });
+}
+
+/** Dashboard: khong doc activity_logs/DB cache, luon list truc tiep tu Zoom. */
+app.get("/api/zoom/cuoc-hop", async (_req, res) => {
+  const zoom = await import("./lib/zoom.js");
+  try {
+    res.json({ ok: true, meetings: await zoom.listZoomMeetings() });
+  } catch (error) {
+    return traLoiLoiZoom(res, zoom, error);
+  }
+});
+
+/** Participant share detail on-demand; lib da kiem configured-host ownership. */
+app.get("/api/zoom/cuoc-hop/:meetingId", async (req, res) => {
+  const zoom = await import("./lib/zoom.js");
+  try {
+    const chiaSe = await zoom.getZoomMeetingShare(req.params.meetingId);
+    res.json({ ok: true, ...chiaSe });
+  } catch (error) {
+    return traLoiLoiZoom(res, zoom, error);
+  }
+});
+
+/** Sua lich type 2; body khong co duong thay passcode/security/host. */
+app.patch("/api/zoom/cuoc-hop/:meetingId", async (req, res) => {
+  const zoom = await import("./lib/zoom.js");
+  try {
+    await zoom.updateZoomMeeting(req.params.meetingId, {
+      topic: req.body?.topic,
+      date: req.body?.date,
+      time: req.body?.time,
+      duration: req.body?.duration,
+      timezone: req.body?.timezone,
+    });
+    await activityLog.addLog({
+      event: "zoom_sua_hop",
+      level: "ok",
+      summary: `Đã sửa lịch Zoom "${String(req.body?.topic || "").trim()}" (ID ${req.params.meetingId})`,
+      detail: {
+        meetingId: String(req.params.meetingId),
+        startTime: `${String(req.body?.date || "")}T${String(req.body?.time || "")}:00`,
+        duration: Number(req.body?.duration),
+      },
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    return traLoiLoiZoom(res, zoom, error);
+  }
+});
+
+/** Route nay chi chay sau confirm inline cua UI; backend van ownership-guard. */
+app.delete("/api/zoom/cuoc-hop/:meetingId", async (req, res) => {
+  const zoom = await import("./lib/zoom.js");
+  try {
+    await zoom.deleteZoomMeeting(req.params.meetingId);
+    await activityLog.addLog({
+      event: "zoom_xoa_hop",
+      level: "warn",
+      summary: `Đã xoá cuộc họp Zoom (ID ${req.params.meetingId})`,
+      detail: { meetingId: String(req.params.meetingId) },
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    return traLoiLoiZoom(res, zoom, error);
+  }
+});
+
 /* --- SO HEN GIO --- */
 
 app.get("/api/lich-hen", async (_req, res) => {

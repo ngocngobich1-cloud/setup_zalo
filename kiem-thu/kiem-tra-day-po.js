@@ -169,10 +169,10 @@ async function main() {
   }
 
   /**
-   * Go "xac nhan". CAI BAY: dat san mot ket qua phan tich vo nghia, neu buoc
+   * Go "OK". CAI BAY: dat san mot ket qua phan tich vo nghia, neu buoc
    * xac nhan lo goi bo phan tich thi lenh se hong ngay va bai test thay duoc.
    */
-  async function xacNhan(cau = "xác nhận", tin = null) {
+  async function xacNhan(cau = "OK", tin = null) {
     phanTichTiepTheo = { hanhDong: "khong_hieu", lyDo: "BO PHAN TICH KHONG DUOC GOI O BUOC XAC NHAN" };
     return noi(cau, tin);
   }
@@ -196,7 +196,7 @@ async function main() {
 
   await bai("T01", "admin dạy contact X → đọc lại, xác nhận, rồi mới ghi", async () => {
     const xem = await raLenh({ hanhDong: "day_ghi_nho", dichTen: "Bố", quyTac: CHI_DAN_BO });
-    assert.match(xem, /xác nhận/, `phải đọc lại chờ xác nhận: ${xem}`);
+    assert.match(xem, /OK/, `phải đọc lại chờ OK: ${xem}`);
     assert.equal(await db.getOwnerInstruction(CHU_A, UID_BO), "", "đã ghi khi chị CHƯA xác nhận");
 
     const xong = await xacNhan();
@@ -621,14 +621,14 @@ async function main() {
     const truoc = await db.getOwnerInstruction(CHU_A, UID_C);
     const xem = await raLenh({ hanhDong: "day_ghi_nho", dichTen: "Khách Mới", quyTac: "Luôn chào bằng tên." });
     assert.ok(xem.includes("Luôn chào bằng tên."), `câu đọc lại thiếu nội dung: ${xem}`);
-    assert.match(xem, /xác nhận/, "không mời chị xác nhận");
+    assert.match(xem, /OK/, "không mời chị trả lời OK");
     assert.equal(await db.getOwnerInstruction(CHU_A, UID_C), truoc, "ĐÃ GHI khi chưa xác nhận");
     // Ban nhap ton tai: xac nhan ngay sau do phai ghi duoc.
     await xacNhan();
     assert.notEqual(await db.getOwnerInstruction(CHU_A, UID_C), truoc, "không có bản nháp nào tồn tại");
   });
 
-  await bai("C02", "bản nháp + đúng chữ “xác nhận” → ghi, bản nháp bị tiêu thụ", async () => {
+  await bai("C02", "bản nháp + đúng token OK → ghi, bản nháp bị tiêu thụ", async () => {
     await donDep();
     await db.setOwnerInstruction(CHU_A, { uid: UID_C, instruction: "", displayName: "Khách Mới" });
     await raLenh({ hanhDong: "day_ghi_nho", dichTen: "Khách Mới", quyTac: "Gọi bằng anh." });
@@ -640,7 +640,7 @@ async function main() {
 
     // Tieu thu roi: xac nhan lan hai khong con gi de ghi.
     const lai = await xacNhan();
-    assert.match(lai, /không có nội dung nào đang chờ/, `bản nháp chưa bị tiêu thụ: ${lai}`);
+    assert.match(lai, /không có thao tác nào đang chờ OK/i, `bản nháp chưa bị tiêu thụ: ${lai}`);
   });
 
   await bai("C03", "day_sua pha 1 CHƯA ghi; xác nhận thì thay TOÀN BỘ", async () => {
@@ -663,7 +663,7 @@ async function main() {
     assert.match(bo, /chưa lưu/, `trả lời bất ngờ: ${bo}`);
     assert.equal(await db.getOwnerInstruction(CHU_A, UID_C), truoc, "đã ghi dù chị huỷ");
     const sau = await xacNhan();
-    assert.match(sau, /không có nội dung nào đang chờ/, "bản nháp chưa bị xoá");
+    assert.match(sau, /không có thao tác nào đang chờ OK/i, "bản nháp chưa bị xoá");
   });
 
   await bai("C05", "bản nháp + “không” / “sai rồi” → bỏ nháp, KHÔNG ghi", async () => {
@@ -677,7 +677,7 @@ async function main() {
     }
   });
 
-  await bai("C06", "câu khác xen vào → nháp cũ bị bỏ, “xác nhận” sau đó vô hiệu", async () => {
+  await bai("C06", "câu khác xen vào → nháp cũ bị bỏ, OK sau đó vô hiệu", async () => {
     await donDep();
     const truoc = await db.getOwnerInstruction(CHU_A, UID_C);
     await raLenh({ hanhDong: "day_sua", dichTen: "Khách Mới", quyTac: "Nội dung nháp cũ." });
@@ -686,7 +686,7 @@ async function main() {
     await raLenh({ hanhDong: "xem_lich" }, "xem lịch giúp chị");
 
     const sau = await xacNhan();
-    assert.match(sau, /không có nội dung nào đang chờ/, `nháp cũ vẫn sống: ${sau}`);
+    assert.match(sau, /không có thao tác nào đang chờ OK/i, `nháp cũ vẫn sống: ${sau}`);
     assert.equal(await db.getOwnerInstruction(CHU_A, UID_C), truoc, "nháp cũ đã bị ghi nhầm");
   });
 
@@ -701,11 +701,11 @@ async function main() {
     assert.ok(!luu.includes("BẢN CŨ"), "bản nháp cũ lọt vào");
   });
 
-  await bai("C08", "“xác nhận” khi không có gì đang chờ → không ghi, trả lời rõ", async () => {
+  await bai("C08", "OK khi không có gì đang chờ → không ghi, trả lời rõ", async () => {
     await donDep();
     const truoc = await db.getOwnerInstruction(CHU_A, UID_C);
     const traLoi = await xacNhan();
-    assert.match(traLoi, /không có nội dung nào đang chờ/, `trả lời bất ngờ: ${traLoi}`);
+    assert.match(traLoi, /không có thao tác nào đang chờ OK/i, `trả lời bất ngờ: ${traLoi}`);
     assert.equal(await db.getOwnerInstruction(CHU_A, UID_C), truoc);
   });
 
@@ -715,15 +715,15 @@ async function main() {
     await raLenh({ hanhDong: "day_sua", dichTen: "Khách Mới", quyTac: "Chỉ của tài khoản A." });
 
     // (1) Nick admin KHAC, cung tai khoan -> khong xac nhan ho duoc.
-    const nickKhac = { threadId: "800000009", threadType: 0, senderId: "800000009", senderName: "Người khác", content: "xác nhận" };
-    const r1 = await xacNhan("xác nhận", nickKhac);
-    assert.match(r1, /không có nội dung nào đang chờ/, `nick khác xác nhận được nháp của chị: ${r1}`);
+    const nickKhac = { threadId: "800000009", threadType: 0, senderId: "800000009", senderName: "Người khác", content: "OK" };
+    const r1 = await xacNhan("OK", nickKhac);
+    assert.match(r1, /không có thao tác nào đang chờ OK/i, `nick khác xác nhận được nháp của chị: ${r1}`);
 
     // (2) Tai khoan Zalo KHAC -> cung khong xac nhan ho duoc.
     chuHienTai = CHU_B;
     const r2 = await xacNhan();
     chuHienTai = CHU_A;
-    assert.match(r2, /không có nội dung nào đang chờ/, `tài khoản B xác nhận được nháp của A: ${r2}`);
+    assert.match(r2, /không có thao tác nào đang chờ OK/i, `tài khoản B xác nhận được nháp của A: ${r2}`);
     assert.equal(await db.getOwnerInstruction(CHU_A, UID_C), "", "đã bị ghi bởi người không có quyền");
 
     // (3) Dung chu, dung nick -> van con hieu luc.
@@ -744,14 +744,14 @@ async function main() {
       await db.initDb();
       ac.capHinhChuTaiKhoan(() => ${JSON.stringify(CHU_A)});
       const traLoi = await ac.xuLyLenh(
-        { threadId: ${JSON.stringify(ADMIN_A)}, threadType: 0, senderId: ${JSON.stringify(ADMIN_A)}, content: "xác nhận" },
+        { threadId: ${JSON.stringify(ADMIN_A)}, threadType: 0, senderId: ${JSON.stringify(ADMIN_A)}, content: "OK" },
         async () => {}
       );
       console.log(JSON.stringify({ traLoi, chiDan: await db.getOwnerInstruction(${JSON.stringify(CHU_A)}, ${JSON.stringify(UID_C)}) }));
     `;
     const ra = execFileSync(process.execPath, ["--input-type=module", "-e", kichBan], { encoding: "utf8" });
     const doc = JSON.parse(ra.trim().split("\n").pop());
-    assert.match(doc.traLoi, /không có nội dung nào đang chờ/, `tiến trình mới vẫn thấy nháp: ${doc.traLoi}`);
+    assert.match(doc.traLoi, /không có thao tác nào đang chờ OK/i, `tiến trình mới vẫn thấy nháp: ${doc.traLoi}`);
     assert.equal(doc.chiDan, "GIỮ NGUYÊN", "nháp sống sót qua restart và đã ghi");
     await donDep();
   });
@@ -771,7 +771,7 @@ async function main() {
       await donDep();
       await raLenh(ca.parse);
       const sau = await xacNhan();
-      assert.match(sau, /không có nội dung nào đang chờ/, `ca “${ca.ten}” đã tạo bản nháp: ${sau}`);
+      assert.match(sau, /không có thao tác nào đang chờ OK/i, `ca “${ca.ten}” đã tạo bản nháp: ${sau}`);
       assert.equal(await db.getOwnerInstruction(CHU_A, UID_C), truoc, `ca “${ca.ten}” đã ghi`);
     }
   });
@@ -782,7 +782,7 @@ async function main() {
     const traLoi = await raLenh({ hanhDong: "day_ghi_nho", dichTen: "Khách Mới", quyTac: "  gọi BẰNG anh.  " });
     assert.match(traLoi, /đã ghi nhớ.*từ trước/, `trả lời bất ngờ: ${traLoi}`);
     const sau = await xacNhan();
-    assert.match(sau, /không có nội dung nào đang chờ/, "đã tạo nháp cho một câu trùng");
+    assert.match(sau, /không có thao tác nào đang chờ OK/i, "đã tạo nháp cho một câu trùng");
     assert.equal(await db.getOwnerInstruction(CHU_A, UID_C), "Gọi bằng anh.");
   });
 
@@ -863,7 +863,7 @@ async function main() {
     assert.match(r1, /OK để em gửi/, `chưa tạo được lệnh gửi đang chờ: ${r1}`);
 
     const r2 = await raLenh({ hanhDong: "day_ghi_nho", dichTen: "Khách Mới", quyTac: "Gọi bằng anh." });
-    assert.match(r2, /thao tác khác chờ xác nhận/, `không từ chối lệnh dạy: ${r2}`);
+    assert.match(r2, /thao tác khác chờ OK/, `không từ chối lệnh dạy: ${r2}`);
     assert.ok(!/để em lưu/.test(r2), "vẫn trả về bản xem trước dù đang có thao tác khác");
 
     // Lenh gui CU van con nguyen: huy duoc thi tuc la no chua he bi xoa.
@@ -875,7 +875,7 @@ async function main() {
     await donDep();
     await taoLenhLich();
     const r2 = await raLenh({ hanhDong: "day_sua", dichTen: "Khách Mới", quyTac: "Nội dung mới." });
-    assert.match(r2, /thao tác khác chờ xác nhận/, `không từ chối lệnh dạy: ${r2}`);
+    assert.match(r2, /thao tác khác chờ OK/, `không từ chối lệnh dạy: ${r2}`);
 
     const r3 = await noi("hủy");
     assert.match(r3, /Đã huỷ, em không đặt lịch nào cả/, `lịch đang chờ đã bị mất: ${r3}`);
@@ -898,13 +898,13 @@ async function main() {
     await donDep();
     await taoLenhGui();
     const r = await raLenh({ hanhDong: "day_ghi_nho", dichTen: "Khách Mới", quyTac: "abc" });
-    assert.match(r, /thao tác khác chờ xác nhận/, `thiếu lý do: ${r}`);
-    assert.match(r, /xác nhận hoặc huỷ/, `không hướng dẫn cách xử lý: ${r}`);
+    assert.match(r, /thao tác khác chờ OK/, `thiếu lý do: ${r}`);
+    assert.match(r, /OK hoặc huỷ/, `không hướng dẫn cách xử lý: ${r}`);
     assert.ok(!/Em hiểu bạn muốn/.test(r), "lại trả về bản xem trước");
     await donDep();
   });
 
-  await bai("R05", "sau khi lệnh dạy bị chặn, xác nhận lệnh cũ vẫn chạy đúng", async () => {
+  await bai("R05", "sau khi lệnh dạy bị chặn, OK vẫn chạy đúng lệnh cũ", async () => {
     await donDep();
     await taoLenhGui();
     await raLenh({ hanhDong: "day_ghi_nho", dichTen: "Khách Mới", quyTac: "Bị chặn." });
@@ -921,7 +921,7 @@ async function main() {
     await db.setOwnerInstruction(CHU_A, { uid: UID_C, instruction: "", displayName: "Khách Mới" });
     await taoLenhGui();
     const biChan = await raLenh({ hanhDong: "day_ghi_nho", dichTen: "Khách Mới", quyTac: "Gọi bằng anh." });
-    assert.match(biChan, /thao tác khác chờ xác nhận/);
+    assert.match(biChan, /thao tác khác chờ OK/);
 
     await noi("hủy"); // xu ly xong thao tac cu
 
@@ -940,16 +940,16 @@ async function main() {
     await taoLenhGui();
     await raLenh({ hanhDong: "day_ghi_nho", dichTen: "Khách Mới", quyTac: "Không được ghi." });
 
-    // Mot chu "xac nhan" -> phai ung voi DUNG MOT thao tac: lenh gui.
+    // Mot token "OK" -> phai ung voi DUNG MOT thao tac: lenh gui.
     const truocSo = daGui.length;
     const r1 = await xacNhan();
-    assert.match(r1, /Đã gửi vào/, `"xác nhận" không ứng với lệnh gửi: ${r1}`);
+    assert.match(r1, /Đã gửi vào/, `"OK" không ứng với lệnh gửi: ${r1}`);
     assert.equal(daGui.length, truocSo + 1, "lệnh gửi không chạy");
     assert.equal(bam(await db.getOwnerInstruction(CHU_A, UID_C)), truoc, "chỉ dẫn bị ghi kèm");
 
     // Va khong con thao tac nao khac nam cho phia sau.
     const r2 = await xacNhan();
-    assert.match(r2, /không có nội dung nào đang chờ/, `còn sót một thao tác thứ hai: ${r2}`);
+    assert.match(r2, /không có thao tác nào đang chờ OK/i, `còn sót một thao tác thứ hai: ${r2}`);
   });
 
   /* ============ G01–G07: LOI THOAI DUNG DUOC CHO MOI BAN CAI ============ */
@@ -982,7 +982,7 @@ async function main() {
     await donDep();
     const r = await xacNhan();
     kiemGeneric("no-pending", r);
-    assert.match(r, /không có nội dung nào đang chờ/);
+    assert.match(r, /không có thao tác nào đang chờ OK/i);
   });
 
   await bai("G03", "câu huỷ bản nháp trung tính", async () => {
@@ -1060,6 +1060,85 @@ async function main() {
     assert.ok(vungHuongDan.includes("bố"), "ví dụ trong hướng dẫn parser đã bị xoá nhầm");
   });
 
+  /* ============ O01–O08: GLOBAL CANONICAL CONFIRM TOKEN = OK ============ */
+
+  await bai("O01", "gui_tin: token xác nhận cũ không còn gửi", async () => {
+    await donDep();
+    const truoc = daGui.length;
+    await taoLenhGui();
+    const r = await noi("xác nhận");
+    assert.match(r, /trả lời OK/i);
+    assert.equal(daGui.length, truoc, "token cũ vẫn gọi hàm gửi");
+    await noi("hủy");
+  });
+
+  await bai("O02", "gui_tin: exact OK giữ nguyên hành vi gửi giả", async () => {
+    await donDep();
+    const truoc = daGui.length;
+    await taoLenhGui();
+    const r = await noi("OK");
+    assert.match(r, /Đã gửi vào/);
+    assert.equal(daGui.length, truoc + 1, "OK không gọi đúng một lượt gửi giả");
+  });
+
+  await bai("O03", "dat_lich: token xác nhận cũ không còn đặt lịch", async () => {
+    await donDep();
+    const truoc = (await db.listLichHen(CHU_A)).length;
+    await taoLenhLich();
+    const r = await noi("xac nhan");
+    assert.match(r, /trả lời OK/i);
+    assert.equal((await db.listLichHen(CHU_A)).length, truoc, "token cũ vẫn ghi lịch");
+    await noi("hủy");
+  });
+
+  await bai("O04", "dat_lich: exact OK giữ nguyên hành vi đặt lịch", async () => {
+    await donDep();
+    const truoc = (await db.listLichHen(CHU_A)).length;
+    await taoLenhLich();
+    const r = await noi("OK");
+    assert.match(r, /Đã đặt xong 1 lịch/);
+    assert.equal((await db.listLichHen(CHU_A)).length, truoc + 1, "OK không ghi đúng một lịch");
+  });
+
+  await bai("O05", "Teach Bot: token xác nhận cũ không còn ghi", async () => {
+    await donDep();
+    await db.setOwnerInstruction(CHU_A, { uid: UID_C, instruction: "GIỮ NGUYÊN", displayName: "Khách Mới" });
+    await raLenh({ hanhDong: "day_sua", dichTen: "Khách Mới", quyTac: "KHÔNG ĐƯỢC GHI BẰNG TOKEN CŨ" });
+    const r = await noi("xác nhận");
+    assert.match(r, /trả lời OK/i);
+    assert.equal(await db.getOwnerInstruction(CHU_A, UID_C), "GIỮ NGUYÊN");
+    await noi("hủy");
+  });
+
+  await bai("O06", "Teach Bot: exact OK thực hiện write đã duyệt", async () => {
+    await donDep();
+    await db.setOwnerInstruction(CHU_A, { uid: UID_C, instruction: "CŨ", displayName: "Khách Mới" });
+    await raLenh({ hanhDong: "day_sua", dichTen: "Khách Mới", quyTac: "MỚI QUA OK" });
+    const r = await noi("OK");
+    assert.match(r, /Em đã cập nhật rồi/);
+    assert.equal(await db.getOwnerInstruction(CHU_A, UID_C), "MỚI QUA OK");
+  });
+
+  await bai("O07", "mọi copy xác nhận Teach Bot hiển thị canonical OK", async () => {
+    await donDep();
+    const r = await raLenh({ hanhDong: "day_sua", dichTen: "Khách Mới", quyTac: "Bản xem trước" });
+    assert.match(r, /trả lời “OK”/);
+    assert.ok(!/trả lời “xác nhận”/i.test(r), `copy còn token cũ: ${r}`);
+    await noi("hủy");
+  });
+
+  await bai("O08", "OK khi không có pending không thực hiện hành động tuỳ ý", async () => {
+    await donDep();
+    const guiTruoc = daGui.length;
+    const lichTruoc = (await db.listLichHen(CHU_A)).length;
+    const chiDanTruoc = await db.getOwnerInstruction(CHU_A, UID_C);
+    const r = await noi("OK");
+    assert.match(r, /không có thao tác nào đang chờ OK/i);
+    assert.equal(daGui.length, guiTruoc);
+    assert.equal((await db.listLichHen(CHU_A)).length, lichTruoc);
+    assert.equal(await db.getOwnerInstruction(CHU_A, UID_C), chiDanTruoc);
+  });
+
   /* --- C18 de CUOI CUNG: bai nay pha hong bang customer_memory co chu dich. --- */
   await bai("C18", "ghi hỏng lúc xác nhận → KHÔNG báo thành công giả", async () => {
     await donDep();
@@ -1078,7 +1157,7 @@ async function main() {
 
     // Ban nhap van phai bi tieu thu, khong duoc treo lai cho lan sau.
     const lai = await xacNhan();
-    assert.match(lai, /không có nội dung nào đang chờ/, `bản nháp còn treo: ${lai}`);
+    assert.match(lai, /không có thao tác nào đang chờ OK/i, `bản nháp còn treo: ${lai}`);
   });
 
   /* ================= Bao cao ================= */

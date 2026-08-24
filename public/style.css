@@ -1138,6 +1138,812 @@ input {
   color: var(--muted);
 }
 
+/* --- PHAN HE CONG CU --- */
+
+/* .module-panel dat overflow:hidden nen phan cuon phai nam o day, giong
+   .email-panel. */
+.tools-panel {
+  --tools-text-page-title: 24px;
+  --tools-text-section-title: 18px;
+  --tools-text-subsection-title: 15px;
+  --tools-text-card-title: 16px;
+  --tools-text-body: 14px;
+  --tools-text-label: 13px;
+  --tools-text-meta: 12px;
+  --tools-text-button: 14px;
+  --tools-text-input: 14px;
+  height: 100%;
+  overflow-y: auto;
+  padding: 20px 24px 40px;
+  font-size: var(--tools-text-body);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.tools-header {
+  margin-bottom: 18px;
+}
+
+.tools-header h2 {
+  margin: 0 0 4px;
+  font-size: var(--tools-text-page-title);
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.tools-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--tools-text-body);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.tools-panel button {
+  font-size: var(--tools-text-button);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.tools-panel input,
+.tools-panel select {
+  font-size: var(--tools-text-input);
+  font-weight: 400;
+  line-height: normal;
+}
+
+.tools-panel label {
+  font-size: var(--tools-text-label);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.tools-panel .field-hint,
+.tools-panel .training-meta {
+  font-size: var(--tools-text-meta);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+/* auto-fit lo 3 the tren man rong, tu xuong 2 roi 1 khi hep - khong can
+   media query va khong bao gio tran ngang. */
+.tool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.tool-card {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+
+.tool-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: var(--surface-2);
+}
+
+.tool-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tool-card.active {
+  border-color: var(--accent);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.tool-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 2px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--accent);
+}
+
+.tool-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.tool-name {
+  margin: 0;
+  font-size: var(--tools-text-card-title);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.tool-desc {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--tools-text-body);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+/* Trung tinh, KHONG dung mau canh bao: chua ket noi khong phai la loi. */
+.tool-status {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: var(--tools-text-meta);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+/* Tai moi thoi diem chi mot tools-detail duoc hien. */
+.tools-detail {
+  margin-top: 26px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.tools-detail-header {
+  margin-bottom: 14px;
+}
+
+.tools-detail-title {
+  margin: 0 0 4px;
+  font-size: var(--tools-text-section-title);
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.tools-detail-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--tools-text-meta);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+/* .email-panel duoc viet cho thoi no la mot phan he rieng: tu cuon va tu chua
+   het chieu cao. Gio no nam BEN TRONG .tools-panel (chinh .tools-panel moi la
+   cai cuon), nen phai go hai thu do - de nguyen se sinh thanh cuon long nhau.
+   Ghi de CO PHAM VI, khong dung den quy tac .email-panel goc. */
+.tools-panel #email-panel {
+  height: auto;
+  overflow: visible;
+  padding: 0;
+}
+
+/* email.js tu dung mot <h2>Email</h2> trong khoi header cua no. Ten do la di
+   san tu thoi Email con la phan he rieng; nay no nam duoi tieu de "Zoho Mail"
+   nen thanh thua va sai nghia. Chi an DUNG dong tieu de - dong trang thai va
+   den bao ngay ben canh van hien nguyen. Khong sua email.js. */
+.tools-detail .email-header h2 {
+  display: none;
+}
+
+.tools-panel .email-khoi h3 {
+  font-size: var(--tools-text-subsection-title);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* --- KHOI CAU HINH ZOOM --- */
+
+#zoom-panel {
+  width: 100%;
+  max-width: 1000px;
+}
+
+.zoom-ket-noi-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.zoom-ket-noi-actions[hidden],
+.zoom-cau-hinh[hidden] {
+  display: none;
+}
+
+.zoom-ket-noi-actions .primary-button,
+.zoom-ket-noi-actions .secondary-button {
+  padding: 8px 14px;
+}
+
+.zoom-cau-hinh {
+  width: 100%;
+  max-width: 900px;
+  margin-top: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.zoom-muc-tieu-de {
+  margin: 0 0 10px;
+  font-size: var(--tools-text-subsection-title);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.zoom-huong-dan {
+  margin-bottom: 14px;
+  color: var(--muted);
+  font-size: var(--tools-text-body);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.zoom-huong-dan p {
+  margin: 0 0 4px;
+}
+
+.zoom-huong-dan code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.zoom-hang {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.zoom-hang label {
+  color: var(--muted);
+  font-size: var(--tools-text-label);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.zoom-hang input,
+.zoom-hang select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.zoom-nut {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 6px;
+}
+
+.zoom-nut .primary-button,
+.zoom-nut .secondary-button {
+  padding: 8px 14px;
+}
+
+/* Man hep: nhan xuong dong tren o nhap thay vi ep o nhap co lai. */
+@media (max-width: 720px) {
+  .zoom-hang {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}
+
+/* Khoi tao cuoc hop - desktop dat tieu de va nut tren cung mot hang. */
+.zoom-tao-hop {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title action"
+    "form form"
+    "message message"
+    "results results";
+  align-items: end;
+  gap: 10px 14px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.zoom-tao-tieu-de {
+  grid-area: title;
+  margin: 0;
+  font-size: var(--tools-text-subsection-title);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.zoom-tao-submit {
+  grid-area: action;
+  justify-self: end;
+  padding: 8px 14px;
+}
+
+.zoom-tao-luoi {
+  grid-area: form;
+  display: grid;
+  grid-template-columns:
+    minmax(220px, 2fr)
+    minmax(130px, 1fr)
+    minmax(105px, 0.8fr)
+    minmax(125px, 0.9fr)
+    minmax(175px, 1.4fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.zoom-truong {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--tools-text-label);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.zoom-truong input,
+.zoom-truong select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+#zm-hop-bao {
+  grid-area: message;
+}
+
+.zoom-ket-qua-danh-sach {
+  grid-area: results;
+  display: grid;
+  gap: 10px;
+}
+
+.zoom-ket-qua {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: var(--tools-text-body);
+  font-weight: 400;
+  line-height: 1.5;
+  /* Link tham gia co the dai hon khung - be dong, khong tran ngang. */
+  overflow-wrap: anywhere;
+}
+
+.zoom-ket-qua-so {
+  grid-column: 1;
+  grid-row: 1 / span 3;
+  font-weight: 700;
+  color: var(--ok);
+}
+
+.zoom-ket-qua-dong {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.zoom-ket-qua-hanh-dong {
+  grid-column: 3;
+  grid-row: 1 / span 3;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zoom-ket-qua-hanh-dong .secondary-button {
+  padding: 7px 12px;
+}
+
+.zoom-sao-chep-phan-hoi {
+  min-width: 92px;
+  color: var(--muted);
+  font-size: var(--tools-text-meta);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+/* Vua: form tao hop xuong hai hang co can, moi o van co du rong de doc. */
+@media (max-width: 900px) {
+  .zoom-tao-luoi {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .zoom-truong-ten {
+    grid-column: span 6;
+  }
+
+  .zoom-truong:not(.zoom-truong-ten) {
+    grid-column: span 3;
+  }
+}
+
+/* Hep/mobile: ngay-gio va thoi luong-mui gio thanh hai cap; nut nam sau form. */
+@media (max-width: 640px) {
+  .tools-panel {
+    padding-inline: 16px;
+  }
+
+  .zoom-tao-hop {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "title"
+      "form"
+      "action"
+      "message"
+      "results";
+  }
+
+  .zoom-tao-submit {
+    justify-self: start;
+  }
+
+  .zoom-ket-qua {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .zoom-ket-qua-hanh-dong {
+    grid-column: 2;
+    grid-row: auto;
+    justify-self: start;
+    flex-wrap: wrap;
+  }
+}
+
+/* --- P2D: PROVIDER-SOURCE-OF-TRUTH ZOOM DASHBOARD --- */
+
+.zoom-scope-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 5px 10px;
+  margin: 8px 0;
+}
+
+.zoom-scope-list code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.zoom-lich {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.zoom-lich-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.zoom-lich-header .zoom-tao-tieu-de {
+  margin: 0;
+}
+
+.zoom-tao-hop {
+  display: block;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.zoom-tao-hop[hidden],
+.zoom-row-menu[hidden] {
+  display: none;
+}
+
+.zoom-tao-hop h5 {
+  margin: 0 0 10px;
+  font-size: var(--tools-text-subsection-title);
+  line-height: 1.4;
+}
+
+.zoom-form-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.zoom-form-actions .zoom-tao-submit {
+  grid-area: auto;
+  justify-self: auto;
+}
+
+#zm-hop-bao {
+  grid-area: auto;
+  margin-top: 6px;
+}
+
+.zoom-lich-bao {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 48px;
+}
+
+.zoom-lich-bao p {
+  margin: 0;
+}
+
+.zoom-lich-loi,
+.zoom-inline-bao {
+  color: var(--danger);
+  font-size: var(--tools-text-meta);
+}
+
+.zoom-lich-danh-sach {
+  min-width: 0;
+}
+
+.zoom-lich-dau,
+.zoom-lich-dong {
+  display: grid;
+  grid-template-columns:
+    minmax(170px, 2fr)
+    minmax(92px, 0.9fr)
+    minmax(62px, 0.65fr)
+    minmax(92px, 0.8fr)
+    minmax(120px, 1fr)
+    minmax(220px, auto);
+  gap: 10px;
+  align-items: center;
+}
+
+.zoom-lich-dau {
+  padding: 8px 12px;
+  color: var(--muted);
+  font-size: var(--tools-text-meta);
+  font-weight: 600;
+}
+
+.zoom-lich-dong {
+  position: relative;
+  min-width: 0;
+  margin-bottom: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: var(--tools-text-body);
+  line-height: 1.45;
+}
+
+.zoom-lich-cot {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.zoom-lich-ten {
+  font-weight: 600;
+}
+
+.zoom-loai-badge {
+  display: block;
+  width: fit-content;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: var(--tools-text-meta);
+  font-weight: 500;
+}
+
+.zoom-lich-hanh-dong {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.zoom-mo-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 10px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.zoom-lich-hanh-dong .secondary-button,
+.zoom-row-menu-button {
+  padding: 7px 10px;
+}
+
+.zoom-sao-chep-phan-hoi {
+  min-width: 0;
+  max-width: 150px;
+  overflow-wrap: anywhere;
+}
+
+.zoom-row-menu-wrap {
+  position: relative;
+}
+
+.zoom-row-menu-button {
+  min-width: 36px;
+  letter-spacing: 1px;
+}
+
+.zoom-row-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 5px);
+  right: 0;
+  width: 150px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.zoom-row-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.zoom-row-menu-item:hover,
+.zoom-row-menu-item:focus-visible {
+  background: var(--surface-2);
+}
+
+.zoom-row-menu-item-danger {
+  color: var(--danger);
+}
+
+.zoom-lich-dong-dang-sua {
+  display: block;
+}
+
+.zoom-sua-form {
+  display: grid;
+  grid-template-columns:
+    minmax(220px, 2fr)
+    minmax(130px, 1fr)
+    minmax(110px, 0.8fr)
+    minmax(120px, 0.8fr)
+    minmax(175px, 1.4fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.zoom-sua-form input,
+.zoom-sua-form select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.zoom-xoa-xac-nhan {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+}
+
+.zoom-xoa-xac-nhan p {
+  margin: 0;
+  font-weight: 600;
+}
+
+.danger-button {
+  padding: 8px 12px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  background: var(--danger);
+  color: #fff;
+  cursor: pointer;
+}
+
+.danger-button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+@media (max-width: 900px) {
+  .zoom-lich-dau {
+    display: none;
+  }
+
+  .zoom-lich-dong {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .zoom-lich-ten,
+  .zoom-lich-hanh-dong,
+  .zoom-xoa-xac-nhan {
+    grid-column: 1 / -1;
+  }
+
+  .zoom-lich-hanh-dong {
+    justify-content: flex-start;
+  }
+
+  .zoom-lich-cot:not(.zoom-lich-ten)::before {
+    content: attr(data-label) ": ";
+    color: var(--muted);
+    font-size: var(--tools-text-meta);
+    font-weight: 500;
+  }
+
+  .zoom-sua-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .zoom-sua-form .zoom-truong-ten {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .zoom-lich-header {
+    align-items: flex-start;
+  }
+
+  .zoom-lich-dong,
+  .zoom-sua-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .zoom-lich-ten,
+  .zoom-lich-hanh-dong,
+  .zoom-xoa-xac-nhan,
+  .zoom-sua-form .zoom-truong-ten {
+    grid-column: 1;
+  }
+
+  .zoom-lich-hanh-dong {
+    align-items: flex-start;
+  }
+
+  .zoom-row-menu {
+    right: auto;
+    left: 0;
+  }
+}
+
 /* --- DANG NHAP / TAI KHOAN --- */
 
 .profile-info {

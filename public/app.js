@@ -1,6 +1,7 @@
 import { CONFIG_TABS, pushActivityLog, refreshSettingsDynamicData } from "./config.js";
 import { napHuanLuyen } from "./training.js";
 import { napEmail } from "./email.js";
+import { napZoom } from "./zoom.js";
 const socket = io();
 // Chi hien log CUA TAI KHOAN ZALO DANG XEM. Dong log sinh ra ngay truoc khi doi
 // tai khoan van co the toi muon, khong duoc de no lot vao man LOG cua tai khoan moi.
@@ -595,6 +596,59 @@ railLogoutMenu?.addEventListener("click", (event) => {
 
 // --- Chuyen phan he ---
 
+// Cong cu dang chon chi song trong phien trinh duyet. Khong ghi DB/localStorage.
+const toolGrid = document.querySelector(".tool-grid");
+const toolCards = [...document.querySelectorAll("[data-tool]")];
+const toolDetails = [...document.querySelectorAll("[data-tool-detail]")];
+let activeTool = "zoom";
+
+function chonCongCu(tool, { napNoiDung = false } = {}) {
+  if (!toolCards.some((card) => card.dataset.tool === tool)) return;
+  activeTool = tool;
+
+  for (const card of toolCards) {
+    const dangChon = card.dataset.tool === activeTool;
+    card.classList.toggle("active", dangChon);
+    card.setAttribute("aria-selected", String(dangChon));
+    card.tabIndex = dangChon ? 0 : -1;
+  }
+
+  for (const detail of toolDetails) {
+    const dangChon = detail.dataset.toolDetail === activeTool;
+    detail.classList.toggle("hidden", !dangChon);
+    detail.setAttribute("aria-hidden", String(!dangChon));
+  }
+
+  // Chi list provider khi Zoom that su duoc chon. napZoom() tu gop cac request
+  // list trung nhau; Zoho/Google khong bao gio vo tinh kich hoat Zoom network.
+  if (napNoiDung && activeTool === "zoom") void napZoom();
+}
+
+toolGrid?.addEventListener("click", (event) => {
+  const card = event.target.closest("[data-tool]");
+  if (!card || !toolGrid.contains(card)) return;
+  chonCongCu(card.dataset.tool, { napNoiDung: true });
+});
+
+// Tab semantics: mui ten/Home/End doi tab va dua focus toi dung card.
+toolGrid?.addEventListener("keydown", (event) => {
+  const card = event.target.closest("[data-tool]");
+  if (!card) return;
+  const viTri = toolCards.indexOf(card);
+  let tiepTheo = null;
+  if (event.key === "ArrowRight" || event.key === "ArrowDown") tiepTheo = (viTri + 1) % toolCards.length;
+  if (event.key === "ArrowLeft" || event.key === "ArrowUp") tiepTheo = (viTri - 1 + toolCards.length) % toolCards.length;
+  if (event.key === "Home") tiepTheo = 0;
+  if (event.key === "End") tiepTheo = toolCards.length - 1;
+  if (tiepTheo === null) return;
+  event.preventDefault();
+  const cardMoi = toolCards[tiepTheo];
+  chonCongCu(cardMoi.dataset.tool, { napNoiDung: true });
+  cardMoi.focus();
+});
+
+chonCongCu(activeTool);
+
 els.moduleNav?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-module]");
   if (!button) return;
@@ -609,7 +663,12 @@ els.moduleNav?.addEventListener("click", (event) => {
 
   // Nap lan dau khi thuc su mo phan he, khong goi OpenCode ngay luc tai trang.
   if (target === "training") napHuanLuyen();
-  if (target === "email") napEmail();
+  // Cau hinh Zoho gio nam trong phan he Cong cu (khoa "note"), khong con phan he
+  // Email rieng nua. Khoa van la "note" vi no da nam trong hop dong dieu huong.
+  if (target === "note") {
+    napEmail();
+    if (activeTool === "zoom") napZoom();
+  }
 });
 
 // --- Keo doi do rong 2 cot ---
