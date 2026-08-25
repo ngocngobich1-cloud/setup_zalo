@@ -182,7 +182,8 @@
         </section>
 
         <section class="module-panel hidden" id="module-training">
-          <div class="training-panel">
+          <div class="training-layout">
+          <div class="training-panel training-command-panel">
             <header class="training-header">
               <div>
                 <h2>Huấn luyện bot</h2>
@@ -209,6 +210,58 @@
                 </div>
               </div>
             </form>
+          </div>
+
+          <aside class="training-config-panel" id="training-config-panel" aria-label="Cấu hình trợ lý">
+            <header class="training-config-header">
+              <div>
+                <span class="training-config-kicker">Cấu hình trợ lý</span>
+                <h3>Dùng đúng cấu hình đang có</h3>
+              </div>
+              <span id="onboarding-progress" class="onboarding-progress hidden">Bước 1/9</span>
+            </header>
+
+            <div id="onboarding-key-links" class="onboarding-key-links">
+              <span>Lấy API key:</span>
+              <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer">Groq</a>
+              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">Google AI</a>
+              <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">OpenAI</a>
+              <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">Anthropic</a>
+            </div>
+
+            <div class="canonical-config-stack">
+              <section class="canonical-config-section" data-canonical-slot="api-key">
+                <h4>1. API Key</h4>
+                <div id="onboarding-slot-api-key"></div>
+              </section>
+              <section class="canonical-config-section" data-canonical-slot="model">
+                <h4>2–3. Hãng AI và Model</h4>
+                <div id="onboarding-slot-model"></div>
+              </section>
+              <section class="canonical-config-section" data-canonical-slot="soul">
+                <h4>4. Soul</h4>
+                <div id="onboarding-slot-soul"></div>
+              </section>
+              <section class="canonical-config-section" data-canonical-slot="tone">
+                <h4>5. Giọng điệu</h4>
+                <div id="onboarding-slot-tone"></div>
+              </section>
+              <section class="canonical-config-section" data-canonical-slot="topics">
+                <h4>6. Chủ đề được phép trả lời</h4>
+                <div id="onboarding-slot-topics"></div>
+              </section>
+              <section class="canonical-config-section canonical-actions-section" data-canonical-slot="ai-actions">
+                <div id="onboarding-slot-ai-actions"></div>
+              </section>
+              <section class="canonical-config-section" data-canonical-slot="admin">
+                <h4>7. Admin</h4>
+                <div id="onboarding-slot-admin"></div>
+              </section>
+              <section class="canonical-config-section canonical-actions-section" data-canonical-slot="admin-actions">
+                <div id="onboarding-slot-admin-actions"></div>
+              </section>
+            </div>
+          </aside>
           </div>
         </section>
 
@@ -344,6 +397,31 @@
           <pre id="kp-content" class="kp-content"></pre>
         </div>
       </div>
+    </div>
+
+    <div id="first-run-modal" class="modal onboarding-first-run hidden" role="dialog" aria-modal="true"
+         aria-labelledby="first-run-title">
+      <div class="modal-content onboarding-first-run-card">
+        <div class="onboarding-first-run-icon" aria-hidden="true">AI</div>
+        <h2 id="first-run-title">Bắt đầu cài đặt trợ lý AI hỗ trợ bạn</h2>
+        <p>Em sẽ hướng dẫn từng bước ngay trên những ô cấu hình sẵn có. Chị có thể dừng và tiếp tục vào lần sau.</p>
+        <div class="onboarding-first-run-actions">
+          <button id="btn-onboarding-later" class="secondary-button" type="button">Để sau</button>
+          <button id="btn-onboarding-start" class="primary-button" type="button">Bắt đầu</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="onboarding-coach" class="onboarding-coach hidden" aria-live="polite">
+      <div id="onboarding-highlight" class="onboarding-highlight" aria-hidden="true"></div>
+      <section id="onboarding-bubble" class="onboarding-bubble" role="status">
+        <button id="onboarding-dismiss" class="onboarding-dismiss" type="button" aria-label="Ẩn hướng dẫn">&times;</button>
+        <span id="onboarding-bubble-step" class="onboarding-bubble-step">Bước 1/9</span>
+        <h3 id="onboarding-bubble-title"></h3>
+        <p id="onboarding-bubble-body"></p>
+        <div id="onboarding-bubble-actions" class="onboarding-bubble-actions"></div>
+        <span class="onboarding-bubble-tail" aria-hidden="true"></span>
+      </section>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>

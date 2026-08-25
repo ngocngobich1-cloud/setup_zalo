@@ -3,6 +3,13 @@ import { napHuanLuyen } from "./training.js";
 import { napEmail } from "./email.js";
 import { napZoom } from "./zoom.js";
 import { napWebsite } from "./website.js";
+import {
+  datManHinhHuanLuyen,
+  dongBoTrangThaiZalo,
+  khoiTaoOnboarding,
+  sauKhiDongCauHinh,
+  truocKhiMoCauHinh,
+} from "./onboarding.js";
 const socket = io();
 // Chi hien log CUA TAI KHOAN ZALO DANG XEM. Dong log sinh ra ngay truoc khi doi
 // tai khoan van co the toi muon, khong duoc de no lot vao man LOG cua tai khoan moi.
@@ -211,6 +218,7 @@ function setAccount(username) {
 }
 
 function applyState(next) {
+  const daDangNhap = state.loggedIn;
   Object.assign(state, {
     loggedIn: Boolean(next.loggedIn),
     loggingIn: Boolean(next.loggingIn),
@@ -223,6 +231,11 @@ function applyState(next) {
   renderShell();
   renderLogin();
   renderZaloStatus();
+  void dongBoTrangThaiZalo({
+    loggedIn: state.loggedIn,
+    justLoggedIn: !daDangNhap && state.loggedIn,
+    ownerUid: state.uid,
+  });
 }
 
 function renderShell() {
@@ -493,6 +506,7 @@ function renderSettingsTabs() {
 renderSettingsTabs();
 
 function openSettings() {
+  truocKhiMoCauHinh();
   // Nap lai TOAN BO du lieu dong theo tai khoan Zalo: nhom/nick AI Chat, lich hen,
   // khach hang, nhat ky, nick OTP/Admin. KHONG await: modal phai bat len ngay,
   // du lieu tu dien vao khi mang tra ve.
@@ -502,6 +516,7 @@ function openSettings() {
 
 els.btnCloseSettings?.addEventListener("click", () => {
   els.settingsModal.classList.add("hidden");
+  sauKhiDongCauHinh();
 });
 
 // --- Dropdown tai khoan ---
@@ -651,11 +666,9 @@ toolGrid?.addEventListener("keydown", (event) => {
 
 chonCongCu(activeTool);
 
-els.moduleNav?.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-module]");
+function chonPhanHe(target) {
+  const button = els.moduleNav?.querySelector(`[data-module="${target}"]`);
   if (!button) return;
-  const target = button.dataset.module;
-
   els.moduleNav.querySelectorAll("[data-module]").forEach((item) => {
     item.classList.toggle("active", item === button);
   });
@@ -664,6 +677,7 @@ els.moduleNav?.addEventListener("click", (event) => {
   });
 
   // Nap lan dau khi thuc su mo phan he, khong goi OpenCode ngay luc tai trang.
+  void datManHinhHuanLuyen(target === "training");
   if (target === "training") napHuanLuyen();
   // Cau hinh Zoho gio nam trong phan he Cong cu (khoa "note"), khong con phan he
   // Email rieng nua. Khoa van la "note" vi no da nam trong hop dong dieu huong.
@@ -672,7 +686,15 @@ els.moduleNav?.addEventListener("click", (event) => {
     if (activeTool === "zoom") napZoom();
     if (activeTool === "website") napWebsite();
   }
+}
+
+els.moduleNav?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-module]");
+  if (!button) return;
+  chonPhanHe(button.dataset.module);
 });
+
+khoiTaoOnboarding({ selectModule: chonPhanHe });
 
 // --- Keo doi do rong 2 cot ---
 

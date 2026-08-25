@@ -1282,6 +1282,41 @@ app.get("/api/zalo/groups/:groupId/members", async (req, res) => {
   }
 });
 
+/* --- FIRST-RUN AI ONBOARDING --- */
+
+app.get("/api/onboarding", async (_req, res) => {
+  try {
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    const onboarding = await import("./lib/onboarding.js");
+    res.json(await onboarding.trangThaiOnboarding(ownerUid));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/onboarding/action", async (req, res) => {
+  try {
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    const onboarding = await import("./lib/onboarding.js");
+    res.json(await onboarding.xuLyHanhDongOnboarding(ownerUid, req.body?.action, req.body?.payload));
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/onboarding/answer", async (req, res) => {
+  try {
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    const onboarding = await import("./lib/onboarding.js");
+    res.json(await onboarding.traLoiOnboarding(ownerUid, req.body?.text));
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 /* --- XUONG HUAN LUYEN --- */
 
 const trainingUpload = multer({

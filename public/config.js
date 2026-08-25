@@ -552,6 +552,9 @@ export const CONFIG_TABS = [
           await napDanhSachHangChoKey();
           await napAgentVaModel(ocAgent.value, ocProvider.value ? ocModel.value : "");
           baoKey("Đã lưu key. Bấm Thử key để chắc chắn key còn dùng được.", "var(--ok)");
+          window.dispatchEvent(new CustomEvent("zalo:canonical-save", {
+            detail: { section: "api-key", providerId: keyProvider.value },
+          }));
         } catch (e) {
           baoKey(e.message, "var(--danger)");
         }
@@ -754,6 +757,13 @@ export const CONFIG_TABS = [
           const data = await res.json();
           if (data.ok) {
             statusText.textContent = data.ready ? "Đã ghi nhớ · AI Chat đang bật" : "Đã ghi nhớ · Chưa đủ cấu hình";
+            window.dispatchEvent(new CustomEvent("zalo:canonical-save", {
+              detail: {
+                section: "ai-config",
+                providerId: ocProvider.value,
+                modelId: ocProvider.value ? ocModel.value : "",
+              },
+            }));
           } else {
             alert(data.error || "Lỗi lưu cấu hình");
             statusText.textContent = "";
@@ -1626,6 +1636,9 @@ export const CONFIG_TABS = [
           if (!res.ok) throw new Error(data.error || "Lưu thất bại.");
           smtp.password.value = "";
           baoOtp(otpEnabled.checked ? "Đã lưu · OTP đang BẬT" : "Đã lưu · OTP đang TẮT", "var(--ok)");
+          window.dispatchEvent(new CustomEvent("zalo:canonical-save", {
+            detail: { section: "admin", adminUid: adminZalo.value },
+          }));
           await napCaiDatOtp();
         } catch (err) {
           baoOtp(err.message, "var(--danger)");

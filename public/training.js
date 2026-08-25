@@ -15,6 +15,28 @@ let dinhKem = [];
 let docDuocAnh = false;
 let dangGui = false;
 let daNap = false;
+let onboardingController = null;
+
+export function datDieuPhoiOnboarding(controller) {
+  onboardingController = controller || null;
+  const dangOnboarding = Boolean(onboardingController?.active);
+  const composerSpotlight = Boolean(onboardingController?.spotlightComposer);
+  els.form.classList.toggle("training-form-onboarding", dangOnboarding);
+  els.form.classList.toggle("training-form-composer-spotlight", composerSpotlight);
+  els.btnAttach.disabled = dangOnboarding ? false : !docDuocAnh;
+  els.btnSynth.disabled = dangOnboarding || dangGui;
+  els.btnReset.disabled = dangOnboarding || dangGui;
+  els.text.placeholder = dangOnboarding
+    ? "Trả lời Bot Chỉ huy từng câu một…"
+    : "Dán ảnh chat mẫu bằng Ctrl+V, hoặc gõ lời dặn về giọng điệu…";
+}
+
+export function hienTinOnboarding(content) {
+  els.log.querySelectorAll("[data-onboarding-message]").forEach((node) => node.remove());
+  if (!content) return;
+  const row = themDong({ role: "assistant", content });
+  row.dataset.onboardingMessage = "true";
+}
 
 function veDanhSachTep() {
   els.fileList.innerHTML = "";
@@ -135,6 +157,22 @@ els.form.addEventListener("submit", async (event) => {
   if (dangGui) return;
   const text = els.text.value.trim();
   if (!text && dinhKem.length === 0) return;
+
+  if (onboardingController?.active) {
+    if (!text) return;
+    themDong({ role: "user", content: text, files: [] });
+    els.text.value = "";
+    khoa(true);
+    try {
+      await onboardingController.submit(text);
+    } catch (error) {
+      themDong({ role: "assistant", content: "Lỗi: " + error.message });
+    } finally {
+      khoa(false);
+      datDieuPhoiOnboarding(onboardingController);
+    }
+    return;
+  }
 
   themDong({ role: "user", content: text, files: dinhKem.map((f) => ({ filename: f.name })) });
   const cho = trangThaiCho("Đang đọc và suy nghĩ…");
