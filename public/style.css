@@ -1336,6 +1336,111 @@ input {
   line-height: 1.4;
 }
 
+/* --- WEBSITE API CONNECTOR --- */
+.website-connector,
+.website-customers {
+  max-width: 1000px;
+}
+
+.website-form {
+  display: grid;
+  gap: 14px;
+  max-width: 720px;
+}
+
+.website-field {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.website-field > span {
+  color: var(--muted);
+  font-size: var(--tools-text-body);
+  font-weight: 600;
+}
+
+.website-actions,
+.website-customers-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.website-actions {
+  margin-top: 2px;
+}
+
+.website-message {
+  min-height: 20px;
+  margin: 0;
+}
+
+.website-customers {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.website-customers-header {
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.website-customers-header h4 {
+  margin: 0;
+  font-size: var(--tools-text-subsection-title);
+}
+
+.website-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.website-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+}
+
+.website-table th,
+.website-table td {
+  padding: 11px 13px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.website-table th {
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: var(--tools-text-meta);
+  font-weight: 600;
+}
+
+.website-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.website-empty {
+  margin: 0;
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  text-align: center;
+}
+
+@media (max-width: 720px) {
+  .website-field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+}
+
 /* --- KHOI CAU HINH ZOOM --- */
 
 #zoom-panel {

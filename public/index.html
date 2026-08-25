@@ -251,6 +251,19 @@
                 <span class="tool-status" id="tool-zoom-status">Chưa kết nối</span>
               </button>
 
+              <button class="tool-card" id="tool-website" type="button" role="tab"
+                      data-tool="website" aria-selected="false" aria-controls="website-detail" tabindex="-1">
+                <span class="tool-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M3 12h18M12 3c2.5 2.5 3.8 5.5 3.8 9S14.5 18.5 12 21M12 3C9.5 5.5 8.2 8.5 8.2 12S9.5 18.5 12 21" />
+                  </svg>
+                </span>
+                <span class="tool-name">Website</span>
+                <span class="tool-desc">Kết nối với website qua API</span>
+                <span class="tool-status" id="tool-website-status">Chưa kết nối</span>
+              </button>
+
               <button class="tool-card" id="tool-google-meet" type="button" role="tab"
                       data-tool="google-meet" aria-selected="false"
                       aria-controls="google-meet-detail" tabindex="-1">
@@ -276,6 +289,15 @@
                 <p class="tools-detail-status" id="zoom-detail-status">Chưa kết nối</p>
               </header>
               <div id="zoom-panel"></div>
+            </section>
+
+            <section class="tools-detail hidden" id="website-detail" role="tabpanel"
+                     data-tool-detail="website" aria-labelledby="tool-website" aria-hidden="true">
+              <header class="tools-detail-header">
+                <h3 class="tools-detail-title">Website</h3>
+                <p class="tools-detail-status" id="website-detail-status">Chưa kết nối</p>
+              </header>
+              <div id="website-panel"></div>
             </section>
 
             <!-- Cau hinh Zoho THAT. Day chinh la #email-panel duoc CHUYEN sang

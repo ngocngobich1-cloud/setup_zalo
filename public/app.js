@@ -2,6 +2,7 @@ import { CONFIG_TABS, pushActivityLog, refreshSettingsDynamicData } from "./conf
 import { napHuanLuyen } from "./training.js";
 import { napEmail } from "./email.js";
 import { napZoom } from "./zoom.js";
+import { napWebsite } from "./website.js";
 const socket = io();
 // Chi hien log CUA TAI KHOAN ZALO DANG XEM. Dong log sinh ra ngay truoc khi doi
 // tai khoan van co the toi muon, khong duoc de no lot vao man LOG cua tai khoan moi.
@@ -619,9 +620,10 @@ function chonCongCu(tool, { napNoiDung = false } = {}) {
     detail.setAttribute("aria-hidden", String(!dangChon));
   }
 
-  // Chi list provider khi Zoom that su duoc chon. napZoom() tu gop cac request
-  // list trung nhau; Zoho/Google khong bao gio vo tinh kich hoat Zoom network.
+  // Chi nap connector khi dung card cua no duoc chon; khong provider nao tu
+  // kich hoat network cua provider khac.
   if (napNoiDung && activeTool === "zoom") void napZoom();
+  if (napNoiDung && activeTool === "website") void napWebsite();
 }
 
 toolGrid?.addEventListener("click", (event) => {
@@ -668,6 +670,7 @@ els.moduleNav?.addEventListener("click", (event) => {
   if (target === "note") {
     napEmail();
     if (activeTool === "zoom") napZoom();
+    if (activeTool === "website") napWebsite();
   }
 });
 

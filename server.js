@@ -880,6 +880,65 @@ app.delete("/api/zoho/lich-su", async (_req, res) => {
   }
 });
 
+/* --- WEBSITE API CONNECTOR --- */
+
+function traLoiLoiWebsite(res, website, error) {
+  if (error instanceof website.LoiWebsite) {
+    return res.status(400).json({ error: error.message, ma: error.ma });
+  }
+  return res.status(500).json({ error: "Website connector gặp lỗi không mong đợi." });
+}
+
+app.get("/api/website", async (_req, res) => {
+  const website = await import("./lib/website.js");
+  try {
+    res.json({ config: await website.getSafeWebsiteConfig() });
+  } catch (error) {
+    traLoiLoiWebsite(res, website, error);
+  }
+});
+
+app.post("/api/website/luu", async (req, res) => {
+  const website = await import("./lib/website.js");
+  try {
+    const config = await website.saveWebsiteConfig({
+      name: req.body?.name,
+      apiUrl: req.body?.apiUrl,
+      apiToken: req.body?.apiToken,
+    });
+    res.json({ ok: true, config });
+  } catch (error) {
+    traLoiLoiWebsite(res, website, error);
+  }
+});
+
+app.post("/api/website/kiem-tra", async (_req, res) => {
+  const website = await import("./lib/website.js");
+  try {
+    res.json({ ok: true, ...(await website.testWebsiteConnection()) });
+  } catch (error) {
+    traLoiLoiWebsite(res, website, error);
+  }
+});
+
+app.post("/api/website/ngat", async (_req, res) => {
+  const website = await import("./lib/website.js");
+  try {
+    res.json({ ok: true, config: await website.disconnectWebsite() });
+  } catch (error) {
+    traLoiLoiWebsite(res, website, error);
+  }
+});
+
+app.get("/api/website/customers", async (_req, res) => {
+  const website = await import("./lib/website.js");
+  try {
+    res.json(await website.fetchWebsiteCustomers());
+  } catch (error) {
+    traLoiLoiWebsite(res, website, error);
+  }
+});
+
 /* --- ZOOM (Server-to-Server OAuth) ---
  *
  * Vong nay CHI lo ket noi: luu chia khoa, kiem tra, ngat. Khong co duong nao
