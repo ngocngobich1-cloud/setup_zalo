@@ -1,5 +1,12 @@
-import { CONFIG_TABS, pushActivityLog, refreshSettingsDynamicData } from "./config.js";
+import {
+  CONFIG_TABS,
+  invalidateSettingsOwnerState,
+  pushActivityLog,
+  refreshSettingsDynamicData,
+  setSettingsOwnerUid,
+} from "./config.js";
 import { napHuanLuyen } from "./training.js";
+import { dinhDangDungLuong, phanLoaiMediaTinNhan } from "./chat-media.js";
 import { napEmail } from "./email.js";
 import { napZoom } from "./zoom.js";
 import { napWebsite } from "./website.js";
@@ -219,6 +226,13 @@ function setAccount(username) {
 
 function applyState(next) {
   const daDangNhap = state.loggedIn;
+  const uidCu = state.uid ? String(state.uid) : null;
+  const uidMoi = next.uid ? String(next.uid) : null;
+  const doiOwner = uidCu !== uidMoi;
+  if (doiOwner) {
+    setSettingsOwnerUid(uidMoi);
+    invalidateSettingsOwnerState();
+  }
   Object.assign(state, {
     loggedIn: Boolean(next.loggedIn),
     loggingIn: Boolean(next.loggingIn),
@@ -236,6 +250,9 @@ function applyState(next) {
     justLoggedIn: !daDangNhap && state.loggedIn,
     ownerUid: state.uid,
   });
+  if (doiOwner && state.loggedIn && !els.settingsModal.classList.contains("hidden")) {
+    refreshSettingsDynamicData();
+  }
 }
 
 function renderShell() {
@@ -332,6 +349,74 @@ async function selectThread(thread) {
   renderMessages(state.messagesByThread.get(thread.id) || []);
 }
 
+function taoThongTinTep(filename, size) {
+  const info = document.createElement("span");
+  info.className = "chat-file-info";
+  const name = document.createElement("strong");
+  name.textContent = filename || "Tệp đính kèm";
+  info.append(name);
+  const readableSize = dinhDangDungLuong(size);
+  if (readableSize) {
+    const meta = document.createElement("small");
+    meta.textContent = readableSize;
+    info.append(meta);
+  }
+  return info;
+}
+
+
+function taoTheMedia(message) {
+  const media = phanLoaiMediaTinNhan(message);
+  if (!media) return null;
+
+  if (media.kind === "image") {
+    const wrap = document.createElement("div");
+    wrap.className = "chat-image-wrap";
+    const link = document.createElement("a");
+    link.className = "chat-image-link";
+    link.href = media.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.setAttribute("aria-label", "Mở ảnh kích thước lớn");
+    const image = document.createElement("img");
+    image.className = "chat-image";
+    image.src = media.thumbnailUrl;
+    image.alt = media.filename || "Ảnh đính kèm";
+    image.loading = "lazy";
+    image.onerror = () => {
+      const fallback = document.createElement("span");
+      fallback.className = "chat-media-fallback";
+      fallback.textContent = "Mở ảnh";
+      image.replaceWith(fallback);
+    };
+    link.append(image);
+    wrap.append(link);
+    if (media.caption) {
+      const caption = document.createElement("div");
+      caption.className = "chat-media-caption";
+      caption.textContent = media.caption;
+      wrap.append(caption);
+    }
+    return wrap;
+  }
+
+  const link = document.createElement("a");
+  link.className = "chat-file-card";
+  link.href = media.url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  const icon = document.createElement("span");
+  icon.className = "chat-file-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.textContent = "📄";
+  const action = document.createElement("span");
+  action.className = "chat-file-action";
+  action.textContent = "Mở / tải";
+  link.append(icon, taoThongTinTep(media.filename, media.size), action);
+  return link;
+}
+
+
 function renderMessages(messages) {
   els.messages.innerHTML = "";
   let lastDay = null;
@@ -362,7 +447,11 @@ function renderMessages(messages) {
       sender.textContent = message.senderName;
       bubble.append(sender);
     }
-    if (message.stickerUrl) {
+    const media = taoTheMedia(message);
+    if (media) {
+      bubble.classList.add("bubble-media");
+      bubble.append(media);
+    } else if (message.stickerUrl) {
       bubble.classList.add("bubble-sticker");
       const sticker = document.createElement("img");
       sticker.className = "sticker";
