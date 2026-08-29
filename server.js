@@ -29,6 +29,11 @@ import {
   updateAutoReplyRule,
   deleteAutoReplyRule,
   clearActivityLogs,
+  deletePdfAutomationRule,
+  getPdfAutomationRule,
+  insertPdfAutomationRule,
+  listPdfAutomationRules,
+  updatePdfAutomationRule,
 } from "./lib/db.js";
 import * as knowledge from "./lib/knowledge.js";
 import * as activityLog from "./lib/activity-log.js";
@@ -50,6 +55,13 @@ import {
   kiemTraKetNoiKhiMoApp,
 } from "./lib/zalo-service.js";
 import * as aiChat from "./lib/ai-chat.js";
+import {
+  clearPendingPdfConfirmationsForRule,
+  parsePdfEnabled,
+  preparePdfKeyword,
+  validatePdfUpload,
+} from "./lib/pdf-automation.js";
+import { PDF_AUTOMATION_MULTER_OPTIONS } from "./lib/pdf-upload-options.js";
 
 process.on("unhandledRejection", (error) => console.error("[server]", error));
 process.on("uncaughtException", (error) => console.error("[server]", error));
@@ -476,6 +488,8 @@ const zaloSendUpload = multer({
   limits: { files: 1 },
 });
 
+const pdfAutomationUpload = multer(PDF_AUTOMATION_MULTER_OPTIONS);
+
 app.get("/api/bootstrap", async (req, res) => {
   const state = await bootstrapState();
   res.json({ ...state, user: { id: req.session.userId, username: req.session.username } });
@@ -566,6 +580,81 @@ app.delete("/api/auto-reply/:id", async (req, res) => {
     const ownerUid = chuHienTai();
     if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
     await deleteAutoReplyRule(ownerUid, req.params.id);
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+function pdfAutomationErrorStatus(error) {
+  const message = String(error?.message || "");
+  if (error?.code === "SQLITE_CONSTRAINT" || /UNIQUE constraint failed/i.test(message)) return 409;
+  return 400;
+}
+
+function handlePdfAutomationUpload(req, res, next) {
+  pdfAutomationUpload.single("file")(req, res, (error) => {
+    if (!error) return next();
+    const message = error.code === "LIMIT_FILE_SIZE" ? "File PDF vượt quá 10 MB." : error.message;
+    return res.status(400).json({ error: message });
+  });
+}
+
+app.get("/api/pdf-automation-rules", async (_req, res) => {
+  try {
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    res.json({ rules: await listPdfAutomationRules(ownerUid) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/pdf-automation-rules", handlePdfAutomationUpload, async (req, res) => {
+  const ownerUid = chuHienTai();
+  if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+  try {
+    const keyword = preparePdfKeyword(req.body?.keyword);
+    const pdf = validatePdfUpload(req.file);
+    const rule = await insertPdfAutomationRule(ownerUid, {
+      ...keyword,
+      ...pdf,
+      enabled: parsePdfEnabled(req.body?.enabled, true),
+    });
+    res.status(201).json({ rule });
+  } catch (error) {
+    res.status(pdfAutomationErrorStatus(error)).json({ error: error.message });
+  }
+});
+
+app.put("/api/pdf-automation-rules/:id", handlePdfAutomationUpload, async (req, res) => {
+  const ownerUid = chuHienTai();
+  if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+  try {
+    const existing = await getPdfAutomationRule(ownerUid, req.params.id);
+    if (!existing) return res.status(404).json({ error: "Không tìm thấy rule PDF." });
+
+    const changes = {};
+    if (req.body?.keyword !== undefined) Object.assign(changes, preparePdfKeyword(req.body.keyword));
+    if (req.body?.enabled !== undefined) changes.enabled = parsePdfEnabled(req.body.enabled, existing.enabled);
+    if (req.file) Object.assign(changes, validatePdfUpload(req.file));
+
+    const rule = await updatePdfAutomationRule(ownerUid, req.params.id, changes);
+    if (!rule) return res.status(404).json({ error: "Không tìm thấy rule PDF." });
+    if (!rule.enabled) clearPendingPdfConfirmationsForRule(ownerUid, rule.id);
+    res.json({ rule });
+  } catch (error) {
+    res.status(pdfAutomationErrorStatus(error)).json({ error: error.message });
+  }
+});
+
+app.delete("/api/pdf-automation-rules/:id", async (req, res) => {
+  try {
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    const removed = await deletePdfAutomationRule(ownerUid, req.params.id);
+    if (!removed) return res.status(404).json({ error: "Không tìm thấy rule PDF." });
+    clearPendingPdfConfirmationsForRule(ownerUid, req.params.id);
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: error.message });

@@ -46,6 +46,7 @@ let invalidateKnowledgeOwnerSink = null;
 let invalidateScheduleOwnerSink = null;
 let invalidateCustomersOwnerSink = null;
 let invalidateLogsOwnerSink = null;
+let invalidatePdfAutomationOwnerSink = null;
 let invalidateAutoReplyOwnerSink = null;
 
 function chupSettingsOwner() {
@@ -88,6 +89,7 @@ export function invalidateSettingsOwnerState() {
   invalidateScheduleOwnerSink?.();
   invalidateCustomersOwnerSink?.();
   invalidateLogsOwnerSink?.();
+  invalidatePdfAutomationOwnerSink?.();
 }
 
 export const CONFIG_TABS = [
@@ -1906,4 +1908,214 @@ export const CONFIG_TABS = [
       napCaiDatOtp();
     }
   },
+  {
+    id: "pdf-automation",
+    label: "Tự động gửi tài liệu",
+    mount(panel) {
+      panel.innerHTML = `
+        <div style="margin-bottom:16px; color:var(--muted); font-size:14px;">
+          Khi tin khách chứa từ khóa, bot hỏi xác nhận. Chỉ khi chính người đó trả lời đúng <strong>OK</strong>, bot mới gửi PDF.
+        </div>
+        <form id="pdf-automation-form" class="rule-form">
+          <input type="hidden" id="pdf-rule-id" />
+          <div class="form-group">
+            <label for="pdf-keyword">Tên tài liệu / từ khóa</label>
+            <input type="text" id="pdf-keyword" required autocomplete="off" placeholder="Ví dụ: template" />
+          </div>
+          <div class="form-group">
+            <label for="pdf-file">File PDF</label>
+            <input type="file" id="pdf-file" accept=".pdf,application/pdf" />
+            <div id="pdf-current-file" class="field-hint" style="font-size:12px; margin-top:5px;"></div>
+          </div>
+          <label class="checkbox-label" style="margin-bottom:12px;">
+            <input type="checkbox" id="pdf-enabled" checked />
+            Bật rule này
+          </label>
+          <div class="form-actions">
+            <span id="pdf-status" style="color:var(--muted); font-size:13px; flex:1;"></span>
+            <button type="button" id="pdf-cancel" class="secondary-button hidden">Huỷ sửa</button>
+            <button type="submit" class="primary-button">Lưu</button>
+          </div>
+        </form>
+        <div class="rule-list-header" style="margin-top:20px;">
+          <h3>Tài liệu đã cấu hình</h3>
+        </div>
+        <div id="pdf-rule-list" class="rule-list"></div>
+      `;
+
+      const pdfForm = panel.querySelector("#pdf-automation-form");
+      const pdfRuleId = panel.querySelector("#pdf-rule-id");
+      const pdfKeyword = panel.querySelector("#pdf-keyword");
+      const pdfFile = panel.querySelector("#pdf-file");
+      const pdfEnabled = panel.querySelector("#pdf-enabled");
+      const pdfCurrentFile = panel.querySelector("#pdf-current-file");
+      const pdfStatus = panel.querySelector("#pdf-status");
+      const pdfCancel = panel.querySelector("#pdf-cancel");
+      const pdfRuleList = panel.querySelector("#pdf-rule-list");
+      let pdfRules = [];
+
+      function showPdfStatus(text, color = "var(--muted)") {
+        pdfStatus.style.color = color;
+        pdfStatus.textContent = text;
+      }
+
+      function resetPdfForm() {
+        pdfForm.reset();
+        pdfRuleId.value = "";
+        pdfEnabled.checked = true;
+        pdfCurrentFile.textContent = "Chọn một file PDF, tối đa 10 MB.";
+        pdfCancel.classList.add("hidden");
+      }
+
+      function editPdfRule(rule, { chooseFile = false } = {}) {
+        pdfRuleId.value = rule.id;
+        pdfKeyword.value = rule.keyword;
+        pdfFile.value = "";
+        pdfEnabled.checked = Boolean(rule.enabled);
+        pdfCurrentFile.textContent = `Đang dùng: ${rule.pdfName} · ${(rule.pdfSize / 1024).toFixed(rule.pdfSize >= 1024 * 1024 ? 0 : 1)} KB. Để trống nếu giữ file này.`;
+        pdfCancel.classList.remove("hidden");
+        pdfKeyword.focus();
+        if (chooseFile) pdfFile.click();
+      }
+
+      function renderPdfRules() {
+        pdfRuleList.innerHTML = "";
+        if (!pdfRules.length) {
+          pdfRuleList.innerHTML = "<div class='empty-hint' style='margin:0; padding:12px;'>Chưa có tài liệu tự động nào.</div>";
+          return;
+        }
+
+        for (const rule of pdfRules) {
+          const item = document.createElement("div");
+          item.className = "rule-item";
+          const info = document.createElement("div");
+          info.className = "rule-info";
+          const keyword = document.createElement("div");
+          keyword.className = "rule-cmd";
+          keyword.textContent = rule.keyword;
+          const file = document.createElement("div");
+          file.className = "rule-reply-preview";
+          file.textContent = `${rule.pdfName} · ${Math.max(1, Math.round(rule.pdfSize / 1024))} KB`;
+          const state = document.createElement("div");
+          state.className = "rule-meta";
+          state.textContent = rule.enabled ? "Đang bật" : "Đang tắt";
+          info.append(keyword, file, state);
+
+          const actions = document.createElement("div");
+          actions.className = "rule-actions";
+          const toggle = document.createElement("button");
+          toggle.type = "button";
+          toggle.className = "secondary-button";
+          toggle.textContent = rule.enabled ? "Tắt" : "Bật";
+          toggle.onclick = async () => {
+            const owner = chupSettingsOwner();
+            const body = new FormData();
+            body.append("enabled", rule.enabled ? "false" : "true");
+            const res = await fetch(`/api/pdf-automation-rules/${rule.id}`, { method: "PUT", body });
+            const data = await res.json();
+            if (!settingsOwnerConHieuLuc(owner)) return;
+            if (!res.ok) return showPdfStatus(data.error || "Không đổi được trạng thái.", "var(--danger)");
+            await loadPdfRules(owner.ownerGeneration);
+          };
+
+          const edit = document.createElement("button");
+          edit.type = "button";
+          edit.className = "secondary-button";
+          edit.textContent = "Sửa từ khóa";
+          edit.onclick = () => editPdfRule(rule);
+
+          const replace = document.createElement("button");
+          replace.type = "button";
+          replace.className = "secondary-button";
+          replace.textContent = "Đổi PDF";
+          replace.onclick = () => editPdfRule(rule, { chooseFile: true });
+
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "secondary-button";
+          remove.textContent = "Xoá";
+          remove.onclick = async () => {
+            if (!confirm(`Xoá rule "${rule.keyword}" và PDF đi kèm?`)) return;
+            const owner = chupSettingsOwner();
+            const res = await fetch(`/api/pdf-automation-rules/${rule.id}`, { method: "DELETE" });
+            const data = await res.json();
+            if (!settingsOwnerConHieuLuc(owner)) return;
+            if (!res.ok) return showPdfStatus(data.error || "Không xoá được rule PDF.", "var(--danger)");
+            resetPdfForm();
+            await loadPdfRules(owner.ownerGeneration);
+          };
+
+          actions.append(toggle, edit, replace, remove);
+          item.append(info, actions);
+          pdfRuleList.append(item);
+        }
+      }
+
+      async function loadPdfRules(generation = settingsOwnerGeneration) {
+        pdfRuleList.innerHTML = "<div class='empty-hint' style='margin:0; padding:12px;'>Đang tải…</div>";
+        try {
+          const res = await fetch("/api/pdf-automation-rules");
+          const data = await res.json();
+          if (generation !== settingsOwnerGeneration) return;
+          if (!res.ok) throw new Error(data.error || "Không tải được tài liệu.");
+          pdfRules = data.rules || [];
+          renderPdfRules();
+        } catch (error) {
+          if (generation !== settingsOwnerGeneration) return;
+          pdfRules = [];
+          pdfRuleList.innerHTML = "<div class='empty-hint' style='margin:0; padding:12px;'>Không tải được danh sách tài liệu.</div>";
+          showPdfStatus(error.message, "var(--danger)");
+        }
+      }
+
+      pdfFile.addEventListener("change", () => {
+        const file = pdfFile.files?.[0];
+        if (!file) return;
+        if (!pdfRuleId.value) pdfKeyword.value = file.name.replace(/\.pdf$/i, "");
+        pdfCurrentFile.textContent = `Đã chọn: ${file.name}`;
+      });
+
+      pdfCancel.addEventListener("click", () => {
+        resetPdfForm();
+        showPdfStatus("");
+      });
+
+      pdfForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const id = pdfRuleId.value;
+        const file = pdfFile.files?.[0];
+        if (!id && !file) return showPdfStatus("Hãy chọn file PDF.", "var(--danger)");
+        const owner = chupSettingsOwner();
+        const body = new FormData();
+        body.append("keyword", pdfKeyword.value.trim());
+        body.append("enabled", pdfEnabled.checked ? "true" : "false");
+        if (file) body.append("file", file);
+        showPdfStatus("Đang lưu…");
+        try {
+          const res = await fetch(id ? `/api/pdf-automation-rules/${id}` : "/api/pdf-automation-rules", {
+            method: id ? "PUT" : "POST",
+            body,
+          });
+          const data = await res.json();
+          if (!settingsOwnerConHieuLuc(owner)) return;
+          if (!res.ok) throw new Error(data.error || "Không lưu được rule PDF.");
+          resetPdfForm();
+          showPdfStatus("Đã lưu.", "var(--ok)");
+          await loadPdfRules(owner.ownerGeneration);
+        } catch (error) {
+          if (settingsOwnerConHieuLuc(owner)) showPdfStatus(error.message, "var(--danger)");
+        }
+      });
+
+      invalidatePdfAutomationOwnerSink = () => {
+        pdfRules = [];
+        pdfRuleList.innerHTML = "";
+        resetPdfForm();
+        showPdfStatus("Đang tải tài liệu của tài khoản Zalo hiện tại…");
+      };
+      dangKyLamMoi("Tự động gửi tài liệu", loadPdfRules);
+      resetPdfForm();
+      loadPdfRules();
+    }
+  }
 ];

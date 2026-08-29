@@ -157,6 +157,8 @@ async function createHarness() {
       return { ...thread, ownerUid: String(ownerUid) };
     },
     getAutoReplyRules: async () => [],
+    getPdfAutomationRuleWithBlob: async () => null,
+    listEnabledPdfAutomationRules: async () => [],
     normalizeIncomingMessage: (message) => message,
     normalizeTs: (value) => Number(value),
     splitIntoBubbles: (text) => [String(text)],
@@ -183,6 +185,26 @@ async function createHarness() {
     capHinhChuTaiKhoanAdmin: () => undefined,
     laLenhAdmin: async () => false,
     xuLyLenh: async () => null,
+    clearAllPendingPdfConfirmations: () => 0,
+    createPdfAutomationHandler: ({
+      listEnabledRules,
+      getRuleWithBlob,
+      sendMessage,
+      isOriginCurrent,
+      getOwnerUid,
+      getRuntimeGeneration,
+      log,
+    }) => {
+      assert.equal(typeof listEnabledRules, "function");
+      assert.equal(typeof getRuleWithBlob, "function");
+      assert.equal(typeof sendMessage, "function");
+      assert.equal(typeof isOriginCurrent, "function");
+      assert.equal(typeof getOwnerUid, "function");
+      assert.equal(typeof getRuntimeGeneration, "function");
+      assert.equal(typeof log, "function");
+      return async () => "CONTINUE";
+    },
+    PDF_AUTOMATION_HANDLED: "HANDLED",
     aiChat: {
       capHinhChuTaiKhoan: () => undefined,
       refreshConfig: async () => undefined,
