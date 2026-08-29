@@ -39,6 +39,7 @@ import * as knowledge from "./lib/knowledge.js";
 import * as activityLog from "./lib/activity-log.js";
 import {
   bootstrapState,
+  captureRuntimeAuthority,
   configureZaloService,
   chuHienTai,
   getMessagesForThread,
@@ -53,6 +54,7 @@ import {
   noiLaiZalo,
   dangXuatZalo,
   kiemTraKetNoiKhiMoApp,
+  applyBotEligibilityTransition,
 } from "./lib/zalo-service.js";
 import * as aiChat from "./lib/ai-chat.js";
 import {
@@ -512,6 +514,9 @@ app.get("/api/messages/:threadId", async (req, res) => {
 });
 
 app.post("/api/send", (req, res) => {
+  // Capture immutable server-owned authority BEFORE Multer's async parsing.
+  // Khong field nao trong req.body duoc phep thay the token nay.
+  const capturedRuntimeAuthority = captureRuntimeAuthority();
   zaloSendUpload.single("file")(req, res, async (uploadError) => {
     if (uploadError) {
       return res.status(400).json({ ok: false, error: uploadError.message });
@@ -527,7 +532,23 @@ app.post("/api/send", (req, res) => {
             height: req.body?.height,
           }
         : null;
-      const message = await sendChatMessage({ ...req.body, attachment });
+      const {
+        threadId,
+        text,
+        threadType,
+        quote,
+        mentions,
+        urgency,
+      } = req.body || {};
+      const message = await sendChatMessage({
+        threadId,
+        text,
+        threadType,
+        quote,
+        mentions,
+        urgency,
+        attachment,
+      }, { capturedRuntimeAuthority });
       res.json({ ok: true, message });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });
@@ -692,8 +713,11 @@ app.post("/api/bot/toggle", async (req, res) => {
     // Cong tac bot thuoc ve DUNG tai khoan Zalo dang dang nhap.
     const chuBot = chuHienTai();
     if (!chuBot) return res.status(400).json({ error: "Chua dang nhap Zalo - khong doi duoc cong tac bot." });
+    const botEnabledTruoc = Boolean(aiChat.getConfig(chuBot)?.botEnabled);
     await setBotEnabled(chuBot, bat);
     await aiChat.refreshConfig();
+    const botEnabledSau = Boolean(aiChat.getConfig(chuBot)?.botEnabled);
+    applyBotEligibilityTransition(botEnabledTruoc, botEnabledSau);
     await activityLog.addLog({
       event: bat ? "bot_on" : "bot_off",
       level: bat ? "ok" : "warn",
