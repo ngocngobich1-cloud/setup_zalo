@@ -17,6 +17,28 @@ const THIS_FILE = fileURLToPath(import.meta.url);
 const CLI = path.join(REPO, "lib", "migrations", "chuyen-doi-p9-legacy-owner.js");
 const SYNTHETIC_OWNER = "900000000000000123";
 const EXPECTED_STOP = "P9_STOP: legacy Training khong rong; khong duoc tu suy owner.";
+const LEGACY_AI = Object.freeze({
+  groq_api_key: "synthetic-test-groq-key-NOT-A-SECRET",
+  allowed_topics: "synthetic-topic-a\nsynthetic-topic-b",
+  role_tone: "synthetic calm tone",
+  updated_at: 1700000100,
+  allowed_group_id: "legacy-group-42",
+  allowed_sender_ids: '["legacy-sender-7","legacy-sender-11"]',
+  use_knowledge: 1,
+  knowledge_file_ids: "[17,23]",
+  bot_enabled: 1,
+  doc_tep: 1,
+  soul: "Synthetic Soul line 1\nSynthetic Soul line 2",
+  opencode_base_url: "http://synthetic-runtime.invalid:4096",
+  opencode_agent: "synthetic-non-default-agent",
+  opencode_model: "synthetic/provider-model",
+});
+const ACTIVE_ACCOUNT = Object.freeze({
+  owner_uid: SYNTHETIC_OWNER,
+  bot_enabled: 0,
+  allowed_group_id: "account-group-900",
+  allowed_sender_ids: '["account-sender-501"]',
+});
 const results = [];
 
 function moDb(file, mode = sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE) {
@@ -68,15 +90,40 @@ async function createProductionShapedLegacy(root) {
     bot_enabled INTEGER NOT NULL DEFAULT 0, doc_tep INTEGER NOT NULL DEFAULT 0
   )`);
   await db.run(`INSERT INTO ai_chat_config
-    (id, allowed_topics, role_tone, use_knowledge, knowledge_file_ids, soul,
-     opencode_base_url, opencode_agent, opencode_model, doc_tep, updated_at)
-    VALUES (1, ?, ?, 1, ?, ?, ?, 'general', ?, 1, 1700000100)`, [
-    "synthetic-topic-a\nsynthetic-topic-b",
-    "synthetic calm tone",
-    "[17,23]",
-    "Synthetic Soul line 1\nSynthetic Soul line 2",
-    "http://synthetic-runtime.invalid:4096",
-    "synthetic/provider-model",
+    (id, groq_api_key, allowed_topics, role_tone, updated_at, allowed_group_id,
+     allowed_sender_ids, use_knowledge, knowledge_file_ids, bot_enabled, doc_tep,
+     soul, opencode_base_url, opencode_agent, opencode_model)
+    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+    LEGACY_AI.groq_api_key,
+    LEGACY_AI.allowed_topics,
+    LEGACY_AI.role_tone,
+    LEGACY_AI.updated_at,
+    LEGACY_AI.allowed_group_id,
+    LEGACY_AI.allowed_sender_ids,
+    LEGACY_AI.use_knowledge,
+    LEGACY_AI.knowledge_file_ids,
+    LEGACY_AI.bot_enabled,
+    LEGACY_AI.doc_tep,
+    LEGACY_AI.soul,
+    LEGACY_AI.opencode_base_url,
+    LEGACY_AI.opencode_agent,
+    LEGACY_AI.opencode_model,
+  ]);
+  await db.run(`CREATE TABLE account_config (
+    owner_uid TEXT PRIMARY KEY, bot_enabled INTEGER NOT NULL DEFAULT 0,
+    allowed_group_id TEXT NOT NULL DEFAULT '', allowed_sender_ids TEXT NOT NULL DEFAULT '[]',
+    otp_zalo_thread_id TEXT NOT NULL DEFAULT '', otp_zalo_label TEXT NOT NULL DEFAULT '',
+    admin_zalo_uid TEXT NOT NULL DEFAULT '', admin_zalo_label TEXT NOT NULL DEFAULT '',
+    setup_step INTEGER NOT NULL DEFAULT 0, setup_completed INTEGER NOT NULL DEFAULT 0,
+    setup_data TEXT NOT NULL DEFAULT '{}', updated_at INTEGER NOT NULL DEFAULT 0
+  )`);
+  await db.run(`INSERT INTO account_config
+    (owner_uid, bot_enabled, allowed_group_id, allowed_sender_ids, updated_at)
+    VALUES (?, ?, ?, ?, 1700000199)`, [
+    ACTIVE_ACCOUNT.owner_uid,
+    ACTIVE_ACCOUNT.bot_enabled,
+    ACTIVE_ACCOUNT.allowed_group_id,
+    ACTIVE_ACCOUNT.allowed_sender_ids,
   ]);
   await db.run(`CREATE TABLE training_session (
     id INTEGER PRIMARY KEY CHECK(id=1), session_id TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL DEFAULT 0
@@ -108,8 +155,12 @@ async function legacySnapshot(db) {
     aiColumns: (await db.all("PRAGMA table_info(ai_chat_config)")).map((column) => column.name),
     sessionColumns: (await db.all("PRAGMA table_info(training_session)")).map((column) => column.name),
     messageColumns: (await db.all("PRAGMA table_info(training_messages)")).map((column) => column.name),
-    ai: await db.all(`SELECT id, allowed_topics, role_tone, use_knowledge,
-      knowledge_file_ids, soul, opencode_model, updated_at FROM ai_chat_config ORDER BY id`),
+    ai: await db.all(`SELECT id, groq_api_key, allowed_topics, role_tone, updated_at,
+      allowed_group_id, allowed_sender_ids, use_knowledge, knowledge_file_ids,
+      bot_enabled, doc_tep, soul, opencode_base_url, opencode_agent, opencode_model
+      FROM ai_chat_config ORDER BY id`),
+    account: await db.all(`SELECT owner_uid, bot_enabled, allowed_group_id, allowed_sender_ids
+      FROM account_config ORDER BY owner_uid`),
     session: await db.all("SELECT id, session_id, updated_at FROM training_session ORDER BY id"),
     messages: await db.all(
       "SELECT id, role, content, files, created_at FROM training_messages ORDER BY id"
@@ -121,6 +172,11 @@ async function migratedSnapshot(db) {
   return {
     ai: await db.all(`SELECT owner_uid, allowed_topics, role_tone, use_knowledge,
       knowledge_file_ids, soul, opencode_model, updated_at FROM ai_chat_config ORDER BY owner_uid`),
+    runtime: await db.get(`SELECT id, groq_api_key, opencode_base_url, opencode_agent,
+      doc_tep, legacy_allowed_group_id, legacy_allowed_sender_ids, legacy_bot_enabled,
+      updated_at FROM ai_runtime_config WHERE id = 1`),
+    account: await db.all(`SELECT owner_uid, bot_enabled, allowed_group_id, allowed_sender_ids
+      FROM account_config ORDER BY owner_uid`),
     session: await db.all(
       "SELECT owner_uid, session_id, updated_at FROM training_session ORDER BY owner_uid"
     ),
@@ -154,6 +210,18 @@ async function normalStartupWorker(root) {
     const message = String(error?.message || error);
     console.error(message);
     process.exit(message.includes(EXPECTED_STOP) ? 0 : 2);
+  }
+}
+
+async function mappedStartupWorker(root) {
+  process.chdir(root);
+  try {
+    const db = await import(pathToFileURL(path.join(REPO, "lib", "db.js")).href);
+    await db.initDb();
+    process.exit(0);
+  } catch (error) {
+    console.error(String(error?.stack || error?.message || error));
+    process.exit(2);
   }
 }
 
@@ -212,7 +280,35 @@ async function main() {
     await db.close();
   });
 
-  await test("T4", "every Training message belongs to the supplied owner", async () => {
+  await test("T4", "all AI runtime and legacy archive values are preserved exactly", async () => {
+    const db = moDb(path.join(mappedRoot, "data", "zalo.db"), sqlite3.OPEN_READONLY);
+    const after = await migratedSnapshot(db);
+    assert.deepEqual(after.runtime, {
+      id: 1,
+      groq_api_key: mappedBefore.ai[0].groq_api_key,
+      opencode_base_url: mappedBefore.ai[0].opencode_base_url,
+      opencode_agent: mappedBefore.ai[0].opencode_agent,
+      doc_tep: mappedBefore.ai[0].doc_tep,
+      legacy_allowed_group_id: mappedBefore.ai[0].allowed_group_id,
+      legacy_allowed_sender_ids: mappedBefore.ai[0].allowed_sender_ids,
+      legacy_bot_enabled: mappedBefore.ai[0].bot_enabled,
+      updated_at: mappedBefore.ai[0].updated_at,
+    });
+    await db.close();
+  });
+
+  await test("T5", "active account authority remains byte-for-value unchanged", async () => {
+    const db = moDb(path.join(mappedRoot, "data", "zalo.db"), sqlite3.OPEN_READONLY);
+    const after = await migratedSnapshot(db);
+    assert.deepEqual(mappedBefore.account, [ACTIVE_ACCOUNT]);
+    assert.deepEqual(after.account, mappedBefore.account);
+    assert.notEqual(after.account[0].bot_enabled, mappedBefore.ai[0].bot_enabled);
+    assert.notEqual(after.account[0].allowed_group_id, mappedBefore.ai[0].allowed_group_id);
+    assert.notEqual(after.account[0].allowed_sender_ids, mappedBefore.ai[0].allowed_sender_ids);
+    await db.close();
+  });
+
+  await test("T6", "every Training message belongs to the supplied owner", async () => {
     const db = moDb(path.join(mappedRoot, "data", "zalo.db"), sqlite3.OPEN_READONLY);
     const rows = await db.all("SELECT owner_uid FROM training_messages ORDER BY id");
     assert.equal(rows.length, mappedBefore.messages.length);
@@ -220,14 +316,14 @@ async function main() {
     await db.close();
   });
 
-  await test("T5", "Training message count is unchanged", async () => {
+  await test("T7", "Training message count is unchanged", async () => {
     const db = moDb(path.join(mappedRoot, "data", "zalo.db"), sqlite3.OPEN_READONLY);
     const row = await db.get("SELECT COUNT(*) AS n FROM training_messages");
     assert.equal(row.n, mappedBefore.messages.length);
     await db.close();
   });
 
-  await test("T6", "Training message order, content and files metadata are unchanged", async () => {
+  await test("T8", "Training message ids, order, role, content, files and timestamps are unchanged", async () => {
     const db = moDb(path.join(mappedRoot, "data", "zalo.db"), sqlite3.OPEN_READONLY);
     const after = await migratedSnapshot(db);
     assert.deepEqual(
@@ -237,7 +333,7 @@ async function main() {
     await db.close();
   });
 
-  await test("T7", "Training session association and timestamp are preserved", async () => {
+  await test("T9", "Training session association and timestamp are preserved", async () => {
     const db = moDb(path.join(mappedRoot, "data", "zalo.db"), sqlite3.OPEN_READONLY);
     const after = await migratedSnapshot(db);
     assert.deepEqual(after.session, [{
@@ -248,7 +344,33 @@ async function main() {
     await db.close();
   });
 
-  await test("T8", "missing, empty and malformed owner are rejected before database mutation", async () => {
+  await test("T10", "normal startup clears legacy Groq authority and mutates no other mapped value", async () => {
+    const file = path.join(mappedRoot, "data", "zalo.db");
+    const dbBefore = moDb(file, sqlite3.OPEN_READONLY);
+    const before = await migratedSnapshot(dbBefore);
+    await dbBefore.close();
+    assert.equal(before.runtime.groq_api_key, LEGACY_AI.groq_api_key);
+
+    const worker = spawnSync(process.execPath, [THIS_FILE, "--mapped-startup-worker", mappedRoot], {
+      cwd: REPO,
+      encoding: "utf8",
+      env: { ...process.env },
+      timeout: 20_000,
+    });
+    assert.equal(worker.status, 0, `${worker.stdout}\n${worker.stderr}`);
+    assert.ok(!`${worker.stdout}\n${worker.stderr}`.includes(LEGACY_AI.groq_api_key));
+
+    const dbAfter = moDb(file, sqlite3.OPEN_READONLY);
+    const after = await migratedSnapshot(dbAfter);
+    await dbAfter.close();
+    assert.equal(after.runtime.groq_api_key, "");
+    assert.deepEqual(
+      { ...after, runtime: { ...after.runtime, groq_api_key: before.runtime.groq_api_key } },
+      before
+    );
+  });
+
+  await test("T11", "missing, empty and malformed owner are rejected before database mutation", async () => {
     const root = fixtureRoot(temp, "t8-invalid");
     const db = await createProductionShapedLegacy(root);
     await assert.rejects(
@@ -265,7 +387,7 @@ async function main() {
     assert.equal(sha256(file), beforeHash);
   });
 
-  await test("T9", "second one-shot run is idempotent and does not rewrite ownership/content", async () => {
+  await test("T12", "second one-shot run is idempotent with no duplicates or field mutation", async () => {
     const file = path.join(mappedRoot, "data", "zalo.db");
     const dbBefore = moDb(file, sqlite3.OPEN_READONLY);
     const before = await migratedSnapshot(dbBefore);
@@ -276,10 +398,17 @@ async function main() {
     assert.match(cli.stdout, /TRAINING_MIGRATED = NO/);
     const dbAfter = moDb(file, sqlite3.OPEN_READONLY);
     assert.deepEqual(await migratedSnapshot(dbAfter), before);
+    assert.deepEqual({
+      ai: (await dbAfter.get("SELECT COUNT(*) AS n FROM ai_chat_config")).n,
+      runtime: (await dbAfter.get("SELECT COUNT(*) AS n FROM ai_runtime_config")).n,
+      account: (await dbAfter.get("SELECT COUNT(*) AS n FROM account_config")).n,
+      session: (await dbAfter.get("SELECT COUNT(*) AS n FROM training_session")).n,
+      messages: (await dbAfter.get("SELECT COUNT(*) AS n FROM training_messages")).n,
+    }, { ai: 1, runtime: 1, account: 1, session: 1, messages: 3 });
     await dbAfter.close();
   });
 
-  await test("T10", "fresh database succeeds without explicit owner", async () => {
+  await test("T13", "fresh database succeeds without explicit owner", async () => {
     const root = fixtureRoot(temp, "t10-fresh");
     const db = moDb(path.join(root, "data", "zalo.db"));
     const report = await migrateP9ZaloUidProfile(db);
@@ -296,7 +425,7 @@ async function main() {
     await db.close();
   });
 
-  await test("T11", "normal startup supplies no owner and still fails closed", async () => {
+  await test("T14", "normal startup supplies no owner and still fails closed", async () => {
     const root = fixtureRoot(temp, "t11-normal-startup");
     const db = await createProductionShapedLegacy(root);
     const before = await legacySnapshot(db);
@@ -316,7 +445,7 @@ async function main() {
     assert.ok(dbSource.includes("await migrateP9ZaloUidProfile({ run, all, get });"));
   });
 
-  await test("T12", "runtime code contains no hardcoded production owner UID", async () => {
+  await test("T15", "runtime code contains no hardcoded production owner UID", async () => {
     const runtime = [
       fs.readFileSync(path.join(REPO, "lib", "migrations", "p9-zalo-uid-profile.js"), "utf8"),
       fs.readFileSync(CLI, "utf8"),
@@ -324,7 +453,7 @@ async function main() {
     assert.deepEqual(runtime.match(/\b[0-9]{12,30}\b/g) || [], []);
   });
 
-  await test("T13", "no previous local UID authority or generic owner inference remains", async () => {
+  await test("T16", "no previous local UID authority or generic owner inference remains", async () => {
     const migrationSource = fs.readFileSync(
       path.join(REPO, "lib", "migrations", "p9-zalo-uid-profile.js"),
       "utf8"
@@ -350,12 +479,17 @@ async function main() {
   console.log(`TRAINING_SESSION_BEFORE = ${mappedBefore?.session.length ?? "NOT_RUN"}`);
   console.log("TRAINING_SESSION_AFTER = 1");
   console.log("FIXTURE = SYNTHETIC");
+  console.log(`P9_FULL_PRESERVATION = ${failed.length ? "FAIL" : "PASS"}`);
+  console.log("ACCOUNT_CONFIG_CONFLICT_FIXTURE = YES");
+  console.log("SYNTHETIC_SECRET_ONLY = YES");
   console.log("REAL_PROVIDER_CALL = 0");
   process.exitCode = failed.length ? 1 : 0;
 }
 
 if (process.argv[2] === "--normal-startup-worker") {
   await normalStartupWorker(process.argv[3]);
+} else if (process.argv[2] === "--mapped-startup-worker") {
+  await mappedStartupWorker(process.argv[3]);
 } else {
   await main();
 }

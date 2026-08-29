@@ -22,6 +22,7 @@ const suites = [
   { id: "TEACH_BOT", file: "kiem-thu/kiem-tra-day-po.js", timeoutMs: 60_000, requiresNativeSqlite: true },
   { id: "CHAT_ATTACHMENT", file: "kiem-thu/kiem-tra-chat-attachment.js", timeoutMs: 20_000 },
   { id: "P9_OWNER_PROFILE", file: "kiem-thu/kiem-tra-p9-owner-profile.js", timeoutMs: 45_000, requiresNativeSqlite: true },
+  { id: "P9_FULL_PRESERVATION", file: "kiem-thu/kiem-tra-p9-production-legacy-owner.js", timeoutMs: 60_000, requiresNativeSqlite: true },
   { id: "P9_17_MODEL_SAVE", file: "kiem-thu/kiem-tra-p9-17-model-save.js", timeoutMs: 15_000 },
   { id: "PHONE_DIRECT_MESSAGE", file: "kiem-thu/kiem-tra-phone-direct-message.js", timeoutMs: 90_000 },
   { id: "ZOOM", file: "kiem-thu/kiem-tra-zoom.js", timeoutMs: 120_000, requiresNativeSqlite: true },
