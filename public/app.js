@@ -56,8 +56,12 @@ const els = {
   input: document.querySelector("#message-input"),
   fileInput: document.querySelector("#chat-file-input"),
   attachmentPreview: document.querySelector("#chat-attachment-preview"),
+  btnImage: document.querySelector("#btn-chat-image"),
   btnAttach: document.querySelector("#btn-chat-attach"),
   btnSend: document.querySelector("#btn-chat-send"),
+  mobileMenu: document.querySelector(".mobile-menu-button"),
+  mobileChatBack: document.querySelector(".mobile-chat-back"),
+  mobileDrawerBackdrop: document.querySelector(".mobile-drawer-backdrop"),
   
   zaloStatusDot: document.querySelector("#zalo-status-dot"),
   zaloStatusText: document.querySelector("#zalo-status-text"),
@@ -81,6 +85,7 @@ const els = {
 let tepChat = null;
 let dangGuiTin = false;
 let frontendOwnerGeneration = 0;
+let mobileThreadScrollTop = 0;
 
 function chupFrontendOwner() {
   return {
@@ -129,8 +134,15 @@ els.btnZaloLogout?.addEventListener("click", async () => {
 });
 els.search.addEventListener("input", renderThreads);
 els.form.addEventListener("submit", sendMessage);
+els.btnImage.addEventListener("click", () => {
+  if (dangGuiTin) return;
+  els.fileInput.accept = "image/*";
+  els.fileInput.click();
+});
 els.btnAttach.addEventListener("click", () => {
-  if (!dangGuiTin) els.fileInput.click();
+  if (dangGuiTin) return;
+  els.fileInput.accept = "";
+  els.fileInput.click();
 });
 els.fileInput.addEventListener("change", async () => {
   const file = els.fileInput.files?.[0];
@@ -141,6 +153,17 @@ els.fileInput.addEventListener("change", async () => {
   } catch (error) {
     alert(error.message);
   }
+});
+
+els.mobileMenu?.addEventListener("click", openMobileDrawer);
+els.mobileChatBack?.addEventListener("click", closeMobileLayerWithHistory);
+els.mobileDrawerBackdrop?.addEventListener("click", closeMobileLayerWithHistory);
+window.addEventListener("popstate", () => {
+  if (els.appShell.classList.contains("mobile-drawer-open")) {
+    closeMobileDrawer();
+    return;
+  }
+  if (els.chatApp.classList.contains("mobile-chat-open")) closeMobileChat();
 });
 
 socket.on("state", applyState);
@@ -351,6 +374,49 @@ async function startLogin() {
   await fetch("/api/login/start", { method: "POST" });
 }
 
+function isMobileInbox() {
+  if (typeof window.matchMedia === "function") return window.matchMedia("(max-width: 760px)").matches;
+  return window.innerWidth <= 760;
+}
+
+function openMobileDrawer() {
+  if (!isMobileInbox() || els.appShell.classList.contains("mobile-drawer-open")) return;
+  els.appShell.classList.add("mobile-drawer-open");
+  els.mobileDrawerBackdrop?.classList.remove("hidden");
+  history.pushState({ inbox: "drawer" }, "");
+}
+
+function closeMobileDrawer() {
+  els.appShell.classList.remove("mobile-drawer-open");
+  els.mobileDrawerBackdrop?.classList.add("hidden");
+}
+
+function openMobileChat(thread) {
+  if (!isMobileInbox()) return;
+  mobileThreadScrollTop = els.threads.scrollTop;
+  els.chatApp.classList.add("mobile-chat-open");
+  if (history.state?.inbox !== "chat" || history.state?.threadId !== thread.id) {
+    history.pushState({ inbox: "chat", threadId: thread.id }, "");
+  }
+}
+
+function closeMobileChat() {
+  els.chatApp.classList.remove("mobile-chat-open");
+  els.threads.scrollTop = mobileThreadScrollTop;
+  window.requestAnimationFrame?.(() => {
+    els.threads.scrollTop = mobileThreadScrollTop;
+  });
+}
+
+function closeMobileLayerWithHistory() {
+  if (!isMobileInbox()) return;
+  if (history.state?.inbox === "drawer" || history.state?.inbox === "chat") history.back();
+  else {
+    closeMobileDrawer();
+    closeMobileChat();
+  }
+}
+
 function renderThreads() {
   const query = els.search.value.trim().toLowerCase();
   const filtered = state.threads.filter((thread) => {
@@ -369,20 +435,48 @@ function renderThreads() {
     setAvatar(avatar, thread.avatar, thread.title || thread.id);
 
     const body = document.createElement("div");
+    body.className = "thread-body";
+    const heading = document.createElement("div");
+    heading.className = "thread-heading";
     const title = document.createElement("div");
     title.className = "thread-title";
     title.textContent = thread.title || thread.id;
+    const time = document.createElement("time");
+    time.className = "thread-time";
+    time.textContent = formatThreadTime(thread.lastMessageAt);
     const preview = document.createElement("div");
     preview.className = "thread-preview";
-    preview.textContent = thread.lastMessage || "";
-    body.append(title, preview);
+    preview.textContent = formatThreadPreview(thread.lastMessage);
+    heading.append(title, time);
+    body.append(heading, preview);
     li.append(avatar, body);
     els.threads.append(li);
   }
 }
 
+function formatThreadPreview(lastMessage) {
+  if (!lastMessage) return "";
+  const text = String(lastMessage);
+  if (!text.trim().startsWith("{")) return text;
+  try {
+    const payload = JSON.parse(text);
+    const stickerPayload = payload
+      && typeof payload === "object"
+      && !Array.isArray(payload)
+      && Number.isFinite(Number(payload.id))
+      && Number(payload.id) > 0
+      && Number.isFinite(Number(payload.catId))
+      && Number(payload.catId) > 0
+      && Number(payload.type) === 7;
+    return stickerPayload ? "Sticker" : text;
+  } catch {
+    return text;
+  }
+}
+
 async function selectThread(thread) {
   if (state.selectedThread?.id && state.selectedThread.id !== thread.id) boTepChat();
+  openMobileChat(thread);
   state.selectedThread = thread;
   renderThreads();
   els.chatEmpty.classList.add("hidden");
@@ -531,7 +625,8 @@ function taoTheMedia(message) {
 function renderMessages(messages) {
   els.messages.innerHTML = "";
   let lastDay = null;
-  for (const message of messages) {
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
     const currentDay = dayKey(message.ts);
     if (currentDay !== lastDay) {
       const divider = document.createElement("div");
@@ -541,18 +636,20 @@ function renderMessages(messages) {
       lastDay = currentDay;
     }
 
+    const previous = messages[index - 1];
+    const next = messages[index + 1];
+    const startsCluster = !sameMessageCluster(previous, message);
+    const endsCluster = !sameMessageCluster(message, next);
     const row = document.createElement("div");
     row.className = `bubble-row ${message.isSelf ? "self" : "other"}`;
-    const avatar = document.createElement("div");
-    avatar.className = "avatar bubble-avatar";
-    const avatarUrl = message.isSelf ? state.myAvatar || message.senderAvatar : message.senderAvatar || state.selectedThread?.avatar;
-    setAvatar(avatar, avatarUrl, message.senderName || state.selectedThread?.title || "?");
+    row.classList.toggle("cluster-start", startsCluster);
+    row.classList.toggle("cluster-end", endsCluster);
 
     const wrap = document.createElement("div");
     wrap.className = "bubble-wrap";
     const bubble = document.createElement("div");
     bubble.className = "bubble";
-    if (!message.isSelf && Number(state.selectedThread?.threadType) === 1 && message.senderName) {
+    if (startsCluster && !message.isSelf && Number(state.selectedThread?.threadType) === 1 && message.senderName) {
       const sender = document.createElement("div");
       sender.className = "sender";
       sender.textContent = message.senderName;
@@ -578,16 +675,46 @@ function renderMessages(messages) {
     } else {
       bubble.append(document.createTextNode(message.content || ""));
     }
-    const time = document.createElement("time");
-    time.className = "bubble-time";
-    time.textContent = formatMessageTime(message.ts);
-    wrap.append(bubble, time);
+    if (endsCluster) {
+      const time = document.createElement("time");
+      time.className = "bubble-time";
+      time.textContent = formatMessageTime(message.ts);
+      bubble.append(time);
+    }
+    wrap.append(bubble);
 
-    if (message.isSelf) row.append(wrap, avatar);
-    else row.append(avatar, wrap);
+    if (message.isSelf) {
+      row.append(wrap);
+    } else {
+      const avatarSlot = document.createElement("div");
+      if (endsCluster) {
+        avatarSlot.className = "avatar bubble-avatar";
+        setAvatar(
+          avatarSlot,
+          message.senderAvatar || state.selectedThread?.avatar,
+          message.senderName || state.selectedThread?.title || "?",
+        );
+      } else {
+        avatarSlot.className = "bubble-avatar-spacer";
+        avatarSlot.setAttribute("aria-hidden", "true");
+      }
+      row.append(avatarSlot, wrap);
+    }
     els.messages.append(row);
   }
   els.messages.scrollTop = els.messages.scrollHeight;
+}
+
+function sameMessageCluster(first, second) {
+  if (!first || !second) return false;
+  const sameSide = Boolean(first.isSelf) === Boolean(second.isSelf);
+  const sameDay = dayKey(first.ts) === dayKey(second.ts);
+  if (!sameSide || !sameDay) return false;
+  if (first.isSelf || Number(state.selectedThread?.threadType) !== 1) return true;
+
+  const firstSenderId = String(first.senderId ?? "").trim();
+  const secondSenderId = String(second.senderId ?? "").trim();
+  return Boolean(firstSenderId) && firstSenderId === secondSenderId;
 }
 
 async function sendMessage(event) {
@@ -610,6 +737,7 @@ async function sendMessage(event) {
 
   dangGuiTin = true;
   els.btnSend.disabled = true;
+  els.btnImage.disabled = true;
   els.btnAttach.disabled = true;
   try {
     const res = await fetch("/api/send", { method: "POST", body });
@@ -622,6 +750,7 @@ async function sendMessage(event) {
   } finally {
     dangGuiTin = false;
     els.btnSend.disabled = false;
+    els.btnImage.disabled = false;
     els.btnAttach.disabled = false;
   }
 }
@@ -666,6 +795,15 @@ function formatMessageTime(ts) {
     return `${date.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" })}, ${hhmm}`;
   }
   return `${date.toLocaleDateString("vi-VN")}, ${hhmm}`;
+}
+
+function formatThreadTime(ts) {
+  if (ts === null || ts === undefined || ts === "") return "";
+  const numeric = Number(ts);
+  if (!Number.isFinite(numeric) || numeric <= 0) return "";
+  const date = new Date(numeric < 1e12 ? numeric * 1000 : numeric);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
 }
 
 function formatDateDivider(ts) {
@@ -792,6 +930,9 @@ const railLogoutToggle = document.querySelector("#rail-logout-toggle");
 const railLogoutMenu = document.querySelector("#rail-logout-menu");
 
 railSettings?.addEventListener("click", openSettings);
+railSettings?.addEventListener("click", () => {
+  if (isMobileInbox() && els.appShell.classList.contains("mobile-drawer-open")) closeMobileLayerWithHistory();
+});
 
 function toggleRailLogoutMenu(open) {
   if (!railLogoutMenu) return;
@@ -907,6 +1048,7 @@ els.moduleNav?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-module]");
   if (!button) return;
   chonPhanHe(button.dataset.module);
+  if (isMobileInbox() && els.appShell.classList.contains("mobile-drawer-open")) closeMobileLayerWithHistory();
 });
 
 khoiTaoOnboarding({ selectModule: chonPhanHe });
