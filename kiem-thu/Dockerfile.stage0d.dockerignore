@@ -22,5 +22,6 @@ kiem-thu/*
 !kiem-thu/kiem-tra-onboarding.js
 !kiem-thu/kiem-tra-p9-17-model-save.js
 !kiem-thu/kiem-tra-p9-owner-profile.js
+!kiem-thu/kiem-tra-p9-production-legacy-owner.js
 !kiem-thu/kiem-tra-phone-direct-message.js
 !kiem-thu/kiem-tra-zoom.js

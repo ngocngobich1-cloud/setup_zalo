@@ -142,10 +142,10 @@ async function main() {
     assert.equal((await db.getAiChatConfig(OWNER_A)).soul, truoc);
   });
 
-  await test("P9-05", "legacy AI chi gan approved owner; runtime global duoc bao toan", async () => {
+  await test("P9-05", "legacy AI chi gan explicit owner; runtime global duoc bao toan", async () => {
     const file = path.join(tmp, "legacy-ok.db");
     const legacy = await taoLegacyDb(file);
-    const report = await migration.migrateP9ZaloUidProfile(legacy);
+    const report = await migration.migrateP9ZaloUidProfile(legacy, { legacyOwnerUid: OWNER_A });
     assert.equal(report.legacyAiOwnerUid, OWNER_A);
     assert.deepEqual(await legacy.all("SELECT owner_uid, soul, opencode_model FROM ai_chat_config"), [{
       owner_uid: OWNER_A,
