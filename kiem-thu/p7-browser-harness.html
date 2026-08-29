@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>P7 Model Source Browser QA</title>
+    <link rel="stylesheet" href="/public/style.css" />
+  </head>
+  <body>
+    <main id="qa-panel"></main>
+    <section id="module-training">
+      <div id="training-meta"></div>
+      <div id="training-log"></div>
+      <div id="onboarding-starters" class="hidden">
+        <button id="btn-onboarding-starter" type="button">Mình cần tạo 1 bot AI</button>
+      </div>
+      <form id="training-form">
+        <textarea id="training-text"></textarea>
+        <input id="training-file-input" type="file" />
+        <div id="training-files"></div>
+        <button type="button" id="btn-training-attach">Đính tệp</button>
+        <button type="button" id="btn-training-synth">Tổng hợp</button>
+        <button type="button" id="btn-training-reset">Làm lại</button>
+        <button type="submit">Gửi</button>
+      </form>
+    </section>
+    <output id="qa-state" hidden></output>
+    <script type="module">
+      const qa = window.__p7Qa = {
+        calls: [],
+        events: [],
+        currentModel: "google/gemini-3.5-flash",
+      };
+      const syncQa = () => {
+        qa.header = document.querySelector("#training-meta")?.textContent || "";
+        qa.provider = document.querySelector("#ai-oc-provider")?.value || "";
+        qa.model = document.querySelector("#ai-oc-model")?.value || "";
+        document.querySelector("#qa-state").textContent = JSON.stringify(qa);
+      };
+      window.addEventListener("zalo:canonical-save", (event) => {
+        qa.events.push(event.detail || {});
+        setTimeout(syncQa, 0);
+      });
+
+      const chatModel = (name) => ({
+        name,
+        status: "active",
+        limit: { context: 100000 },
+        capabilities: { input: { text: true }, output: { text: true } },
+      });
+      const providers = [
+        {
+          id: "google",
+          name: "Google",
+          connected: true,
+          models: [{ id: "google/gemini-3.5-flash", label: "Gemini 3.5 Flash", context: 100000 }],
+        },
+        {
+          id: "openai",
+          name: "OpenAI",
+          connected: true,
+          models: [{ id: "openai/gpt-4.1", label: "GPT-4.1", context: 100000 }],
+        },
+      ];
+
+      window.confirm = () => true;
+      window.fetch = async (input, options = {}) => {
+        const url = typeof input === "string" ? input : input.url;
+        const method = String(options.method || "GET").toUpperCase();
+        qa.calls.push({ url, method, body: options.body || "" });
+
+        let data = { ok: true };
+        if (url === "/api/ai-chat" && method === "GET") {
+          data = {
+            config: {
+              opencodeBaseUrl: "http://opencode:4096",
+              opencodeAgent: "general",
+              opencodeModel: qa.currentModel,
+              soul: "",
+              allowedTopics: "",
+              roleTone: "",
+              useKnowledge: false,
+              knowledgeFileIds: [],
+            },
+            ready: false,
+          };
+        } else if (url === "/api/ai-chat/opencode-test") {
+          data = { ok: true, agents: ["general"], providers };
+        } else if (url === "/api/ai-chat/providers") {
+          data = { providers };
+        } else if (url === "/api/ai-chat" && method === "POST") {
+          const body = JSON.parse(options.body || "{}");
+          qa.currentModel = body.opencodeModel;
+          data = { ok: true, ready: false, config: { opencodeModel: qa.currentModel } };
+        } else if (url === "/api/training") {
+          data = { messages: [], sessionId: null, model: qa.currentModel, docDuocAnh: false };
+        } else if (url === "/api/zalo/groups") {
+          data = { groups: [] };
+        } else if (url === "/api/knowledge") {
+          data = { files: [] };
+        }
+
+        syncQa();
+        return { ok: true, status: 200, json: async () => data };
+      };
+
+      const [{ CONFIG_TABS }, { napHuanLuyen }] = await Promise.all([
+        import("/public/config.js"),
+        import("/public/training.js"),
+      ]);
+      CONFIG_TABS.find((tab) => tab.id === "ai-chat").mount(document.querySelector("#qa-panel"));
+      await napHuanLuyen();
+
+      const deadline = Date.now() + 3000;
+      while (!document.querySelector("#ai-oc-model")?.value && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      syncQa();
+      document.body.dataset.qaReady = "true";
+    </script>
+  </body>
+</html>

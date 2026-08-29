@@ -1,5 +1,6 @@
-import { CONFIG_TABS, pushActivityLog, refreshSettingsDynamicData } from "./config.js";
-import { napHuanLuyen } from "./training.js";
+import { CONFIG_TABS, invalidateSettingsOwnerState, pushActivityLog, refreshSettingsDynamicData, setSettingsOwnerUid } from "./config.js";
+import { invalidateTrainingOwnerState, napHuanLuyen } from "./training.js";
+import { dinhDangDungLuong, laAnhZalo, phanLoaiMediaTinNhan } from "./chat-media.js";
 import { napEmail } from "./email.js";
 import { napZoom } from "./zoom.js";
 import { napWebsite } from "./website.js";
@@ -53,6 +54,10 @@ const els = {
   messages: document.querySelector("#messages"),
   form: document.querySelector("#send-form"),
   input: document.querySelector("#message-input"),
+  fileInput: document.querySelector("#chat-file-input"),
+  attachmentPreview: document.querySelector("#chat-attachment-preview"),
+  btnAttach: document.querySelector("#btn-chat-attach"),
+  btnSend: document.querySelector("#btn-chat-send"),
   
   zaloStatusDot: document.querySelector("#zalo-status-dot"),
   zaloStatusText: document.querySelector("#zalo-status-text"),
@@ -72,6 +77,22 @@ const els = {
   settingsModal: document.querySelector("#settings-modal"),
   btnCloseSettings: document.querySelector("#btn-close-settings"),
 };
+
+let tepChat = null;
+let dangGuiTin = false;
+let frontendOwnerGeneration = 0;
+
+function chupFrontendOwner() {
+  return {
+    ownerUid: state.uid ? String(state.uid) : null,
+    ownerGeneration: frontendOwnerGeneration,
+  };
+}
+
+function frontendOwnerConHieuLuc(owner) {
+  const ownerUidHienTai = state.uid ? String(state.uid) : null;
+  return owner.ownerGeneration === frontendOwnerGeneration && owner.ownerUid === ownerUidHienTai;
+}
 
 els.btnLogin.addEventListener("click", startLogin);
 els.btnRetryQr.addEventListener("click", startLogin);
@@ -108,6 +129,19 @@ els.btnZaloLogout?.addEventListener("click", async () => {
 });
 els.search.addEventListener("input", renderThreads);
 els.form.addEventListener("submit", sendMessage);
+els.btnAttach.addEventListener("click", () => {
+  if (!dangGuiTin) els.fileInput.click();
+});
+els.fileInput.addEventListener("change", async () => {
+  const file = els.fileInput.files?.[0];
+  els.fileInput.value = "";
+  if (!file) return;
+  try {
+    await chonTepChat(file);
+  } catch (error) {
+    alert(error.message);
+  }
+});
 
 socket.on("state", applyState);
 socket.on("threads", (threads) => {
@@ -138,20 +172,21 @@ async function bootstrap() {
     return;
   }
   const data = await res.json();
-  state.threads = data.threads || [];
   if (data.user?.username) setAccount(data.user.username);
   applyState(data);
+  state.threads = data.threads || [];
   renderThreads();
-  napTrangThaiBot();
 }
 
 els.btnRefreshThreads?.addEventListener("click", async () => {
   const nut = els.btnRefreshThreads;
+  const owner = chupFrontendOwner();
   nut.disabled = true;
   nut.classList.add("dang-quay");
   try {
     const res = await fetch("/api/threads/refresh", { method: "POST" });
     const data = await res.json();
+    if (!frontendOwnerConHieuLuc(owner)) return;
     if (!res.ok) throw new Error(data.error || "Không làm mới được");
     state.threads = data.threads || state.threads;
     // Tieu de cuoc tro chuyen dang mo cung phai doi theo, khong thi van hien ten cu.
@@ -165,7 +200,7 @@ els.btnRefreshThreads?.addEventListener("click", async () => {
     }
     renderThreads();
   } catch (error) {
-    alert(error.message);
+    if (frontendOwnerConHieuLuc(owner)) alert(error.message);
   } finally {
     nut.disabled = false;
     nut.classList.remove("dang-quay");
@@ -185,9 +220,12 @@ function veCongTac({ enabled, ready }) {
 }
 
 async function napTrangThaiBot() {
+  const owner = chupFrontendOwner();
   try {
     const res = await fetch("/api/bot/status");
-    if (res.ok) veCongTac(await res.json());
+    const data = res.ok ? await res.json() : null;
+    if (!frontendOwnerConHieuLuc(owner)) return;
+    if (data) veCongTac(data);
   } catch { /* mat mang thi giu nguyen hien thi */ }
 }
 
@@ -195,6 +233,7 @@ els.botToggle?.addEventListener("click", async () => {
   const dangBat = els.botToggle.getAttribute("aria-checked") === "true";
   if (!dangBat && !confirm("Bật bot? Từ giờ bot sẽ TỰ TRẢ LỜI khách trong phạm vi đã cấu hình.")) return;
 
+  const owner = chupFrontendOwner();
   els.botToggle.disabled = true;
   try {
     const res = await fetch("/api/bot/toggle", {
@@ -203,10 +242,11 @@ els.botToggle?.addEventListener("click", async () => {
       body: JSON.stringify({ enabled: !dangBat }),
     });
     const data = await res.json();
+    if (!frontendOwnerConHieuLuc(owner)) return;
     if (!res.ok) throw new Error(data.error || "Không đổi được");
     veCongTac(data);
   } catch (error) {
-    alert(error.message);
+    if (frontendOwnerConHieuLuc(owner)) alert(error.message);
   } finally {
     els.botToggle.disabled = false;
   }
@@ -219,6 +259,10 @@ function setAccount(username) {
 
 function applyState(next) {
   const daDangNhap = state.loggedIn;
+  const uidCu = state.uid ? String(state.uid) : null;
+  const uidMoi = next.uid ? String(next.uid) : null;
+  const doiOwner = uidCu !== uidMoi;
+  if (doiOwner) invalidateOwnerFrontendState(uidMoi);
   Object.assign(state, {
     loggedIn: Boolean(next.loggedIn),
     loggingIn: Boolean(next.loggingIn),
@@ -236,6 +280,28 @@ function applyState(next) {
     justLoggedIn: !daDangNhap && state.loggedIn,
     ownerUid: state.uid,
   });
+  if (doiOwner && state.loggedIn) {
+    void napTrangThaiBot();
+    if (!document.querySelector("#module-training")?.classList.contains("hidden")) void napHuanLuyen();
+    if (!els.settingsModal.classList.contains("hidden")) refreshSettingsDynamicData();
+  }
+}
+
+function invalidateOwnerFrontendState(nextOwnerUid = null) {
+  frontendOwnerGeneration += 1;
+  state.threads = [];
+  state.selectedThread = null;
+  state.messagesByThread.clear();
+  els.search.value = "";
+  els.messages.innerHTML = "";
+  els.chatPanel.classList.add("hidden");
+  els.chatEmpty.classList.remove("hidden");
+  boTepChat();
+  veCongTac({ enabled: false, ready: false });
+  setSettingsOwnerUid(nextOwnerUid);
+  invalidateSettingsOwnerState();
+  invalidateTrainingOwnerState();
+  renderThreads();
 }
 
 function renderShell() {
@@ -316,6 +382,7 @@ function renderThreads() {
 }
 
 async function selectThread(thread) {
+  if (state.selectedThread?.id && state.selectedThread.id !== thread.id) boTepChat();
   state.selectedThread = thread;
   renderThreads();
   els.chatEmpty.classList.add("hidden");
@@ -325,11 +392,140 @@ async function selectThread(thread) {
 
   if (!state.messagesByThread.has(thread.id)) {
     els.messages.textContent = "Dang tai lich su...";
+    const owner = chupFrontendOwner();
     const res = await fetch(`/api/messages/${encodeURIComponent(thread.id)}`);
     const data = await res.json();
+    if (!frontendOwnerConHieuLuc(owner)) return;
     state.messagesByThread.set(thread.id, data.messages || []);
   }
-  renderMessages(state.messagesByThread.get(thread.id) || []);
+  if (state.selectedThread?.id === thread.id) {
+    renderMessages(state.messagesByThread.get(thread.id) || []);
+  }
+}
+
+function docKichThuocAnh(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+    image.onerror = () => reject(new Error("Không đọc được ảnh đã chọn."));
+    image.src = url;
+  });
+}
+
+function boTepChat() {
+  if (tepChat?.previewUrl) URL.revokeObjectURL(tepChat.previewUrl);
+  tepChat = null;
+  veTepChat();
+}
+
+async function chonTepChat(file) {
+  boTepChat();
+  const previewUrl = laAnhZalo(file) ? URL.createObjectURL(file) : null;
+  try {
+    const dimensions = previewUrl ? await docKichThuocAnh(previewUrl) : {};
+    tepChat = { file, previewUrl, ...dimensions };
+    veTepChat();
+  } catch (error) {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    throw error;
+  }
+}
+
+function taoThongTinTep(filename, size) {
+  const info = document.createElement("span");
+  info.className = "chat-file-info";
+  const name = document.createElement("strong");
+  name.textContent = filename || "Tệp đính kèm";
+  info.append(name);
+  const readableSize = dinhDangDungLuong(size);
+  if (readableSize) {
+    const meta = document.createElement("small");
+    meta.textContent = readableSize;
+    info.append(meta);
+  }
+  return info;
+}
+
+function veTepChat() {
+  els.attachmentPreview.innerHTML = "";
+  els.attachmentPreview.classList.toggle("hidden", !tepChat);
+  if (!tepChat) return;
+
+  const card = document.createElement("div");
+  card.className = "chat-selected-file";
+  if (tepChat.previewUrl) {
+    const image = document.createElement("img");
+    image.src = tepChat.previewUrl;
+    image.alt = tepChat.file.name || "Ảnh đã chọn";
+    card.append(image);
+  } else {
+    const icon = document.createElement("span");
+    icon.className = "chat-file-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "📄";
+    card.append(icon);
+  }
+  card.append(taoThongTinTep(tepChat.file.name, tepChat.file.size));
+
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "chat-file-remove";
+  remove.textContent = "×";
+  remove.setAttribute("aria-label", "Bỏ tệp đính kèm");
+  remove.addEventListener("click", boTepChat);
+  card.append(remove);
+  els.attachmentPreview.append(card);
+}
+
+function taoTheMedia(message) {
+  const media = phanLoaiMediaTinNhan(message);
+  if (!media) return null;
+
+  if (media.kind === "image") {
+    const wrap = document.createElement("div");
+    wrap.className = "chat-image-wrap";
+    const link = document.createElement("a");
+    link.className = "chat-image-link";
+    link.href = media.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.setAttribute("aria-label", "Mở ảnh kích thước lớn");
+    const image = document.createElement("img");
+    image.className = "chat-image";
+    image.src = media.thumbnailUrl;
+    image.alt = media.filename || "Ảnh đính kèm";
+    image.loading = "lazy";
+    image.onerror = () => {
+      const fallback = document.createElement("span");
+      fallback.className = "chat-media-fallback";
+      fallback.textContent = "Mở ảnh";
+      image.replaceWith(fallback);
+    };
+    link.append(image);
+    wrap.append(link);
+    if (media.caption) {
+      const caption = document.createElement("div");
+      caption.className = "chat-media-caption";
+      caption.textContent = media.caption;
+      wrap.append(caption);
+    }
+    return wrap;
+  }
+
+  const link = document.createElement("a");
+  link.className = "chat-file-card";
+  link.href = media.url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  const icon = document.createElement("span");
+  icon.className = "chat-file-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.textContent = "📄";
+  const action = document.createElement("span");
+  action.className = "chat-file-action";
+  action.textContent = "Mở / tải";
+  link.append(icon, taoThongTinTep(media.filename, media.size), action);
+  return link;
 }
 
 function renderMessages(messages) {
@@ -362,7 +558,11 @@ function renderMessages(messages) {
       sender.textContent = message.senderName;
       bubble.append(sender);
     }
-    if (message.stickerUrl) {
+    const media = taoTheMedia(message);
+    if (media) {
+      bubble.classList.add("bubble-media");
+      bubble.append(media);
+    } else if (message.stickerUrl) {
       bubble.classList.add("bubble-sticker");
       const sticker = document.createElement("img");
       sticker.className = "sticker";
@@ -392,22 +592,37 @@ function renderMessages(messages) {
 
 async function sendMessage(event) {
   event.preventDefault();
+  if (dangGuiTin) return;
   const text = els.input.value.trim();
-  if (!text || !state.selectedThread) return;
-  els.input.value = "";
-  const res = await fetch("/api/send", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      threadId: state.selectedThread.id,
-      text,
-      threadType: state.selectedThread.threadType,
-    }),
-  });
-  const data = await res.json();
-  if (!data.ok) {
-    els.input.value = text;
-    alert(data.error || "Khong gui duoc tin nhan.");
+  if ((!text && !tepChat) || !state.selectedThread) return;
+
+  const thread = state.selectedThread;
+  const attachment = tepChat;
+  const body = new FormData();
+  body.append("threadId", thread.id);
+  body.append("threadType", thread.threadType);
+  body.append("text", text);
+  if (attachment) {
+    body.append("file", attachment.file);
+    if (attachment.width) body.append("width", String(attachment.width));
+    if (attachment.height) body.append("height", String(attachment.height));
+  }
+
+  dangGuiTin = true;
+  els.btnSend.disabled = true;
+  els.btnAttach.disabled = true;
+  try {
+    const res = await fetch("/api/send", { method: "POST", body });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Không gửi được tin nhắn.");
+    els.input.value = "";
+    if (attachment === tepChat) boTepChat();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    dangGuiTin = false;
+    els.btnSend.disabled = false;
+    els.btnAttach.disabled = false;
   }
 }
 

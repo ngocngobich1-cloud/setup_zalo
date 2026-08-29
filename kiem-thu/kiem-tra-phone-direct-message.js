@@ -131,6 +131,7 @@ Module._load = function (request, parent, isMain) {
 
 function chayTrongRuntimeTest() {
   const shim = taoSQLiteShim();
+  const shimNodeOption = `--require=${JSON.stringify(shim)}`;
   const regression = process.argv.includes("--existing-regression");
   const target = regression
     ? path.join(REPO, "kiem-thu", "kiem-tra-day-po.js")
@@ -140,7 +141,7 @@ function chayTrongRuntimeTest() {
     env: {
       ...process.env,
       PHONE_DIRECT_SQLITE_SHIM: "1",
-      NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${shim}`].filter(Boolean).join(" "),
+      NODE_OPTIONS: [process.env.NODE_OPTIONS, shimNodeOption].filter(Boolean).join(" "),
     },
     stdio: "inherit",
   });

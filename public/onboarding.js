@@ -1,4 +1,5 @@
 import { datDieuPhoiOnboarding, hienTinOnboarding, napHuanLuyen } from "./training.js";
+import { refreshAiChatConfigForCurrentOwner } from "./config.js";
 
 const els = {
   firstRun: document.querySelector("#first-run-modal"),
@@ -42,16 +43,7 @@ const BUOC = {
   3: {
     target: "[data-canonical-slot='model']",
     title: "Chọn hãng AI và model",
-    body: "Chọn hãng AI và model chị muốn dùng. Lựa chọn được giữ trong tiến trình và sẽ lưu cùng cấu hình ở bước 8.",
-    cta: "Tiếp tục",
-    action: "model_selected",
-  },
-  4: {
-    target: "#training-log",
-    title: "Phần kết nối AI đã xong",
-    body: "Bây giờ mình bắt đầu thiết lập trợ lý. Bot Chỉ huy sẽ hỏi từng câu, phân tích điểm còn thiếu và cùng chị duyệt đề xuất trước khi tạo cấu hình.",
-    cta: "Bắt đầu setup bot",
-    action: "start_bot_setup",
+    body: "Chọn hãng AI và model chị muốn dùng, rồi bấm Lưu. Model được lưu tại cấu hình AI chính thức và sẽ áp dụng ngay cho Bot Chỉ huy.",
   },
   5: {
     target: "#training-log",
@@ -60,13 +52,13 @@ const BUOC = {
   },
   6: {
     target: "#training-log",
-    title: "Phân tích sâu và làm rõ",
-    body: "Em đang kiểm tra những điểm còn thiếu hoặc dễ làm bot suy đoán. Mỗi lần em chỉ hỏi thêm một câu; ô chat luôn sẵn để chị trả lời.",
+    title: "Phân tích sâu và duyệt nguyên tắc vận hành",
+    body: "Em sẽ làm rõ từng điểm còn thiếu, sau đó trình bày các nguyên tắc đề xuất kèm lý do ngay tại bước này. Chị có thể bỏ, sửa, bổ sung hoặc trả lời OK khi phần thiết kế đã ổn.",
   },
   7: {
     target: "#training-log",
-    title: "Duyệt đề xuất trước khi tạo cấu hình",
-    body: "Em tách rõ điều chị đã yêu cầu và phần em đề xuất kèm lý do. Chị có thể bỏ, sửa, bổ sung hoặc trả lời OK để duyệt.",
+    title: "Duyệt bản hướng dẫn vận hành cuối",
+    body: "Em đã chuyển câu trả lời và các nguyên tắc được duyệt thành instruction hoàn chỉnh. Chị đọc, yêu cầu sửa hoặc bổ sung từng điểm; chỉ trả lời OK khi đồng ý dùng chính bản này.",
   },
   8: {
     target: [
@@ -99,6 +91,7 @@ let trainingActive = false;
 let currentTarget = null;
 let loginTimer = null;
 let lastOwnerUid = null;
+let ownerGeneration = 0;
 let initialized = false;
 let completionJustReached = false;
 let deferredThisSession = false;
@@ -111,6 +104,14 @@ async function jsonFetch(url, options) {
   return data;
 }
 
+function chupOnboardingOwner() {
+  return { ownerUid: lastOwnerUid, ownerGeneration };
+}
+
+function onboardingOwnerConHieuLuc(owner) {
+  return owner.ownerGeneration === ownerGeneration && owner.ownerUid === lastOwnerUid;
+}
+
 function capNhatState(next) {
   const previousStep = Number(state?.step) || 0;
   const nextStep = Number(next?.step) || 0;
@@ -120,16 +121,22 @@ function capNhatState(next) {
 }
 
 async function napTrangThai() {
-  return capNhatState(await jsonFetch("/api/onboarding"));
+  const owner = chupOnboardingOwner();
+  const next = await jsonFetch("/api/onboarding");
+  if (!onboardingOwnerConHieuLuc(owner)) return null;
+  return capNhatState(next);
 }
 
 async function hanhDong(action, payload = {}) {
-  capNhatState(await jsonFetch("/api/onboarding/action", {
+  const owner = chupOnboardingOwner();
+  const next = await jsonFetch("/api/onboarding/action", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, payload }),
-  }));
-  await render();
+  });
+  if (!onboardingOwnerConHieuLuc(owner)) return null;
+  capNhatState(next);
+  await render(owner);
   return state;
 }
 
@@ -169,20 +176,17 @@ function datTrainingController() {
   datDieuPhoiOnboarding({
     active,
     spotlightComposer: active,
+    showStarter: active && step === 4,
     submit: async (text) => {
-      if (Number(state?.step) === 4) {
-        capNhatState(await jsonFetch("/api/onboarding/action", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "start_bot_setup", payload: {} }),
-        }));
-      }
-      capNhatState(await jsonFetch("/api/onboarding/answer", {
+      const owner = chupOnboardingOwner();
+      const next = await jsonFetch("/api/onboarding/answer", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
-      }));
-      await render();
+      });
+      if (!onboardingOwnerConHieuLuc(owner)) return;
+      capNhatState(next);
+      await render(owner);
     },
   });
 }
@@ -196,14 +200,6 @@ function dienBanTongHop() {
   if (soul) soul.value = draft.soul || "";
   if (role) role.value = draft.roleTone || "";
   if (topics) topics.value = draft.allowedTopics || "";
-
-  const provider = document.querySelector("#ai-oc-provider");
-  const model = document.querySelector("#ai-oc-model");
-  if (provider && state.data?.providerId) {
-    provider.value = state.data.providerId;
-    provider.dispatchEvent(new Event("change", { bubbles: true }));
-    queueMicrotask(() => { if (model) model.value = state.data.modelId || model.value; });
-  }
 }
 
 function anCoach() {
@@ -221,13 +217,6 @@ function taoNut(label, onClick, secondary = false) {
 }
 
 async function xuLyCta(stepDef) {
-  if (stepDef.action === "model_selected") {
-    const providerId = document.querySelector("#ai-oc-provider")?.value || "";
-    const modelId = document.querySelector("#ai-oc-model")?.value || "";
-    await hanhDong("model_selected", { providerId, modelId });
-    return;
-  }
-  if (stepDef.action === "start_bot_setup") await hanhDong("start_bot_setup");
   if (stepDef.action === "review_complete") {
     reviewReadyToSave = true;
     await render();
@@ -347,8 +336,8 @@ function hienCoach(step, { completion = false } = {}) {
   requestAnimationFrame(() => datViTriCoach(targets));
 }
 
-async function render() {
-  if (!state) return;
+async function render(owner = chupOnboardingOwner()) {
+  if (!state || !onboardingOwnerConHieuLuc(owner)) return;
   const step = Number(state.step) || 0;
   els.progress.classList.toggle("hidden", state.completed || !state.started);
   if (!state.completed && state.started) els.progress.textContent = `Bước ${step}/9`;
@@ -356,10 +345,16 @@ async function render() {
   if (trainingActive) {
     ganControlCanonical();
     await napHuanLuyen();
+    if (!onboardingOwnerConHieuLuc(owner)) return;
   }
   datTrainingController();
 
-  if (step >= 5 && step <= 7) hienTinOnboarding(state.prompt);
+  if (step === 4) {
+    hienTinOnboarding(
+      state.prompt
+      || "Bot Chỉ huy đã sẵn sàng. Chị chọn gợi ý bên dưới hoặc tự gõ điều chị muốn tạo nhé."
+    );
+  } else if (step >= 5 && step <= 7) hienTinOnboarding(state.prompt);
   else if (step === 8) {
     hienTinOnboarding(reviewReadyToSave
       ? "Nếu cấu hình đã ổn, chị bấm Ghi nhớ giúp em nhé."
@@ -392,12 +387,20 @@ export async function datManHinhHuanLuyen(active) {
     datDieuPhoiOnboarding(null);
     return;
   }
+  // URL/agent la runtime canonical, con model thuoc owner. Moi lan mo Training
+  // phai nap lai sau khi owner da co; khong dua vao request page-mount co the da
+  // chay truoc dang nhap. Trong luc nap, dua controls ve Settings de Save cu
+  // khong the dung state rong/stale.
+  traControlCanonical();
+  const configDaNap = await refreshAiChatConfigForCurrentOwner();
+  if (!trainingActive || !configDaNap) return;
   ganControlCanonical();
   if (!state) {
     try { await napTrangThai(); }
     catch { return; }
   }
-  await render();
+  if (!state) return;
+  await render(chupOnboardingOwner());
 }
 
 export function truocKhiMoCauHinh() {
@@ -414,25 +417,34 @@ export function sauKhiDongCauHinh() {
 
 export async function dongBoTrangThaiZalo({ loggedIn, justLoggedIn, ownerUid }) {
   clearTimeout(loginTimer);
+  loginTimer = null;
+  const nextOwnerUid = loggedIn && ownerUid ? String(ownerUid) : null;
+  if (lastOwnerUid !== nextOwnerUid) {
+    ownerGeneration += 1;
+    state = null;
+    deferredThisSession = false;
+    completionJustReached = false;
+    reviewReadyToSave = false;
+    els.firstRun.classList.add("hidden");
+    els.progress.classList.add("hidden");
+    anCoach();
+  }
   if (!loggedIn || !ownerUid) {
     lastOwnerUid = null;
-    deferredThisSession = false;
-    state = null;
-    els.firstRun.classList.add("hidden");
-    anCoach();
     return;
   }
-  if (lastOwnerUid !== String(ownerUid)) {
-    state = null;
-    deferredThisSession = false;
+  lastOwnerUid = nextOwnerUid;
+  const owner = chupOnboardingOwner();
+  try {
+    if (!await napTrangThai()) return;
   }
-  lastOwnerUid = String(ownerUid);
-  try { await napTrangThai(); }
   catch { return; }
 
+  if (!onboardingOwnerConHieuLuc(owner)) return;
   if (state.completed) return;
   if (justLoggedIn) callbacks?.selectModule("zalo");
   loginTimer = setTimeout(() => {
+    if (!onboardingOwnerConHieuLuc(owner)) return;
     if (!state?.started && !deferredThisSession) {
       els.firstRun.classList.remove("hidden");
       return;
@@ -450,7 +462,7 @@ export function khoiTaoOnboarding(options) {
   els.btnStart.addEventListener("click", async () => {
     els.btnStart.disabled = true;
     try {
-      await hanhDong("start");
+      if (!await hanhDong("start")) return;
       els.firstRun.classList.add("hidden");
       callbacks?.selectModule("training");
     } catch (error) {
@@ -475,6 +487,8 @@ export function khoiTaoOnboarding(options) {
     try {
       if (detail.section === "api-key" && [1, 2].includes(Number(state?.step))) {
         await hanhDong("key_saved");
+      } else if (detail.section === "ai-model" && Number(state?.step) === 3) {
+        await hanhDong("model_selected");
       } else if (detail.section === "ai-config" && Number(state?.step) === 8) {
         await hanhDong("config_saved");
       } else if (detail.section === "admin" && Number(state?.step) === 9) {

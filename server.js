@@ -24,6 +24,7 @@ import {
   initDb,
   listThreads,
   getAutoReplyRules,
+  getAiRuntimeConfig,
   insertAutoReplyRule,
   updateAutoReplyRule,
   deleteAutoReplyRule,
@@ -180,8 +181,15 @@ function completeLogin(req, res, user) {
     req.session.username = user.username;
     // Doc tu CSDL luc dang nhap. Con nay quyet dinh app co bi khoa lai hay khong.
     req.session.mustChangePassword = Boolean(user.mustChangePassword);
-    req.session.save((saveError) => {
+    req.session.save(async (saveError) => {
       if (saveError) return res.status(500).json({ error: "Không lưu được phiên đăng nhập." });
+      const khoa = chanDo.diaChi(req);
+      await activityLog.addLog({
+        event: "login_ok",
+        level: "ok",
+        summary: `Đăng nhập thành công: ${user.username} từ ${khoa}`,
+        detail: { ip: khoa, username: user.username },
+      });
       res.json({
         ok: true,
         user: publicUser(user),
@@ -220,12 +228,6 @@ app.post("/api/auth/login", async (req, res) => {
     return res.status(401).json({ error: "Sai tên đăng nhập hoặc mật khẩu." });
   }
   chanDo.xoa(khoa);
-  await activityLog.addLog({
-    event: "login_ok",
-    level: "ok",
-    summary: `Đăng nhập thành công: ${user.username} từ ${khoa}`,
-    detail: { ip: khoa, username: user.username },
-  });
 
   if (!user.otpEnabled) return completeLogin(req, res, user);
 
@@ -466,6 +468,14 @@ const upload = multer({
   limits: { fileSize: knowledge.MAX_FILE_BYTES },
 });
 
+// Media chat di thang trong bo nho den Zalo provider. Khong luu tep tam va
+// khong bao gio nhan duong dan tep tu trinh duyet. Gioi han mot tep dung voi UX
+// composer hien tai; dung luong/duoi tep do provider canonical quyet dinh.
+const zaloSendUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { files: 1 },
+});
+
 app.get("/api/bootstrap", async (req, res) => {
   const state = await bootstrapState();
   res.json({ ...state, user: { id: req.session.userId, username: req.session.username } });
@@ -487,13 +497,28 @@ app.get("/api/messages/:threadId", async (req, res) => {
   }
 });
 
-app.post("/api/send", async (req, res) => {
-  try {
-    const message = await sendChatMessage(req.body);
-    res.json({ ok: true, message });
-  } catch (error) {
-    res.status(400).json({ ok: false, error: error.message });
-  }
+app.post("/api/send", (req, res) => {
+  zaloSendUpload.single("file")(req, res, async (uploadError) => {
+    if (uploadError) {
+      return res.status(400).json({ ok: false, error: uploadError.message });
+    }
+    try {
+      const attachment = req.file
+        ? {
+            buffer: req.file.buffer,
+            filename: req.file.originalname,
+            size: req.file.size,
+            mime: req.file.mimetype,
+            width: req.body?.width,
+            height: req.body?.height,
+          }
+        : null;
+      const message = await sendChatMessage({ ...req.body, attachment });
+      res.json({ ok: true, message });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
+  });
 });
 
 app.post("/api/threads/refresh", async (_req, res) => {
@@ -506,7 +531,9 @@ app.post("/api/threads/refresh", async (_req, res) => {
 
 app.get("/api/auto-reply", async (_req, res) => {
   try {
-    res.json(await getAutoReplyRules());
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    res.json(await getAutoReplyRules(ownerUid));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -514,7 +541,9 @@ app.get("/api/auto-reply", async (_req, res) => {
 
 app.post("/api/auto-reply", async (req, res) => {
   try {
-    await insertAutoReplyRule(req.body);
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    await insertAutoReplyRule(ownerUid, req.body);
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -523,7 +552,9 @@ app.post("/api/auto-reply", async (req, res) => {
 
 app.put("/api/auto-reply/:id", async (req, res) => {
   try {
-    await updateAutoReplyRule(req.params.id, req.body);
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    await updateAutoReplyRule(ownerUid, req.params.id, req.body);
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -532,18 +563,32 @@ app.put("/api/auto-reply/:id", async (req, res) => {
 
 app.delete("/api/auto-reply/:id", async (req, res) => {
   try {
-    await deleteAutoReplyRule(req.params.id);
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    await deleteAutoReplyRule(ownerUid, req.params.id);
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-app.get("/api/ai-chat", (_req, res) => {
-  res.json({
-    config: aiChat.getConfig() || {},
-    ready: aiChat.isAiChatReady()
-  });
+app.get("/api/ai-chat", async (_req, res) => {
+  try {
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    if (!aiChat.getConfig(ownerUid)) await aiChat.refreshConfig();
+    const config = aiChat.getConfig(ownerUid) || {};
+    const { ownedIds: knowledgeFileIds } = await knowledge.validateOwnedFileIds(
+      ownerUid,
+      config.knowledgeFileIds || []
+    );
+    res.json({
+      config: { ...config, knowledgeFileIds },
+      ready: aiChat.isAiChatReady(config)
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.get("/api/bot/status", (_req, res) => {
@@ -574,15 +619,47 @@ app.post("/api/bot/toggle", async (req, res) => {
 
 app.post("/api/ai-chat", async (req, res) => {
   try {
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
     const {
       allowedTopics, roleTone, allowedGroupId, allowedSenderIds, useKnowledge, knowledgeFileIds,
       soul, opencodeBaseUrl, opencodeAgent, opencodeModel,
     } = req.body;
-    if (!opencodeBaseUrl) return res.status(400).json({ error: "Địa chỉ OpenCode server là bắt buộc" });
+
+    // Lưu kết nối AI là một action boundary riêng: vẫn dùng canonical endpoint
+    // và persistence hiện có, nhưng không đòi cấu hình trợ lý chưa được tạo.
+    if (req.body?.saveScope === "ai-connection") {
+      if (!opencodeBaseUrl) return res.status(400).json({ error: "Địa chỉ OpenCode server là bắt buộc" });
+      const { splitModel } = await import("./lib/opencode.js");
+      if (!splitModel(opencodeModel)) {
+        return res.status(400).json({ error: "Hãy chọn đủ Hãng AI và Model" });
+      }
+
+      const { saveAiChatConfig, getAiChatConfig } = await import("./lib/db.js");
+      const current = await getAiChatConfig(ownerUid);
+      await saveAiChatConfig(ownerUid, {
+        ...(current || {}),
+        opencodeBaseUrl: String(opencodeBaseUrl).trim(),
+        opencodeAgent: String(opencodeAgent || "general").trim() || "general",
+        opencodeModel: String(opencodeModel).trim(),
+      });
+      await aiChat.refreshConfig();
+      return res.json({ ok: true, config: aiChat.getConfig(), ready: aiChat.isAiChatReady() });
+    }
+
     if (!soul) return res.status(400).json({ error: "Soul là bắt buộc — đây là nội dung nạp vào session OpenCode" });
     if (!allowedTopics) return res.status(400).json({ error: "Các chủ đề cho phép trả lời không được để trống" });
     if (useKnowledge === true && (!Array.isArray(knowledgeFileIds) || knowledgeFileIds.length === 0)) {
       return res.status(400).json({ error: "Đã bật dùng tri thức thì phải chọn ít nhất 1 file" });
+    }
+
+    let ownedKnowledgeFileIds = knowledgeFileIds;
+    if (knowledgeFileIds !== undefined) {
+      const validation = await knowledge.validateOwnedFileIds(ownerUid, knowledgeFileIds);
+      if (!validation.allOwned) {
+        return res.status(400).json({ error: "Không tìm thấy file." });
+      }
+      ownedKnowledgeFileIds = validation.ownedIds;
     }
 
     const { saveAiChatConfig, saveAccountConfig, getAiChatConfig, clearOpencodeSessions } = await import("./lib/db.js");
@@ -590,7 +667,7 @@ app.post("/api/ai-chat", async (req, res) => {
     // Nhom/nick duoc phep thuoc ve TUNG TAI KHOAN Zalo, khong phai cau hinh chung.
     // Truoc day hai truong nay bi ghi vao bang toan cuc trong khi luc doc lai doc
     // tu account_config, nen lua chon cua nguoi dung khong bao gio co tac dung.
-    const chuAi = chuHienTai();
+    const chuAi = ownerUid;
     const coChonThucThe = Boolean(
       String(allowedGroupId || "").trim() ||
       (Array.isArray(allowedSenderIds) && allowedSenderIds.length)
@@ -608,12 +685,13 @@ app.post("/api/ai-chat", async (req, res) => {
     // dung o `soulDoi` ben duoi thi bo sot. Hau qua: moi lan bam Luu deu nem
     // ReferenceError -> API tra 500, va phien OpenCode cu KHONG BAO GIO bi xoa
     // nen doi Soul xong bot van noi theo Soul cu.
-    const truoc = await getAiChatConfig();
+    const truoc = await getAiChatConfig(ownerUid);
 
-    // Truong CHUNG cho moi tai khoan.
-    await saveAiChatConfig({
-      allowedTopics, roleTone, useKnowledge, knowledgeFileIds,
-      soul, opencodeBaseUrl, opencodeAgent, opencodeModel,
+    // Ho so tro ly thuoc owner hien tai. URL/agent la runtime global va chi
+    // duoc ghi qua action boundary "ai-connection" o tren.
+    await saveAiChatConfig(ownerUid, {
+      allowedTopics, roleTone, useKnowledge, knowledgeFileIds: ownedKnowledgeFileIds,
+      soul, opencodeModel,
     });
 
     // Truong RIENG tung tai khoan Zalo.
@@ -630,14 +708,13 @@ app.post("/api/ai-chat", async (req, res) => {
       truoc?.soul !== (soul || "") ||
       truoc?.roleTone !== (roleTone || "") ||
       truoc?.allowedTopics !== (allowedTopics || "") ||
-      truoc?.opencodeAgent !== (opencodeAgent || "general") ||
       Boolean(truoc?.useKnowledge) !== Boolean(useKnowledge) ||
-      JSON.stringify(truoc?.knowledgeFileIds || []) !== JSON.stringify(knowledgeFileIds || []);
+      JSON.stringify(truoc?.knowledgeFileIds || []) !== JSON.stringify(ownedKnowledgeFileIds || []);
     if (soulDoi) {
-      const phienCu = await clearOpencodeSessions();
+      const phienCu = await clearOpencodeSessions(ownerUid);
       const { deleteSessions } = await import("./lib/opencode.js");
       const { quenTatCaPhien } = await import("./lib/customer-memory.js");
-      const daXoa = await deleteSessions({ opencodeBaseUrl }, phienCu);
+      const daXoa = await deleteSessions(truoc, phienCu);
       quenTatCaPhien(); // phien moi phai duoc nap lai ho so khach tu dau
       await activityLog.addLog({
         event: "opencode_session",
@@ -680,7 +757,8 @@ app.post("/api/ai-chat/doc-tep", async (req, res) => {
 app.post("/api/ai-chat/opencode-test", async (req, res) => {
   try {
     const { ping } = await import("./lib/opencode.js");
-    const info = await ping({ opencodeBaseUrl: req.body?.opencodeBaseUrl || aiChat.getConfig()?.opencodeBaseUrl });
+    const runtime = await getAiRuntimeConfig();
+    const info = await ping({ opencodeBaseUrl: req.body?.opencodeBaseUrl || runtime.opencodeBaseUrl });
     res.json({ ok: true, ...info });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -690,7 +768,7 @@ app.post("/api/ai-chat/opencode-test", async (req, res) => {
 app.get("/api/ai-chat/providers", async (_req, res) => {
   try {
     const { listAllProviders } = await import("./lib/opencode.js");
-    res.json({ providers: await listAllProviders(aiChat.getConfig()) });
+    res.json({ providers: await listAllProviders(await getAiRuntimeConfig()) });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -700,7 +778,7 @@ app.post("/api/ai-chat/provider-key", async (req, res) => {
   try {
     const { setProviderKey } = await import("./lib/opencode.js");
     // Key khong bao gio duoc ghi vao log, khong luu vao DB, khong tra ve client.
-    await setProviderKey(aiChat.getConfig(), req.body?.providerId, req.body?.apiKey);
+    await setProviderKey(await getAiRuntimeConfig(), req.body?.providerId, req.body?.apiKey);
     res.json({ ok: true });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -710,7 +788,8 @@ app.post("/api/ai-chat/provider-key", async (req, res) => {
 app.post("/api/ai-chat/provider-key/test", async (req, res) => {
   try {
     const { testProviderKey } = await import("./lib/opencode.js");
-    res.json({ ok: true, ...(await testProviderKey(aiChat.getConfig(), req.body?.providerId)) });
+    const config = aiChat.getConfig() || await getAiRuntimeConfig();
+    res.json({ ok: true, ...(await testProviderKey(config, req.body?.providerId)) });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -719,7 +798,7 @@ app.post("/api/ai-chat/provider-key/test", async (req, res) => {
 app.delete("/api/ai-chat/provider-key", async (_req, res) => {
   try {
     const { clearAllProviderKeys } = await import("./lib/opencode.js");
-    await clearAllProviderKeys(aiChat.getConfig());
+    await clearAllProviderKeys(await getAiRuntimeConfig());
     res.json({ ok: true });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -1225,10 +1304,13 @@ app.delete("/api/customer-memory/:uid", async (req, res) => {
 
 app.post("/api/ai-chat/reset-sessions", async (_req, res) => {
   try {
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
     const { clearOpencodeSessions } = await import("./lib/db.js");
     const { deleteSessions } = await import("./lib/opencode.js");
     const { quenTatCaPhien } = await import("./lib/customer-memory.js");
-    const phienCu = await clearOpencodeSessions();
+    const phienCu = await clearOpencodeSessions(ownerUid);
+    if (!aiChat.getConfig()) await aiChat.refreshConfig();
     await deleteSessions(aiChat.getConfig(), phienCu);
     quenTatCaPhien();
     await activityLog.addLog({
@@ -1326,8 +1408,10 @@ const trainingUpload = multer({
 
 app.get("/api/training", async (_req, res) => {
   try {
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
     const training = await import("./lib/training.js");
-    res.json(await training.trangThai());
+    res.json(await training.trangThai(ownerUid));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1340,8 +1424,10 @@ app.post("/api/training/message", (req, res) => {
       return res.status(400).json({ error: quaLon ? "Tệp vượt quá 8MB." : uploadError.message });
     }
     try {
+      const ownerUid = chuHienTai();
+      if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
       const training = await import("./lib/training.js");
-      const reply = await training.guiTinHuanLuyen(req.body?.text || "", req.files || []);
+      const reply = await training.guiTinHuanLuyen(ownerUid, req.body?.text || "", req.files || []);
       res.json({ ok: true, reply });
     } catch (error) {
       res.status(400).json({ error: error.message });
@@ -1351,8 +1437,10 @@ app.post("/api/training/message", (req, res) => {
 
 app.post("/api/training/synthesize", async (_req, res) => {
   try {
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
     const training = await import("./lib/training.js");
-    res.json({ ok: true, reply: await training.tongHopSoul() });
+    res.json({ ok: true, reply: await training.tongHopSoul(ownerUid) });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -1360,8 +1448,10 @@ app.post("/api/training/synthesize", async (_req, res) => {
 
 app.delete("/api/training", async (_req, res) => {
   try {
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
     const { clearTrainingMessages } = await import("./lib/db.js");
-    await clearTrainingMessages();
+    await clearTrainingMessages(ownerUid);
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1372,13 +1462,17 @@ app.delete("/api/training", async (_req, res) => {
 
 app.get("/api/knowledge", async (_req, res) => {
   try {
-    res.json({ files: await knowledge.listFiles() });
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    res.json({ files: await knowledge.listFiles(ownerUid) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
 app.post("/api/knowledge", (req, res) => {
+  const ownerUid = chuHienTai();
+  if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
   upload.single("file")(req, res, async (uploadError) => {
     if (uploadError) {
       const tooLarge = uploadError.code === "LIMIT_FILE_SIZE";
@@ -1386,7 +1480,7 @@ app.post("/api/knowledge", (req, res) => {
     }
     if (!req.file) return res.status(400).json({ error: "Thiếu file tải lên." });
     try {
-      const file = await knowledge.addFile(req.file.buffer, req.file.originalname);
+      const file = await knowledge.addFile(ownerUid, req.file.buffer, req.file.originalname);
       res.status(201).json({ file });
     } catch (error) {
       res.status(400).json({ error: error.message });
@@ -1396,7 +1490,9 @@ app.post("/api/knowledge", (req, res) => {
 
 app.get("/api/knowledge/:id/content", async (req, res) => {
   try {
-    const file = await knowledge.getFileContent(req.params.id);
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    const file = await knowledge.getFileContent(ownerUid, req.params.id);
     if (!file) return res.status(404).json({ error: "Không tìm thấy file." });
     res.json({ file });
   } catch (error) {
@@ -1406,7 +1502,9 @@ app.get("/api/knowledge/:id/content", async (req, res) => {
 
 app.delete("/api/knowledge/:id", async (req, res) => {
   try {
-    const removed = await knowledge.removeFile(req.params.id);
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    const removed = await knowledge.removeFile(ownerUid, req.params.id);
     if (!removed) return res.status(404).json({ error: "Không tìm thấy file." });
     res.json({ ok: true });
   } catch (error) {
@@ -1486,8 +1584,8 @@ server.listen(port, "0.0.0.0", async () => {
   const { getAdminZalo } = await import("./lib/db.js");
 
   // Bao rieng cho nick admin. Khong dat admin thi im lang - van con tab LOG.
-  const nhanRiengChoAdmin = async (text) => {
-    const admin = await getAdminZalo();
+  const nhanRiengChoAdmin = async (ownerUid, text) => {
+    const admin = await getAdminZalo(ownerUid);
     if (!admin?.uid) return;
     await sendChatMessage({ threadId: admin.uid, threadType: 0, text });
   };

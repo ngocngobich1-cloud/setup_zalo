@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>P2 AI Action Boundary QA</title>
+    <link rel="stylesheet" href="/public/style.css" />
+    <style>
+      body { margin: 0; padding: 20px; background: var(--bg); color: var(--text); }
+      #qa-panel { max-width: 920px; margin: 0 auto; }
+    </style>
+  </head>
+  <body>
+    <main id="qa-panel"></main>
+    <output id="qa-state" hidden></output>
+    <script type="module">
+      const qa = window.__p2Qa = {
+        calls: [],
+        invalid: [],
+        confirmCount: 0,
+      };
+      const syncQa = () => {
+        document.querySelector("#qa-state").textContent = JSON.stringify(qa);
+      };
+
+      document.addEventListener("invalid", (event) => {
+        qa.invalid.push(event.target.id || event.target.name || event.target.tagName);
+        syncQa();
+      }, true);
+      window.confirm = () => {
+        qa.confirmCount += 1;
+        syncQa();
+        return true;
+      };
+
+      const providers = [{
+        id: "opencode",
+        name: "OpenCode Zen",
+        connected: false,
+        models: [{
+          id: "opencode/nemotron-3-ultra-free",
+          label: "Nemotron 3 Ultra Free",
+          context: 1000000,
+          beta: false,
+        }],
+      }];
+
+      window.fetch = async (input, options = {}) => {
+        const url = typeof input === "string" ? input : input.url;
+        const method = String(options.method || "GET").toUpperCase();
+        qa.calls.push({ url, method, body: options.body || "" });
+        syncQa();
+
+        let data = { ok: true };
+        if (url === "/api/ai-chat" && method === "GET") {
+          data = {
+            config: {
+              opencodeBaseUrl: "http://opencode:4096",
+              opencodeAgent: "general",
+              opencodeModel: "opencode/nemotron-3-ultra-free",
+              soul: "",
+              allowedTopics: "",
+              roleTone: "",
+              useKnowledge: false,
+              knowledgeFileIds: [],
+            },
+            ready: false,
+          };
+        } else if (url === "/api/ai-chat/opencode-test") {
+          data = {
+            ok: true,
+            agents: ["general"],
+            providers,
+            systemDefaultModel: "opencode/nemotron-3-ultra-free",
+          };
+        } else if (url === "/api/ai-chat/providers") {
+          data = { providers };
+        } else if (url === "/api/zalo/groups") {
+          data = { groups: [] };
+        } else if (url === "/api/knowledge") {
+          data = { files: [] };
+        } else if (url === "/api/ai-chat/provider-key/test") {
+          data = { ok: true, model: "opencode/nemotron-3-ultra-free", reply: "OK" };
+        } else if (url === "/api/ai-chat" && method === "POST") {
+          data = { ok: true, ready: false, config: {} };
+        }
+
+        return {
+          ok: true,
+          status: 200,
+          json: async () => data,
+        };
+      };
+
+      const { CONFIG_TABS } = await import("/public/config.js");
+      CONFIG_TABS.find((tab) => tab.id === "ai-chat").mount(document.querySelector("#qa-panel"));
+      syncQa();
+      document.body.dataset.qaReady = "true";
+    </script>
+  </body>
+</html>

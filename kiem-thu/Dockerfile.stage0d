@@ -1,0 +1,28 @@
+FROM node:24.18.0
+
+# Stage 0D test-only image. Match the project's existing container runtime and
+# retain the native build toolchain required by the locked sqlite3 dependency.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# The Dockerfile-specific ignore file exposes only this explicit clean-room set.
+# In particular, data/, backups, .env, credentials and deployment state never
+# enter the build context.
+COPY lib ./lib
+COPY public ./public
+COPY kiem-thu ./kiem-thu
+COPY server.js ./server.js
+
+RUN node -e "require('sqlite3'); console.log('SQLITE3_BINDING_WORKING=YES')"
+
+ENV NODE_ENV=test
+ENV STAGE0_CONTAINER=1
+
+USER node
+CMD ["node", "kiem-thu/chay-stage0d-six.js"]

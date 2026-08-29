@@ -2201,15 +2201,29 @@ async function main() {
 
   await bai("P2E-X06", "dat_lich pending blocks P2E", async () => {
     const threadId = "p2e-x06";
-    adminCmd.capHinhPhanTichLenh(async () => ({
-      hanhDong: "dat_lich",
-      lich: [{ dichId: NHOM_P2C, dichTen: "Nhóm P2C", noiDung: "Tin giả", luc: "2026-08-26 20:00", lapLai: "" }],
-    }));
-    const xem = await noiP2C("đặt lịch giả", threadId);
-    assert.match(xem, /OK/);
-    datQuanLyP2EGia();
-    assert.match(await noiP2C(LENH_SUA_P2E, threadId), /thao tác khác chờ OK/i);
-    await noiP2C("hủy", threadId);
+    const lucTuongLai = new Date(MOC_P2C);
+    lucTuongLai.setDate(lucTuongLai.getDate() + 2);
+    lucTuongLai.setHours(20, 0, 0, 0);
+    const haiChuSo = (so) => String(so).padStart(2, "0");
+    const lucDatLichTuongLai = [
+      `${lucTuongLai.getFullYear()}-${haiChuSo(lucTuongLai.getMonth() + 1)}-${haiChuSo(lucTuongLai.getDate())}`,
+      `${haiChuSo(lucTuongLai.getHours())}:${haiChuSo(lucTuongLai.getMinutes())}`,
+    ].join(" ");
+    const dateNowThat = Date.now;
+    Date.now = () => MOC_P2C;
+    try {
+      adminCmd.capHinhPhanTichLenh(async () => ({
+        hanhDong: "dat_lich",
+        lich: [{ dichId: NHOM_P2C, dichTen: "Nhóm P2C", noiDung: "Tin giả", luc: lucDatLichTuongLai, lapLai: "" }],
+      }));
+      const xem = await noiP2C("đặt lịch giả", threadId);
+      assert.match(xem, /OK/);
+      datQuanLyP2EGia();
+      assert.match(await noiP2C(LENH_SUA_P2E, threadId), /thao tác khác chờ OK/i);
+      await noiP2C("hủy", threadId);
+    } finally {
+      Date.now = dateNowThat;
+    }
   });
 
   await bai("P2E-X07", "Teach Bot draft blocks P2E", async () => {

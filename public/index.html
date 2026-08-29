@@ -173,8 +173,14 @@
                 </header>
                 <div id="messages" class="messages"></div>
                 <form id="send-form" class="send-form">
-                  <input id="message-input" placeholder="Nhập tin nhắn…" autocomplete="off" />
-                  <button class="primary-button send-button" type="submit">Gửi</button>
+                  <div id="chat-attachment-preview" class="chat-attachment-preview hidden"></div>
+                  <div class="send-input-row">
+                    <input id="message-input" placeholder="Nhập tin nhắn…" autocomplete="off" />
+                    <input type="file" id="chat-file-input" class="hidden" />
+                    <button id="btn-chat-attach" class="secondary-button chat-attach-button" type="button"
+                      title="Đính ảnh hoặc tệp" aria-label="Đính ảnh hoặc tệp">📎</button>
+                    <button id="btn-chat-send" class="primary-button send-button" type="submit">Gửi</button>
+                  </div>
                 </form>
               </div>
             </main>
@@ -196,6 +202,10 @@
             </header>
 
             <div id="training-log" class="training-log"></div>
+
+            <div id="onboarding-starters" class="onboarding-starters hidden" aria-label="Gợi ý bắt đầu">
+              <button id="btn-onboarding-starter" class="onboarding-starter-chip" type="button">Mình cần tạo 1 bot AI</button>
+            </div>
 
             <form id="training-form" class="training-form">
               <div id="training-files" class="training-files hidden"></div>

@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <title>P9.15 Provider/Owner Isolation</title>
+  </head>
+  <body>
+    <main id="qa-panel"></main>
+    <pre id="qa-result">RUNNING</pre>
+    <script type="module">
+      const nativeFetch = window.fetch.bind(window);
+      const DEFAULT_MODEL = "opencode/nemotron-3-ultra-free";
+      const SAVED_MODEL = "google/gemini-pro";
+      const providers = [
+        {
+          id: "opencode",
+          name: "OpenCode Zen",
+          connected: true,
+          models: [{
+            id: DEFAULT_MODEL,
+            label: "Nemotron 3 Ultra Free",
+            context: 1000000,
+            beta: false,
+          }],
+        },
+        {
+          id: "google",
+          name: "Google",
+          connected: false,
+          models: [{
+            id: SAVED_MODEL,
+            label: "Gemini Pro",
+            context: 100000,
+            beta: false,
+          }],
+        },
+      ];
+      const keyProviders = [
+        ...providers,
+        { id: "anthropic", name: "Anthropic", connected: false, models: [] },
+      ];
+      const state = {
+        ownerMode: "missing",
+        ownerGets: 0,
+        globalModelGets: 0,
+        globalKeyGets: 0,
+        modelSaveMode: "success",
+        modelSavePosts: 0,
+        resolveModelSave: null,
+      };
+      const results = [];
+
+      const response = (status, data) => ({
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => data,
+      });
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      async function waitFor(predicate, message, timeout = 1500) {
+        const deadline = Date.now() + timeout;
+        while (Date.now() < deadline) {
+          if (predicate()) return;
+          await sleep(10);
+        }
+        throw new Error(message);
+      }
+      async function test(code, description, run) {
+        try {
+          await run();
+          results.push({ code, description, pass: true });
+        } catch (error) {
+          results.push({ code, description, pass: false, error: error.message });
+        }
+      }
+      const ownerConfig = (model) => ({
+        opencodeBaseUrl: "http://opencode:4096",
+        opencodeAgent: "general",
+        opencodeModel: model,
+        soul: model ? "Soul owner" : "",
+        allowedTopics: model ? "Sales" : "",
+        roleTone: model ? "Ngắn gọn" : "",
+        allowedGroupId: "",
+        allowedSenderIds: [],
+        useKnowledge: false,
+        knowledgeFileIds: [],
+        docTep: false,
+      });
+
+      window.fetch = async (input, options = {}) => {
+        const url = typeof input === "string" ? input : input.url;
+        const method = String(options.method || "GET").toUpperCase();
+        if (url === "/api/zalo/groups") return response(200, { groups: [] });
+        if (url === "/api/ai-chat" && method === "GET") {
+          state.ownerGets += 1;
+          if (state.ownerMode === "missing") {
+            return response(400, { error: "Chưa có tài khoản Zalo đang hoạt động" });
+          }
+          const model = state.ownerMode === "saved" ? SAVED_MODEL : "";
+          return response(200, { config: ownerConfig(model), ready: Boolean(model) });
+        }
+        if (url === "/api/ai-chat" && method === "POST") {
+          state.modelSavePosts += 1;
+          if (state.modelSaveMode === "error") {
+            return response(400, { error: "fixture backend rejection" });
+          }
+          if (state.modelSaveMode === "pending") {
+            return new Promise((resolve) => {
+              state.resolveModelSave = () => resolve(response(200, {
+                ok: true,
+                config: { opencodeModel: DEFAULT_MODEL },
+                ready: true,
+              }));
+            });
+          }
+          return response(200, {
+            ok: true,
+            config: { opencodeModel: DEFAULT_MODEL },
+            ready: true,
+          });
+        }
+        if (url === "/api/ai-chat/opencode-test") {
+          state.globalModelGets += 1;
+          return response(200, {
+            ok: true,
+            agents: ["general", "build"],
+            providers,
+            systemDefaultModel: DEFAULT_MODEL,
+          });
+        }
+        if (url === "/api/ai-chat/providers") {
+          state.globalKeyGets += 1;
+          return response(200, { providers: keyProviders });
+        }
+        if (url === "/api/knowledge") return response(200, { files: [] });
+        return response(200, { ok: true });
+      };
+
+      const config = await import("/public/config.js");
+      const configSource = await (await nativeFetch("/public/config.js")).text();
+      const modelSaveStart = configSource.indexOf('panel.querySelector("#btn-ai-model-save")');
+      const modelSaveEnd = configSource.indexOf('useKnowledge.addEventListener("change"', modelSaveStart);
+      const modelSaveSource = configSource.slice(modelSaveStart, modelSaveEnd);
+      config.CONFIG_TABS.find((tab) => tab.id === "ai-chat")
+        .mount(document.querySelector("#qa-panel"));
+
+      await waitFor(() => state.ownerGets >= 1, "owner request did not finish");
+      await sleep(50);
+
+      await test("T1", "no owner vẫn chạy cả hai global loader", async () => {
+        if (state.globalModelGets < 1 || state.globalKeyGets < 1) {
+          throw new Error(`global calls model=${state.globalModelGets}, key=${state.globalKeyGets}`);
+        }
+      });
+      await test("T2", "owner 400 không làm mất global catalogs", async () => {
+        const modelOptions = document.querySelectorAll("#ai-oc-provider option").length;
+        const keyOptions = document.querySelectorAll("#ai-key-provider option").length;
+        if (modelOptions !== 3 || keyOptions !== 3) {
+          throw new Error(`provider options=${modelOptions}, key options=${keyOptions}`);
+        }
+      });
+
+      state.ownerMode = "saved";
+      config.invalidateSettingsOwnerState();
+      config.refreshSettingsDynamicData();
+      await waitFor(() => state.ownerGets >= 2, "saved owner request did not finish");
+      await waitFor(
+        () => document.querySelector("#ai-oc-model").value === SAVED_MODEL,
+        "saved model was not restored"
+      );
+      await test("T4", "saved owner model được khôi phục", async () => {
+        if (document.querySelector("#ai-oc-model").value !== SAVED_MODEL) {
+          throw new Error(`selected=${document.querySelector("#ai-oc-model").value}`);
+        }
+      });
+
+      const providerValues = Array.from(document.querySelectorAll("#ai-oc-provider option"), (item) => item.value);
+      const keyValues = Array.from(document.querySelectorAll("#ai-key-provider option"), (item) => item.value);
+      const providerNodes = Array.from(document.querySelectorAll("#ai-oc-provider option"));
+      const keyNodes = Array.from(document.querySelectorAll("#ai-key-provider option"));
+      config.invalidateSettingsOwnerState();
+      await test("T3", "UID switch giữ option global và xoá state owner", async () => {
+        const providerAfter = Array.from(document.querySelectorAll("#ai-oc-provider option"), (item) => item.value);
+        const keyAfter = Array.from(document.querySelectorAll("#ai-key-provider option"), (item) => item.value);
+        const ownerCleared = ["#ai-soul", "#ai-topics", "#ai-role"]
+          .every((selector) => document.querySelector(selector).value === "");
+        if (JSON.stringify(providerAfter) !== JSON.stringify(providerValues)) {
+          throw new Error(`provider options changed ${JSON.stringify(providerValues)} -> ${JSON.stringify(providerAfter)}`);
+        }
+        if (JSON.stringify(keyAfter) !== JSON.stringify(keyValues)) {
+          throw new Error(`key options changed ${JSON.stringify(keyValues)} -> ${JSON.stringify(keyAfter)}`);
+        }
+        const providerNodesPreserved = Array.from(document.querySelectorAll("#ai-oc-provider option"))
+          .every((item, index) => item === providerNodes[index]);
+        const keyNodesPreserved = Array.from(document.querySelectorAll("#ai-key-provider option"))
+          .every((item, index) => item === keyNodes[index]);
+        if (!providerNodesPreserved || !keyNodesPreserved) {
+          throw new Error(`global option nodes replaced provider=${!providerNodesPreserved}, key=${!keyNodesPreserved}`);
+        }
+        if (!ownerCleared) throw new Error("owner fields were not cleared");
+      });
+
+      state.ownerMode = "fresh";
+      config.refreshSettingsDynamicData();
+      await waitFor(() => state.ownerGets >= 3, "fresh owner request did not finish");
+      await waitFor(
+        () => document.querySelector("#ai-oc-model").value === DEFAULT_MODEL,
+        "system default was not selected for fresh owner"
+      );
+      await test("T5", "fresh owner dùng system default", async () => {
+        if (document.querySelector("#ai-oc-model").value !== DEFAULT_MODEL) {
+          throw new Error(`selected=${document.querySelector("#ai-oc-model").value}`);
+        }
+      });
+
+      const modelSaveButton = document.querySelector("#btn-ai-model-save");
+      const statusText = document.querySelector("#ai-status");
+
+      await test("P9.17-T1", "normal model save hoàn tất không ReferenceError", async () => {
+        state.modelSaveMode = "success";
+        modelSaveButton.click();
+        await waitFor(
+          () => statusText.textContent !== "Đang lưu Hãng AI và Model...",
+          "normal model save did not finish"
+        );
+        if (statusText.textContent !== "Đã lưu Hãng AI và Model.") {
+          throw new Error(`status=${statusText.textContent}`);
+        }
+      });
+
+      await test("P9.17-T2", "backend error giữ existing error handling", async () => {
+        state.modelSaveMode = "error";
+        modelSaveButton.click();
+        await waitFor(
+          () => statusText.textContent !== "Đang lưu Hãng AI và Model...",
+          "backend error path did not finish"
+        );
+        if (statusText.textContent !== "fixture backend rejection") {
+          throw new Error(`status=${statusText.textContent}`);
+        }
+      });
+
+      await test("P9.17-T3", "UID switch bỏ stale model-save UI continuation", async () => {
+        state.modelSaveMode = "pending";
+        state.resolveModelSave = null;
+        modelSaveButton.click();
+        await waitFor(() => typeof state.resolveModelSave === "function", "pending response was not captured");
+        config.invalidateSettingsOwnerState();
+        const ownerBStatus = statusText.textContent;
+        state.resolveModelSave();
+        await sleep(30);
+        if (statusText.textContent !== ownerBStatus) {
+          throw new Error(`stale response changed status ${ownerBStatus} -> ${statusText.textContent}`);
+        }
+      });
+
+      await test("P9.17-T4", "model-save không còn undeclared generation reference", async () => {
+        if (/\bgeneration\b/.test(modelSaveSource)) {
+          throw new Error("standalone generation reference remains in model-save handler");
+        }
+      });
+
+      await test("P9.17-T5", "model-save có đúng một stale-generation guard", async () => {
+        const guards = modelSaveSource.match(
+          /if\s*\(\s*[A-Za-z_$][\w$]*\s*!==\s*settingsOwnerGeneration\s*\)/g
+        ) || [];
+        if (guards.length !== 1) throw new Error(`guard count=${guards.length}`);
+        if (!/const\s+[A-Za-z_$][\w$]*\s*=\s*settingsOwnerGeneration\s*;/.test(modelSaveSource)) {
+          throw new Error("owner action generation snapshot is missing");
+        }
+      });
+
+      const failed = results.filter((item) => !item.pass);
+      document.querySelector("#qa-result").textContent = JSON.stringify({
+        results,
+        calls: state,
+        realProviderCalls: 0,
+        passed: results.length - failed.length,
+        total: results.length,
+      }, null, 2);
+      document.body.dataset.qaStatus = failed.length ? "FAIL" : "PASS";
+    </script>
+  </body>
+</html>

@@ -14,9 +14,16 @@ export function pushActivityLog(entry) {
 // o do VINH VIEN - quet ma QR xong cung khong co gi nap lai, tru khi tai lai
 // ca trang.
 let aiEntityRefreshSink = null;
+let aiConfigRefreshSink = null;
 
 export function refreshAiChatEntities() {
   if (aiEntityRefreshSink) aiEntityRefreshSink();
+}
+
+/** Nap lai cau hinh AI canonical cua owner hien tai, ke ca khi modal dang dong. */
+export async function refreshAiChatConfigForCurrentOwner() {
+  if (!aiConfigRefreshSink) return false;
+  return Boolean(await aiConfigRefreshSink());
 }
 
 /**
@@ -31,6 +38,23 @@ export function refreshAiChatEntities() {
  * trong mount() nen khong bao gio nhan doi.
  */
 const soDangKyLamMoi = [];
+let settingsOwnerGeneration = 0;
+let settingsOwnerUid = null;
+let invalidateAiOwnerSink = null;
+let invalidateAdminOwnerSink = null;
+let invalidateKnowledgeOwnerSink = null;
+let invalidateScheduleOwnerSink = null;
+let invalidateCustomersOwnerSink = null;
+let invalidateLogsOwnerSink = null;
+let invalidateAutoReplyOwnerSink = null;
+
+function chupSettingsOwner() {
+  return { ownerUid: settingsOwnerUid, ownerGeneration: settingsOwnerGeneration };
+}
+
+function settingsOwnerConHieuLuc(owner) {
+  return owner.ownerGeneration === settingsOwnerGeneration && owner.ownerUid === settingsOwnerUid;
+}
 
 function dangKyLamMoi(ten, fn) {
   soDangKyLamMoi.push({ ten, fn });
@@ -48,6 +72,22 @@ export function refreshSettingsDynamicData() {
       console.warn("[cau-hinh] Loi khi nap lai " + muc.ten, e);
     }
   }
+}
+
+/** Xoa ngay DOM theo owner cu; request cu cung bi generation guard bo qua. */
+export function setSettingsOwnerUid(nextOwnerUid) {
+  settingsOwnerUid = nextOwnerUid ? String(nextOwnerUid) : null;
+}
+
+export function invalidateSettingsOwnerState() {
+  settingsOwnerGeneration += 1;
+  invalidateAutoReplyOwnerSink?.();
+  invalidateKnowledgeOwnerSink?.();
+  invalidateAiOwnerSink?.();
+  invalidateAdminOwnerSink?.();
+  invalidateScheduleOwnerSink?.();
+  invalidateCustomersOwnerSink?.();
+  invalidateLogsOwnerSink?.();
 }
 
 export const CONFIG_TABS = [
@@ -115,10 +155,21 @@ export const CONFIG_TABS = [
 
       let rulesData = [];
 
-      async function fetchRules() {
+      async function fetchRules(owner = chupSettingsOwner()) {
+        if (!owner.ownerUid) {
+          if (settingsOwnerConHieuLuc(owner)) {
+            rulesData = [];
+            renderRules();
+          }
+          return false;
+        }
         const res = await fetch("/api/auto-reply");
-        rulesData = await res.json();
+        const data = await res.json();
+        if (!settingsOwnerConHieuLuc(owner)) return false;
+        if (!res.ok) throw new Error(data.error || "Không tải được quy tắc trả lời tự động.");
+        rulesData = Array.isArray(data) ? data : [];
         renderRules();
+        return true;
       }
 
       function renderRules() {
@@ -170,8 +221,11 @@ export const CONFIG_TABS = [
           btnDelete.textContent = "Xoá";
           btnDelete.onclick = async () => {
             if (!confirm("Bạn có chắc chắn muốn xoá quy tắc này?")) return;
-            await fetch(`/api/auto-reply/${rule.id}`, { method: "DELETE" });
-            await fetchRules();
+            const owner = chupSettingsOwner();
+            const res = await fetch(`/api/auto-reply/${rule.id}`, { method: "DELETE" });
+            if (!settingsOwnerConHieuLuc(owner)) return;
+            if (!res.ok) return;
+            await fetchRules(owner);
           };
 
           actions.append(btnEdit, btnDelete);
@@ -209,17 +263,28 @@ export const CONFIG_TABS = [
         const id = ruleId.value;
         const method = id ? "PUT" : "POST";
         const url = id ? `/api/auto-reply/${id}` : "/api/auto-reply";
+        const owner = chupSettingsOwner();
 
-        await fetch(url, {
+        const res = await fetch(url, {
           method,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
 
+        if (!settingsOwnerConHieuLuc(owner)) return;
+        if (!res.ok) return;
         ruleForm.classList.add("hidden");
-        await fetchRules();
+        await fetchRules(owner);
       });
 
+      invalidateAutoReplyOwnerSink = () => {
+        rulesData = [];
+        renderRules();
+        ruleForm.reset();
+        ruleId.value = "";
+        ruleForm.classList.add("hidden");
+      };
+      dangKyLamMoi("tra loi tu dong", fetchRules);
       fetchRules();
     }
   },
@@ -232,45 +297,57 @@ export const CONFIG_TABS = [
           AI chỉ trả lời khi tin liên quan chủ đề; quy tắc /lệnh được ưu tiên trước.
         </div>
         <form id="ai-chat-form" class="rule-form">
+          <div class="form-group key-block">
+            <label>1. API Key</label>
+            <details class="ai-key-manager">
+              <summary>Quản lý các kết nối AI...</summary>
+              <div class="ai-key-manager-body">
+                <div class="smtp-grid">
+                  <select id="ai-key-provider" class="auth-input" aria-label="Hãng AI cần kết nối"></select>
+                  <input type="password" id="ai-key-value" class="auth-input" placeholder="Dán API key của hãng…" autocomplete="new-password" />
+                </div>
+                <div id="ai-key-status" class="field-hint" style="font-size:12px; margin:6px 0 0; min-height:16px; color: var(--muted);"></div>
+                <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+                  <button type="button" id="btn-key-save" class="secondary-button" style="padding:5px 12px; font-size:12px;">Lưu key</button>
+                  <button type="button" id="btn-key-test" class="secondary-button" style="padding:5px 12px; font-size:12px;">Thử key</button>
+                  <button type="button" id="btn-key-clear" class="secondary-button" style="padding:5px 12px; font-size:12px;">Gỡ toàn bộ key</button>
+                </div>
+                <p class="field-hint" style="color: var(--muted); font-size: 12px; margin: 6px 0 0;">
+                  Mỗi API key chỉ kết nối đúng hãng tương ứng; key Google hoặc Anthropic không cấp quyền cho model của OpenCode Zen.
+                  Key đi thẳng sang OpenCode, <strong>app không giữ bản sao</strong> nên không hiển thị lại được.
+                </p>
+              </div>
+            </details>
+          </div>
+
           <div class="form-group">
-            <label>OpenCode server:</label>
-            <div class="smtp-grid">
-              <input type="text" id="ai-oc-url" class="auth-input" placeholder="http://opencode:4096" autocomplete="off" />
-              <select id="ai-oc-agent" class="auth-input"></select>
+            <label>2. Hãng AI và Model</label>
+            <div class="smtp-grid ai-model-grid">
+              <label class="ai-model-field">
+                <span>Hãng AI</span>
+                <select id="ai-oc-provider" class="auth-input"></select>
+              </label>
+              <label class="ai-model-field">
+                <span>Model</span>
+                <select id="ai-oc-model" class="auth-input"></select>
+              </label>
+              <button type="button" id="btn-ai-model-save" class="primary-button ai-model-save">Lưu</button>
             </div>
-            <div class="smtp-grid" style="margin-top: 8px;">
-              <select id="ai-oc-provider" class="auth-input"></select>
-              <select id="ai-oc-model" class="auth-input"></select>
-            </div>
-            <p class="field-hint" style="color: var(--muted); font-size: 12px; margin: 4px 0 0;">
-              OpenCode chạy cùng trong <code>docker-compose</code>, gọi qua tên dịch vụ <code>http://opencode:4096</code>. Không cần chạy tay gì trên máy.
-            </p>
             <p class="field-hint" style="color: var(--muted); font-size: 12px; margin: 6px 0 0;">
-              <strong>Không còn ô API key ở đây.</strong> App không gọi thẳng LLM nữa nên không giữ key.
-              Key nằm trong OpenCode: chạy <code>opencode auth login</code>, hoặc đặt biến môi trường
-              (máy đang có sẵn <code>GROQ_API_KEY</code>). Hãng nào có key thì mới hiện ra ở ô bên trên.
-              Danh sách chỉ gồm model <strong>chat được</strong> — model nhận giọng nói, đọc thành tiếng
-              hay lọc nội dung đều đã bị loại.
+              Danh sách lấy trực tiếp từ OpenCode. Đổi Hãng AI hoặc Model chỉ thay lựa chọn đang chờ; bấm <strong>Lưu</strong> mới áp dụng.
             </p>
           </div>
 
-          <div class="form-group key-block">
-            <label>Khoá API của các hãng:</label>
-            <div class="smtp-grid">
-              <select id="ai-key-provider" class="auth-input"></select>
-              <input type="password" id="ai-key-value" class="auth-input" placeholder="Dán API key của hãng…" autocomplete="new-password" />
-            </div>
-            <div id="ai-key-status" class="field-hint" style="font-size:12px; margin:6px 0 0; min-height:16px; color: var(--muted);"></div>
-            <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
-              <button type="button" id="btn-key-save" class="secondary-button" style="padding:5px 12px; font-size:12px;">Lưu key</button>
-              <button type="button" id="btn-key-test" class="secondary-button" style="padding:5px 12px; font-size:12px;">Thử key</button>
-              <button type="button" id="btn-key-clear" class="secondary-button" style="padding:5px 12px; font-size:12px;">Gỡ toàn bộ key</button>
+          <details class="form-group ai-opencode-advanced">
+            <summary>Cấu hình OpenCode nâng cao</summary>
+            <div class="smtp-grid ai-opencode-advanced-body">
+              <input type="text" id="ai-oc-url" class="auth-input" placeholder="http://opencode:4096" autocomplete="off" aria-label="Địa chỉ OpenCode server" />
+              <select id="ai-oc-agent" class="auth-input" aria-label="OpenCode agent"></select>
             </div>
             <p class="field-hint" style="color: var(--muted); font-size: 12px; margin: 6px 0 0;">
-              Key đi thẳng sang OpenCode, <strong>app không giữ bản sao</strong> nên không hiển thị lại được.
-              OpenCode chỉ cho gỡ toàn bộ chứ không gỡ riêng từng hãng.
+              OpenCode chạy cùng trong <code>docker-compose</code> tại <code>http://opencode:4096</code>.
             </p>
-          </div>
+          </details>
 
           <div class="form-group">
             <label>Soul (nhân cách + bối cảnh nạp vào session):</label>
@@ -334,7 +411,7 @@ export const CONFIG_TABS = [
             <span id="ai-status" style="color: var(--muted); font-size: 14px; flex: 1; min-width: 0;"></span>
             <button type="button" id="btn-oc-test" class="secondary-button">Kiểm tra OpenCode</button>
             <button type="button" id="btn-oc-reset" class="secondary-button">Nạp lại Soul</button>
-            <button type="submit" class="primary-button">Ghi nhớ</button>
+            <button type="submit" id="btn-ai-assistant-save" class="primary-button">Ghi nhớ cấu hình trợ lý</button>
           </div>
         </form>
       `;
@@ -380,11 +457,12 @@ export const CONFIG_TABS = [
 
       let currentMembers = [];
 
-      async function loadKnowledgeFiles(selectedIds = []) {
+      async function loadKnowledgeFiles(selectedIds = [], generation = settingsOwnerGeneration) {
         knowledgeFiles.textContent = "Đang tải danh sách file...";
         try {
           const res = await fetch("/api/knowledge");
           const data = await res.json();
+          if (generation !== settingsOwnerGeneration) return;
           const files = data.files || [];
           knowledgeFiles.innerHTML = "";
           if (files.length === 0) {
@@ -416,8 +494,26 @@ export const CONFIG_TABS = [
       // Phan biet "hoi duoc OpenCode va no bao khong co" voi "khong hoi duoc".
       // Hai truong hop nay nguyen nhan khac han nhau, ghi chu sai la di sua nham cho.
       let napDuocDanhSach = false;
+      let modelMacDinhHeThong = "";
+      let modelDaLuuTheoOwner = "";
       const ghiChuThieu = () =>
         napDuocDanhSach ? "không còn key" : "chưa kiểm tra được — OpenCode không phản hồi";
+
+      function modelCoTrongDanhSach(model) {
+        if (!model) return false;
+        const hangId = model.split("/")[0];
+        return Boolean(danhSachHang.find((hang) => hang.id === hangId)?.models
+          .some((item) => item.id === model));
+      }
+
+      function modelHieuLucTheoOwner() {
+        // Khi catalog dang loi, khong du evidence de ket luan model da luu vo hieu.
+        // Khi catalog da nap duoc, model owner chi thang neu no con ton tai.
+        if (modelDaLuuTheoOwner && (!napDuocDanhSach || modelCoTrongDanhSach(modelDaLuuTheoOwner))) {
+          return modelDaLuuTheoOwner;
+        }
+        return modelMacDinhHeThong;
+      }
 
       function veOModel(hangId, modelDangChon) {
         ocModel.innerHTML = "";
@@ -460,10 +556,15 @@ export const CONFIG_TABS = [
         veOModel(hangCuaModel, modelDangChon);
       }
 
-      async function napAgentVaModel(agentDangChon, modelDangChon) {
+      function chonModelKhongDungLaiDanhSach(modelDangChon) {
+        const hangCuaModel = modelDangChon ? modelDangChon.split("/")[0] : "";
+        ocProvider.value = hangCuaModel;
+        veOModel(hangCuaModel, modelDangChon);
+      }
+
+      async function napAgentVaModel(modelTamThoi = null) {
+        const generationLucBatDau = settingsOwnerGeneration;
         let names = ["general", "build", "plan"];
-        danhSachHang = [];
-        napDuocDanhSach = false;
         try {
           const res = await fetch("/api/ai-chat/opencode-test", {
             method: "POST",
@@ -475,15 +576,22 @@ export const CONFIG_TABS = [
             napDuocDanhSach = true;
             if (Array.isArray(data.agents) && data.agents.length) names = data.agents;
             if (Array.isArray(data.providers)) danhSachHang = data.providers;
+            modelMacDinhHeThong = data.systemDefaultModel || "";
           }
         } catch { /* mat ket noi thi giu nguyen lua chon da luu */ }
 
+        const agentDangChon = ocAgent.value || "general";
         if (agentDangChon && !names.includes(agentDangChon)) names = [agentDangChon, ...names];
         ocAgent.innerHTML = "";
         for (const name of names) ocAgent.append(new Option(name, name));
         ocAgent.value = agentDangChon || "general";
 
-        veOHang(modelDangChon || "");
+        // Catalog la global nen van cap nhat khi UID doi giua luc request dang chay.
+        // Chi bo lua chon pending cu; lua chon owner moi se duoc merge o day.
+        const modelPendingConHieuLuc = generationLucBatDau === settingsOwnerGeneration
+          ? modelTamThoi
+          : null;
+        veOHang(modelPendingConHieuLuc || modelHieuLucTheoOwner());
       }
 
       // Doi hang thi model ben duoi nap lai theo hang do.
@@ -534,6 +642,13 @@ export const CONFIG_TABS = [
         }
       }
 
+      async function loadGlobalAiCatalogs() {
+        await Promise.allSettled([
+          napAgentVaModel(),
+          napDanhSachHangChoKey(),
+        ]);
+      }
+
       panel.querySelector("#btn-key-save").addEventListener("click", async () => {
         if (!keyProvider.value) return baoKey("Chọn hãng trước đã.", "var(--danger)");
         if (!keyValue.value.trim()) {
@@ -550,7 +665,7 @@ export const CONFIG_TABS = [
           if (!res.ok) throw new Error(data.error || "Lưu thất bại");
           keyValue.value = "";
           await napDanhSachHangChoKey();
-          await napAgentVaModel(ocAgent.value, ocProvider.value ? ocModel.value : "");
+          await napAgentVaModel(ocProvider.value ? ocModel.value : "");
           baoKey("Đã lưu key. Bấm Thử key để chắc chắn key còn dùng được.", "var(--ok)");
           window.dispatchEvent(new CustomEvent("zalo:canonical-save", {
             detail: { section: "api-key", providerId: keyProvider.value },
@@ -585,7 +700,7 @@ export const CONFIG_TABS = [
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "Gỡ thất bại");
           await napDanhSachHangChoKey();
-          await napAgentVaModel(ocAgent.value, ocProvider.value ? ocModel.value : "");
+          await napAgentVaModel(ocProvider.value ? ocModel.value : "");
           baoKey("Đã gỡ toàn bộ key.", "var(--ok)");
         } catch (e) {
           baoKey(e.message, "var(--danger)");
@@ -605,7 +720,7 @@ export const CONFIG_TABS = [
           const soModel = (data.providers || []).reduce((n, h) => n + h.models.length, 0);
           statusText.textContent =
             `OK · ${data.agents.length} agent · ${(data.providers || []).length} hãng · ${soModel} model chat được`;
-          await napAgentVaModel(ocAgent.value, ocProvider.value ? ocModel.value : "");
+          await napAgentVaModel(ocProvider.value ? ocModel.value : "");
         } catch (err) {
           statusText.textContent = "Lỗi: " + err.message;
         }
@@ -615,6 +730,44 @@ export const CONFIG_TABS = [
         if (!confirm("Xoá toàn bộ session OpenCode để nạp lại Soul từ đầu?")) return;
         await fetch("/api/ai-chat/reset-sessions", { method: "POST" });
         statusText.textContent = "Đã xoá session. Tin nhắn tới sẽ tạo session mới và nạp lại Soul.";
+      });
+
+      // Hãng/model là ranh giới kết nối AI độc lập. Nút này không submit form
+      // trợ lý, vì Soul/giọng điệu/chủ đề chỉ tồn tại sau khi Bot Chỉ huy phỏng vấn.
+      panel.querySelector("#btn-ai-model-save").addEventListener("click", async () => {
+        const actionGeneration = settingsOwnerGeneration;
+        if (!ocProvider.value || !ocModel.value) {
+          statusText.textContent = "Hãy chọn đủ Hãng AI và Model.";
+          return;
+        }
+
+        try {
+          statusText.textContent = "Đang lưu Hãng AI và Model...";
+          const res = await fetch("/api/ai-chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              saveScope: "ai-connection",
+              opencodeBaseUrl: ocUrl.value.trim(),
+              opencodeAgent: ocAgent.value,
+              opencodeModel: ocModel.value,
+            }),
+          });
+          const data = await res.json();
+          if (actionGeneration !== settingsOwnerGeneration) return;
+          if (!res.ok) throw new Error(data.error || "Lỗi lưu Hãng AI và Model");
+          statusText.textContent = "Đã lưu Hãng AI và Model.";
+          window.dispatchEvent(new CustomEvent("zalo:canonical-save", {
+            detail: {
+              section: "ai-model",
+              providerId: ocProvider.value,
+              modelId: data.config?.opencodeModel || ocModel.value,
+            },
+          }));
+        } catch (error) {
+          console.error(error);
+          statusText.textContent = error.message || "Lỗi lưu Hãng AI và Model";
+        }
       });
 
       useKnowledge.addEventListener("change", () => {
@@ -630,7 +783,7 @@ export const CONFIG_TABS = [
         groupSelect.appendChild(opt);
       }
 
-      async function loadGroups() {
+      async function loadGroups(generation = settingsOwnerGeneration) {
         try {
           const res = await fetch("/api/zalo/groups");
           if (!res.ok) {
@@ -642,6 +795,7 @@ export const CONFIG_TABS = [
             return;
           }
           const data = await res.json();
+          if (generation !== settingsOwnerGeneration) return;
           if (data.groups) {
             data.groups.forEach(g => {
               const opt = document.createElement("option");
@@ -656,7 +810,7 @@ export const CONFIG_TABS = [
         }
       }
 
-      async function loadMembers(groupId, selectedIds = []) {
+      async function loadMembers(groupId, selectedIds = [], generation = settingsOwnerGeneration) {
         sendersSelect.innerHTML = "<option value=''>Đang tải danh sách...</option>";
         sendersSelect.disabled = true;
         if (!groupId) {
@@ -667,6 +821,7 @@ export const CONFIG_TABS = [
           const res = await fetch(`/api/zalo/groups/${groupId}/members`);
           if (!res.ok) throw new Error("API failed");
           const data = await res.json();
+          if (generation !== settingsOwnerGeneration) return;
           currentMembers = data.members || [];
           
           sendersSelect.innerHTML = "";
@@ -689,28 +844,37 @@ export const CONFIG_TABS = [
       });
 
       async function loadConfig() {
+        const generation = settingsOwnerGeneration;
         try {
-          await loadGroups();
+          invalidateAiOwnerSink?.();
+          await loadGroups(generation);
           const res = await fetch("/api/ai-chat");
           const data = await res.json();
+          if (generation !== settingsOwnerGeneration) return false;
+          if (!res.ok) throw new Error(data.error || "Không tải được cấu hình AI");
           if (data.config) {
-            ocUrl.value = data.config.opencodeBaseUrl || "http://opencode:4096";
+            ocUrl.value = data.config.opencodeBaseUrl || "";
             soulInput.value = data.config.soul || "";
-            await napAgentVaModel(data.config.opencodeAgent || "general", data.config.opencodeModel || "");
-            await napDanhSachHangChoKey();
+            const agentDaLuu = data.config.opencodeAgent || "general";
+            if (!Array.from(ocAgent.options).some((item) => item.value === agentDaLuu)) {
+              ocAgent.append(new Option(agentDaLuu, agentDaLuu));
+            }
+            ocAgent.value = agentDaLuu;
+            modelDaLuuTheoOwner = data.config.opencodeModel || "";
+            chonModelKhongDungLaiDanhSach(modelHieuLucTheoOwner());
             topicsInput.value = data.config.allowedTopics || "";
             roleInput.value = data.config.roleTone || "";
             
             if (data.config.allowedGroupId) {
               groupSelect.value = data.config.allowedGroupId;
-              await loadMembers(data.config.allowedGroupId, data.config.allowedSenderIds || []);
+              await loadMembers(data.config.allowedGroupId, data.config.allowedSenderIds || [], generation);
             }
 
             useKnowledge.checked = Boolean(data.config.useKnowledge);
             docTep.checked = Boolean(data.config.docTep);
             knowledgeWrap.classList.toggle("hidden", !useKnowledge.checked);
             if (useKnowledge.checked) {
-              await loadKnowledgeFiles(data.config.knowledgeFileIds || []);
+              await loadKnowledgeFiles(data.config.knowledgeFileIds || [], generation);
             }
           }
           if (data.ready) {
@@ -718,8 +882,11 @@ export const CONFIG_TABS = [
           } else {
             statusText.textContent = "Chưa cấu hình xong";
           }
+          return true;
         } catch (err) {
           console.error(err);
+          statusText.textContent = err.message || "Không tải được cấu hình AI";
+          return false;
         }
       }
 
@@ -742,8 +909,6 @@ export const CONFIG_TABS = [
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              opencodeBaseUrl: ocUrl.value.trim(),
-              opencodeAgent: ocAgent.value,
               opencodeModel: ocProvider.value ? ocModel.value : "",
               soul: soulInput.value.trim(),
               allowedTopics: topicsInput.value.trim(),
@@ -812,10 +977,33 @@ export const CONFIG_TABS = [
         }
       };
 
+      invalidateAiOwnerSink = () => {
+        soulInput.value = "";
+        topicsInput.value = "";
+        roleInput.value = "";
+        useKnowledge.checked = false;
+        knowledgeWrap.classList.add("hidden");
+        knowledgeFiles.innerHTML = "";
+        groupSelect.value = "";
+        while (groupSelect.options.length > 1) groupSelect.remove(1);
+        sendersSelect.innerHTML = "<option value=''>Chọn nhóm ở trên để tải danh sách nick</option>";
+        sendersSelect.disabled = true;
+        currentMembers = [];
+        modelDaLuuTheoOwner = "";
+        // Model la lua chon owner; cac option provider/model va API key la global.
+        // Chi bo selection, tuyet doi khong xoa/dung lai option node khi doi UID.
+        ocProvider.value = "";
+        ocModel.value = "";
+        statusText.textContent = "Đang tải hồ sơ Zalo hiện tại…";
+      };
+
       // Giu lai promise cua luot nap dau tien de ham refresh o tren cho no.
-      // Nhom/nick cua AI Chat: dung lai chinh ham refresh da co.
-      dangKyLamMoi("AI Chat", () => refreshAiChatEntities());
-      napBanDau = loadConfig();
+      // Model/Soul/Tone/Topics va nhom/nick deu theo owner, phai nap lai ca form.
+      aiConfigRefreshSink = loadConfig;
+      dangKyLamMoi("AI Chat", loadConfig);
+      const napGlobalBanDau = loadGlobalAiCatalogs();
+      const napOwnerBanDau = loadConfig();
+      napBanDau = Promise.allSettled([napGlobalBanDau, napOwnerBanDau]);
     }
   },
   {
@@ -854,7 +1042,7 @@ export const CONFIG_TABS = [
         return bytes + " B";
       }
 
-      async function openPreview(file) {
+      async function openPreview(file, generation = settingsOwnerGeneration) {
         kpTitle.textContent = file.originalName;
         kpMeta.textContent = "Đang tải nội dung...";
         kpContent.textContent = "";
@@ -862,20 +1050,23 @@ export const CONFIG_TABS = [
         try {
           const res = await fetch(`/api/knowledge/${file.id}/content`);
           const data = await res.json();
+          if (generation !== settingsOwnerGeneration) return;
           if (!res.ok) throw new Error(data.error || "Không đọc được file");
           kpMeta.textContent =
             `${data.file.contentMd.length.toLocaleString("vi-VN")} ký tự hiển thị` +
             (data.file.truncated ? " · Đã cắt bớt vì file quá dài" : "");
           kpContent.textContent = data.file.contentMd;
         } catch (e) {
+          if (generation !== settingsOwnerGeneration) return;
           kpMeta.textContent = "Lỗi: " + e.message;
         }
       }
 
-      async function fetchList() {
+      async function fetchList(generation = settingsOwnerGeneration) {
         try {
           const res = await fetch("/api/knowledge");
           const data = await res.json();
+          if (generation !== settingsOwnerGeneration) return;
           const files = data.files || [];
           list.innerHTML = "";
           if (files.length === 0) {
@@ -912,8 +1103,9 @@ export const CONFIG_TABS = [
             btnDelete.textContent = "Xoá";
             btnDelete.onclick = async () => {
               if (!confirm(`Xoá "${file.originalName}" khỏi kho tri thức?`)) return;
+              const generation = settingsOwnerGeneration;
               await fetch(`/api/knowledge/${file.id}`, { method: "DELETE" });
-              await fetchList();
+              if (generation === settingsOwnerGeneration) await fetchList(generation);
             };
 
             actions.append(btnView, btnDelete);
@@ -921,6 +1113,7 @@ export const CONFIG_TABS = [
             list.append(item);
           }
         } catch (e) {
+          if (generation !== settingsOwnerGeneration) return;
           console.error("Lỗi load kho tri thức", e);
           list.innerHTML = "<div class='empty-hint' style='margin: 0; padding: 12px;'>Không tải được danh sách.</div>";
         }
@@ -931,6 +1124,7 @@ export const CONFIG_TABS = [
       input.addEventListener("change", async () => {
         const file = input.files?.[0];
         if (!file) return;
+        const generation = settingsOwnerGeneration;
         status.textContent = `Đang xử lý "${file.name}"...`;
         btnAdd.disabled = true;
         try {
@@ -938,17 +1132,32 @@ export const CONFIG_TABS = [
           body.append("file", file);
           const res = await fetch("/api/knowledge", { method: "POST", body });
           const data = await res.json();
+          if (generation !== settingsOwnerGeneration) return;
           if (!res.ok) throw new Error(data.error || "Tải lên thất bại");
           status.textContent = `Đã thêm "${data.file.originalName}" · ${data.file.charCount.toLocaleString("vi-VN")} ký tự`;
-          await fetchList();
+          await fetchList(generation);
         } catch (e) {
+          if (generation !== settingsOwnerGeneration) return;
           status.textContent = "Lỗi: " + e.message;
         } finally {
-          btnAdd.disabled = false;
-          input.value = "";
+          if (generation === settingsOwnerGeneration) {
+            btnAdd.disabled = false;
+            input.value = "";
+          }
         }
       });
 
+      invalidateKnowledgeOwnerSink = () => {
+        list.innerHTML = "";
+        status.textContent = "";
+        kpTitle.textContent = "";
+        kpMeta.textContent = "";
+        kpContent.textContent = "";
+        modal.classList.add("hidden");
+        input.value = "";
+        btnAdd.disabled = false;
+      };
+      dangKyLamMoi("tri thuc", fetchList);
       fetchList();
     }
   },
@@ -989,9 +1198,11 @@ export const CONFIG_TABS = [
         });
 
       async function napDanhSach() {
+        const owner = chupSettingsOwner();
         try {
           const res = await fetch("/api/lich-hen");
           const data = await res.json();
+          if (!settingsOwnerConHieuLuc(owner)) return;
           const danhSach = data.lich || [];
           list.innerHTML = "";
           if (danhSach.length === 0) {
@@ -1043,12 +1254,17 @@ export const CONFIG_TABS = [
             list.append(item);
           }
         } catch (e) {
+          if (!settingsOwnerConHieuLuc(owner)) return;
           console.error("Loi nap lich hen", e);
           list.innerHTML = "<div class='empty-hint' style='margin:0; padding:12px;'>Không tải được danh sách.</div>";
         }
       }
 
       panel.querySelector("#lh-reload").addEventListener("click", napDanhSach);
+      invalidateScheduleOwnerSink = () => {
+        list.innerHTML = "";
+        status.textContent = "";
+      };
       dangKyLamMoi("lich hen", napDanhSach);
       napDanhSach();
     }
@@ -1146,9 +1362,11 @@ export const CONFIG_TABS = [
       }
 
       async function napDanhSach() {
+        const owner = chupSettingsOwner();
         try {
           const res = await fetch("/api/customer-memory");
           const data = await res.json();
+          if (!settingsOwnerConHieuLuc(owner)) return;
           const khachs = data.customers || [];
           list.innerHTML = "";
           if (khachs.length === 0) {
@@ -1206,12 +1424,17 @@ export const CONFIG_TABS = [
             list.append(item);
           }
         } catch (e) {
+          if (!settingsOwnerConHieuLuc(owner)) return;
           console.error("Loi nap ho so khach", e);
           list.innerHTML = "<div class='empty-hint' style='margin:0; padding:12px;'>Không tải được danh sách.</div>";
         }
       }
 
       panel.querySelector("#cm-reload").addEventListener("click", napDanhSach);
+      invalidateCustomersOwnerSink = () => {
+        list.innerHTML = "";
+        status.textContent = "";
+      };
       dangKyLamMoi("khach hang", napDanhSach);
       napDanhSach();
     }
@@ -1273,9 +1496,14 @@ export const CONFIG_TABS = [
       }
 
       async function fetchLogs() {
+        // Keep the renderer safe if reused in isolation; the mounted module always
+        // has the owner helpers and therefore always captures the current identity.
+        const owner = typeof chupSettingsOwner === "function" ? chupSettingsOwner() : null;
         try {
           const res = await fetch("/api/logs?limit=150");
           const data = await res.json();
+          if (owner && !settingsOwnerConHieuLuc(owner)) return;
+          if (!res.ok) throw new Error(data.error || "Không tải được nhật ký hoạt động");
           const logs = data.logs || [];
           list.innerHTML = "";
           if (logs.length === 0) {
@@ -1284,7 +1512,9 @@ export const CONFIG_TABS = [
           }
           for (const entry of logs) list.append(renderEntry(entry));
         } catch (e) {
+          if (owner && !settingsOwnerConHieuLuc(owner)) return;
           console.error("Lỗi load log", e);
+          list.innerHTML = "<div class='empty-hint log-load-error' style='margin: 0; padding: 12px;'>Không thể tải nhật ký hoạt động.</div>";
         }
       }
 
@@ -1302,6 +1532,9 @@ export const CONFIG_TABS = [
         list.prepend(renderEntry(entry));
       };
 
+      invalidateLogsOwnerSink = () => {
+        list.innerHTML = "";
+      };
       dangKyLamMoi("nhat ky", fetchLogs);
       fetchLogs();
     }
@@ -1539,6 +1772,7 @@ export const CONFIG_TABS = [
       }
 
       async function napCaiDatOtp() {
+        const generation = settingsOwnerGeneration;
         try {
           const [resSettings, resBootstrap] = await Promise.all([
             fetch("/api/auth/otp-settings"),
@@ -1546,6 +1780,8 @@ export const CONFIG_TABS = [
           ]);
           const data = await resSettings.json();
           const boot = await resBootstrap.json();
+          if (generation !== settingsOwnerGeneration) return;
+          if (!resSettings.ok) throw new Error(data.error || "Không tải được cài đặt Admin");
 
           // Chi lay chat 1-1, nhom khong dung de nhan OTP
           const contacts = (boot.threads || []).filter((t) => Number(t.threadType) === 0);
@@ -1604,6 +1840,14 @@ export const CONFIG_TABS = [
         }
       }
 
+      invalidateAdminOwnerSink = () => {
+        otpEnabled.checked = false;
+        otpZalo.innerHTML = "<option value=''>— Chưa tải hồ sơ hiện tại —</option>";
+        adminZalo.innerHTML = "<option value=''>— Chưa tải hồ sơ hiện tại —</option>";
+        otpEmail.value = "";
+        baoOtp("Đang tải hồ sơ Zalo hiện tại…");
+      };
+
       otpForm.addEventListener("submit", async (e) => {
         e.preventDefault();
         if (otpEnabled.checked && !otpZalo.value && !otpEmail.value.trim()) {
@@ -1661,5 +1905,5 @@ export const CONFIG_TABS = [
       dangKyLamMoi("tai khoan (OTP/Admin)", napCaiDatOtp);
       napCaiDatOtp();
     }
-  }
+  },
 ];

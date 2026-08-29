@@ -121,7 +121,7 @@ async function main() {
   adminCmd.capHinhChuTaiKhoan(() => chuHienTai);
   customerMemory.capHinhChuTaiKhoan(() => chuHienTai);
 
-  await db.saveAiChatConfig({
+  await db.saveAiChatConfig(CHU_A, {
     allowedTopics: "",
     roleTone: "",
     useKnowledge: false,
