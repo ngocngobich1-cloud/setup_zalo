@@ -32,6 +32,9 @@ const state = {
   threads: [],
   selectedThread: null,
   messagesByThread: new Map(),
+  // "threadId|messageId" -> [{ ten, count, mine }]. Trinh duyet chi giu de VE;
+  // nguon su that nam o may chu va den qua socket.
+  reactionsByMessage: new Map(),
 };
 
 const els = {
@@ -80,6 +83,16 @@ const els = {
   accountMenu: document.querySelector("#account-menu"),
   settingsModal: document.querySelector("#settings-modal"),
   btnCloseSettings: document.querySelector("#btn-close-settings"),
+  btnSticker: document.querySelector("#btn-chat-sticker"),
+  stickerPicker: document.querySelector("#sticker-picker"),
+  msgActionSheet: document.querySelector("#msg-action-sheet"),
+  msgActionBackdrop: document.querySelector("#msg-action-backdrop"),
+  msgActionReactions: document.querySelector("#msg-action-reactions"),
+  msgActionList: document.querySelector("#msg-action-list"),
+  forwardDialog: document.querySelector("#forward-dialog"),
+  forwardSearch: document.querySelector("#forward-search"),
+  forwardList: document.querySelector("#forward-list"),
+  btnForwardClose: document.querySelector("#btn-forward-close"),
 };
 
 let tepChat = null;
@@ -184,6 +197,35 @@ socket.on("new-message", (message) => {
     state.messagesByThread.set(message.threadId, list);
   }
   if (state.selectedThread?.id === message.threadId) renderMessages(list);
+});
+
+socket.on("message-reaction", ({ threadId, messageId, reactions }) => {
+  datCamXuc(threadId, messageId, reactions);
+  if (state.selectedThread?.id === threadId) {
+    renderMessages(state.messagesByThread.get(threadId) || []);
+  }
+});
+
+// Tin bi thu hoi: doi NOI DUNG tai cho chu khong go dong di. Khung chat thung
+// mot lo giua doan la nguoi doc mat mach; Zalo that cung giu lai mot dong xam.
+socket.on("message-recalled", ({ threadId, messageId, content, msgType }) => {
+  const list = state.messagesByThread.get(threadId);
+  const tin = list?.find((item) => String(item.id) === String(messageId));
+  if (!tin) return;
+  tin.content = content;
+  tin.msgType = msgType;
+  tin.stickerUrl = null;
+  tin.isSticker = false;
+  if (state.selectedThread?.id === threadId) renderMessages(list);
+});
+
+socket.on("message-deleted", ({ threadId, messageId }) => {
+  const list = state.messagesByThread.get(threadId);
+  if (!list) return;
+  const con = list.filter((item) => String(item.id) !== String(messageId));
+  state.messagesByThread.set(threadId, con);
+  xoaCamXuc(threadId, messageId);
+  if (state.selectedThread?.id === threadId) renderMessages(con);
 });
 
 bootstrap();
@@ -315,6 +357,11 @@ function invalidateOwnerFrontendState(nextOwnerUid = null) {
   state.threads = [];
   state.selectedThread = null;
   state.messagesByThread.clear();
+  state.reactionsByMessage.clear();
+  daBaoDaXem.clear();
+  dongLopThaoTacTin();
+  dongBangSticker();
+  datLaiNhipGoPhim();
   els.search.value = "";
   els.messages.innerHTML = "";
   els.chatPanel.classList.add("hidden");
@@ -476,6 +523,9 @@ function formatThreadPreview(lastMessage) {
 
 async function selectThread(thread) {
   if (state.selectedThread?.id && state.selectedThread.id !== thread.id) boTepChat();
+  dongLopThaoTacTin();
+  dongBangSticker();
+  datLaiNhipGoPhim();
   openMobileChat(thread);
   state.selectedThread = thread;
   renderThreads();
@@ -655,8 +705,16 @@ function renderMessages(messages) {
       sender.textContent = message.senderName;
       bubble.append(sender);
     }
-    const media = taoTheMedia(message);
-    if (media) {
+    const media = daThuHoi(message) ? null : taoTheMedia(message);
+    if (daThuHoi(message)) {
+      // Chi hien dong thay the. Khong dung lai anh/tep/sticker cua tin da thu
+      // hoi, va khong bao gio ve payload thu hoi cua Zalo ra man hinh.
+      bubble.classList.add("bubble-recalled");
+      const nhan = document.createElement("em");
+      nhan.className = "recalled-note";
+      nhan.textContent = message.content || "Tin nhắn đã được thu hồi";
+      bubble.append(nhan);
+    } else if (media) {
       bubble.classList.add("bubble-media");
       bubble.append(media);
     } else if (message.stickerUrl) {
@@ -683,6 +741,12 @@ function renderMessages(messages) {
     }
     wrap.append(bubble);
 
+    const chip = veCamXuc(message);
+    if (chip) wrap.append(chip);
+    // Nut thao tac nam trong bubble-wrap chu khong phai trong header hoi thoai:
+    // thao tac nay thuoc ve MOT tin cu the, phai bam ngay canh tin do.
+    wrap.append(taoNutThaoTacTin(message));
+
     if (message.isSelf) {
       row.append(wrap);
     } else {
@@ -703,6 +767,7 @@ function renderMessages(messages) {
     els.messages.append(row);
   }
   els.messages.scrollTop = els.messages.scrollHeight;
+  thuBaoDaXem();
 }
 
 function sameMessageCluster(first, second) {
@@ -744,6 +809,7 @@ async function sendMessage(event) {
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || "Không gửi được tin nhắn.");
     els.input.value = "";
+    datLaiNhipGoPhim();
     if (attachment === tepChat) boTepChat();
   } catch (error) {
     alert(error.message);
@@ -1098,3 +1164,454 @@ els.appResizer?.addEventListener("keydown", (event) => {
   const next = applySidebarWidth(current + (event.key === "ArrowLeft" ? -16 : 16));
   localStorage.setItem(SIDEBAR_KEY, String(next));
 });
+
+/* =====================================================================
+ * THAO TAC TREN TIN NHAN — MESSAGING POWER PACK V1
+ *
+ * Trinh duyet o day chi biet ba thu: cuoc nao, tin nao, muon lam gi. Moi
+ * dinh danh cua Zalo (msgId, cliMsgId, uidFrom, threadType) do may chu tu
+ * tra ra tu du lieu no giu, nen mot the DOM bi sua tay khong the tro
+ * thanh quyen tac dong len tin cua nguoi khac.
+ * ===================================================================== */
+
+/** Sau bieu tuong da duyet, kem hanh dong go. Khong mo them tu enum cua Zalo. */
+const CAM_XUC_APP = [
+  { ten: "HEART", bieuTuong: "❤️", nhan: "Tim" },
+  { ten: "LIKE", bieuTuong: "👍", nhan: "Thích" },
+  { ten: "HAHA", bieuTuong: "😂", nhan: "Haha" },
+  { ten: "WOW", bieuTuong: "😮", nhan: "Wow" },
+  { ten: "CRY", bieuTuong: "😢", nhan: "Buồn" },
+  { ten: "ANGRY", bieuTuong: "😡", nhan: "Giận" },
+];
+const BIEU_TUONG_THEO_TEN = new Map(CAM_XUC_APP.map((c) => [c.ten, c.bieuTuong]));
+
+/** Chi mot thao tac tin nhan duoc bay mot luc. Bam hai lan la hai lan goi Zalo. */
+let dangThaoTacTin = false;
+let tinDangThaoTac = null;
+
+function khoaCamXucTin(threadId, messageId) {
+  return `${String(threadId)}|${String(messageId)}`;
+}
+
+function datCamXuc(threadId, messageId, reactions) {
+  const khoa = khoaCamXucTin(threadId, messageId);
+  if (Array.isArray(reactions) && reactions.length) state.reactionsByMessage.set(khoa, reactions);
+  else state.reactionsByMessage.delete(khoa);
+}
+
+function xoaCamXuc(threadId, messageId) {
+  state.reactionsByMessage.delete(khoaCamXucTin(threadId, messageId));
+}
+
+function layCamXuc(threadId, messageId) {
+  return state.reactionsByMessage.get(khoaCamXucTin(threadId, messageId)) || [];
+}
+
+function daThuHoi(message) {
+  return String(message?.msgType || "") === "chat.recalled";
+}
+
+/**
+ * Cam xuc chi song trong phien nay: luu ben vung can them cot moi cho CSDL, ma
+ * goi tin V1 khong duoc phep doi luoc do. Mo lai app la day trong tro lai.
+ */
+function veCamXuc(message) {
+  const ds = layCamXuc(state.selectedThread?.id, message.id);
+  if (!ds.length) return null;
+  const hop = document.createElement("div");
+  hop.className = "msg-reactions";
+  for (const muc of ds) {
+    const chip = document.createElement("span");
+    chip.className = "msg-reaction-chip";
+    chip.classList.toggle("mine", Boolean(muc.mine));
+    chip.textContent = `${BIEU_TUONG_THEO_TEN.get(muc.ten) || "•"}${muc.count > 1 ? ` ${muc.count}` : ""}`;
+    hop.append(chip);
+  }
+  return hop;
+}
+
+function taoNutThaoTacTin(message) {
+  const nut = document.createElement("button");
+  nut.type = "button";
+  nut.className = "msg-action-trigger";
+  nut.dataset.messageId = String(message.id);
+  nut.setAttribute("aria-haspopup", "true");
+  nut.setAttribute("aria-label", "Thao tác với tin nhắn");
+  nut.title = "Thao tác";
+  nut.textContent = "⋯";
+  nut.addEventListener("click", (event) => {
+    event.stopPropagation();
+    moLopThaoTacTin(message, nut);
+  });
+  return nut;
+}
+
+/* --- LOP THAO TAC: popover tren may tinh, sheet duoi day tren dien thoai --- */
+
+function dongLopThaoTacTin() {
+  tinDangThaoTac = null;
+  els.msgActionSheet?.classList.add("hidden");
+  els.msgActionBackdrop?.classList.add("hidden");
+  els.msgActionSheet?.style.removeProperty("top");
+  els.msgActionSheet?.style.removeProperty("left");
+}
+
+function themMucThaoTac(nhan, kieu, khiBam) {
+  const nut = document.createElement("button");
+  nut.type = "button";
+  nut.className = `msg-action-item${kieu ? ` ${kieu}` : ""}`;
+  nut.textContent = nhan;
+  nut.addEventListener("click", khiBam);
+  els.msgActionList.append(nut);
+  return nut;
+}
+
+function moLopThaoTacTin(message, neo) {
+  if (!state.selectedThread) return;
+  tinDangThaoTac = message;
+  els.msgActionReactions.innerHTML = "";
+  els.msgActionList.innerHTML = "";
+
+  const daCoCuaToi = layCamXuc(state.selectedThread.id, message.id).some((muc) => muc.mine);
+  if (!daThuHoi(message)) {
+    for (const cam of CAM_XUC_APP) {
+      const nut = document.createElement("button");
+      nut.type = "button";
+      nut.className = "msg-reaction-option";
+      nut.dataset.reaction = cam.ten;
+      // Nhan doc duoc cho trinh doc man hinh: mot emoji tran khong noi len gi.
+      nut.setAttribute("aria-label", cam.nhan);
+      nut.title = cam.nhan;
+      nut.textContent = cam.bieuTuong;
+      nut.addEventListener("click", () => guiCamXuc(message, cam.ten));
+      els.msgActionReactions.append(nut);
+    }
+    // Chi hien khi that su co cai de go - mot nut go luon hien la mot loi hua sai.
+    if (daCoCuaToi) themMucThaoTac("Bỏ cảm xúc", "", () => guiCamXuc(message, "NONE"));
+  }
+
+  if (coTheChuyenTiep(message)) themMucThaoTac("Chuyển tiếp", "", () => moBangChuyenTiep(message));
+  if (message.isSelf && !daThuHoi(message)) {
+    themMucThaoTac("Thu hồi", "nguy-hiem", () => thuHoiTin(message));
+  }
+  themMucThaoTac("Xóa ở phía tôi", "nguy-hiem", () => xoaTinPhiaToi(message));
+
+  els.msgActionSheet.classList.remove("hidden");
+  els.msgActionBackdrop.classList.remove("hidden");
+  datViTriLopThaoTac(neo);
+}
+
+/**
+ * Tren dien thoai lop nay la sheet duoi day (CSS lo), nen khong dat toa do.
+ * Tren may tinh no phai bam vao dung bong bong vua bam.
+ */
+function datViTriLopThaoTac(neo) {
+  if (isMobileInbox() || !neo?.getBoundingClientRect) return;
+  const o = neo.getBoundingClientRect();
+  const khung = els.chatPanel.getBoundingClientRect();
+  els.msgActionSheet.style.top = `${Math.max(o.bottom - khung.top + 6, 8)}px`;
+  els.msgActionSheet.style.left = `${Math.max(o.left - khung.left - 120, 8)}px`;
+}
+
+/** Chi tin CHU moi chuyen tiep duoc trong V1; may chu con chan lai mot lan nua. */
+function coTheChuyenTiep(message) {
+  if (daThuHoi(message)) return false;
+  if (message.stickerUrl || message.isSticker) return false;
+  if (!["text", "chat.text", null, undefined, ""].includes(message.msgType ?? "")) return false;
+  return Boolean(String(message.content || "").trim());
+}
+
+/**
+ * Mot cong duy nhat cho moi thao tac tin nhan: chot don luong, goi may chu, va
+ * bao that bai bang dung loi may chu tra ve. Khong tu thu lai lan nao.
+ */
+async function goiThaoTacTin(duongDan, than) {
+  if (dangThaoTacTin) return null;
+  dangThaoTacTin = true;
+  els.msgActionSheet?.classList.add("dang-cho");
+  try {
+    const res = await fetch(duongDan, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(than),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || "Không thực hiện được thao tác.");
+    return data;
+  } catch (error) {
+    alert(error.message);
+    return null;
+  } finally {
+    dangThaoTacTin = false;
+    els.msgActionSheet?.classList.remove("dang-cho");
+  }
+}
+
+async function guiCamXuc(message, reaction) {
+  const thread = state.selectedThread;
+  if (!thread) return;
+  const data = await goiThaoTacTin("/api/messaging/reaction", {
+    threadId: thread.id,
+    messageId: message.id,
+    reaction,
+  });
+  dongLopThaoTacTin();
+  if (!data) return;
+  datCamXuc(thread.id, message.id, data.reactions);
+  if (state.selectedThread?.id === thread.id) {
+    renderMessages(state.messagesByThread.get(thread.id) || []);
+  }
+}
+
+async function thuHoiTin(message) {
+  const thread = state.selectedThread;
+  if (!thread) return;
+  // Thu hoi la thao tac nguoi khac nhin thay ngay. Hoi truoc mot cau.
+  if (!confirm("Thu hồi tin nhắn này?")) return;
+  const data = await goiThaoTacTin("/api/messaging/undo", {
+    threadId: thread.id,
+    messageId: message.id,
+  });
+  dongLopThaoTacTin();
+  if (!data) return;
+  // May chu da doi trang thai va ban su kien "message-recalled"; day chi la
+  // duong du phong khi socket den cham, va no idempotent nen khong nhay hai lan.
+  const list = state.messagesByThread.get(thread.id);
+  const tin = list?.find((item) => String(item.id) === String(message.id));
+  if (tin && !daThuHoi(tin)) {
+    tin.content = data.content;
+    tin.msgType = "chat.recalled";
+    tin.stickerUrl = null;
+    tin.isSticker = false;
+    if (state.selectedThread?.id === thread.id) renderMessages(list);
+  }
+}
+
+async function xoaTinPhiaToi(message) {
+  const thread = state.selectedThread;
+  if (!thread) return;
+  if (!confirm("Xóa tin nhắn này ở phía tôi? Người kia vẫn còn thấy tin.")) return;
+  const data = await goiThaoTacTin("/api/messaging/delete", {
+    threadId: thread.id,
+    messageId: message.id,
+  });
+  dongLopThaoTacTin();
+  if (!data) return;
+  const list = state.messagesByThread.get(thread.id) || [];
+  const con = list.filter((item) => String(item.id) !== String(message.id));
+  state.messagesByThread.set(thread.id, con);
+  xoaCamXuc(thread.id, message.id);
+  if (state.selectedThread?.id === thread.id) renderMessages(con);
+}
+
+/* --- CHUYEN TIEP: mot tin chu, mot cuoc dich --- */
+
+let tinDangChuyenTiep = null;
+
+function moBangChuyenTiep(message) {
+  tinDangChuyenTiep = message;
+  dongLopThaoTacTin();
+  els.forwardSearch.value = "";
+  veDanhSachChuyenTiep();
+  els.forwardDialog.classList.remove("hidden");
+  els.forwardSearch.focus();
+}
+
+function dongBangChuyenTiep() {
+  tinDangChuyenTiep = null;
+  els.forwardDialog.classList.add("hidden");
+}
+
+/** Dung lai danh muc cuoc tro chuyen dang co, khong dung so dia chi rieng. */
+function veDanhSachChuyenTiep() {
+  const tim = els.forwardSearch.value.trim().toLowerCase();
+  els.forwardList.innerHTML = "";
+  const ds = state.threads.filter((t) => !tim || String(t.title || t.id).toLowerCase().includes(tim));
+  if (!ds.length) {
+    const trong = document.createElement("p");
+    trong.className = "empty-hint";
+    trong.textContent = "Không có cuộc trò chuyện phù hợp.";
+    els.forwardList.append(trong);
+    return;
+  }
+  for (const thread of ds) {
+    const nut = document.createElement("button");
+    nut.type = "button";
+    nut.className = "forward-item";
+    nut.textContent = thread.title || thread.id;
+    nut.addEventListener("click", () => chuyenTiepToi(thread));
+    els.forwardList.append(nut);
+  }
+}
+
+async function chuyenTiepToi(dich) {
+  const nguon = tinDangChuyenTiep;
+  const thread = state.selectedThread;
+  if (!nguon || !thread) return;
+  const data = await goiThaoTacTin("/api/messaging/forward", {
+    threadId: thread.id,
+    messageId: nguon.id,
+    targetThreadId: dich.id,
+  });
+  // Chi dong bang khi that su xong. That bai ma bang tu dong dong la nguoi dung
+  // tuong da chuyen roi.
+  if (data) dongBangChuyenTiep();
+}
+
+els.btnForwardClose?.addEventListener("click", dongBangChuyenTiep);
+els.forwardSearch?.addEventListener("input", veDanhSachChuyenTiep);
+els.forwardDialog?.addEventListener("click", (event) => {
+  if (event.target === els.forwardDialog) dongBangChuyenTiep();
+});
+els.msgActionBackdrop?.addEventListener("click", dongLopThaoTacTin);
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  dongLopThaoTacTin();
+  dongBangSticker();
+  if (!els.forwardDialog?.classList.contains("hidden")) dongBangChuyenTiep();
+});
+
+/* --- STICKER: dung tam cai da duyet, khong co kho, khong co tim kiem --- */
+
+let danhSachStickerApp = null;
+
+function dongBangSticker() {
+  els.stickerPicker?.classList.add("hidden");
+  els.btnSticker?.setAttribute("aria-expanded", "false");
+}
+
+async function moBangSticker() {
+  if (!state.selectedThread) return;
+  if (!els.stickerPicker.classList.contains("hidden")) {
+    dongBangSticker();
+    return;
+  }
+  if (!danhSachStickerApp) {
+    try {
+      const res = await fetch("/api/messaging/stickers");
+      const data = await res.json();
+      danhSachStickerApp = data.stickers || [];
+    } catch {
+      danhSachStickerApp = [];
+    }
+  }
+  els.stickerPicker.innerHTML = "";
+  for (const sticker of danhSachStickerApp) {
+    const nut = document.createElement("button");
+    nut.type = "button";
+    nut.className = "sticker-option";
+    nut.dataset.stickerKey = sticker.key;
+    nut.textContent = sticker.moTa || sticker.key;
+    nut.addEventListener("click", () => guiSticker(sticker.key));
+    els.stickerPicker.append(nut);
+  }
+  els.stickerPicker.classList.remove("hidden");
+  els.btnSticker.setAttribute("aria-expanded", "true");
+}
+
+/**
+ * Khong tu ve bong bong sticker tai cho: Zalo doi lai chinh tin do kem msgId
+ * that, va duong ghi canonical se hien no. Ve truoc la co hai bong bong cho
+ * mot lan gui.
+ */
+async function guiSticker(stickerKey) {
+  const thread = state.selectedThread;
+  if (!thread) return;
+  dongBangSticker();
+  await goiThaoTacTin("/api/messaging/sticker", { threadId: thread.id, stickerKey });
+}
+
+els.btnSticker?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  void moBangSticker();
+});
+document.addEventListener("click", (event) => {
+  if (els.stickerPicker?.classList.contains("hidden")) return;
+  if (els.stickerPicker.contains(event.target) || els.btnSticker?.contains(event.target)) return;
+  dongBangSticker();
+});
+
+/* --- DANG SOAN TIN: tu dong, khong co nut bam --- */
+
+/** Zalo tu tat dau ba cham sau vai giay; nhac lai day hon 3 giay mot lan la spam. */
+const NHIP_GO_PHIM_MS = 3000;
+let mocGoPhimCuoi = 0;
+let composerDangCoChu = false;
+
+function datLaiNhipGoPhim() {
+  mocGoPhimCuoi = 0;
+  composerDangCoChu = false;
+}
+
+/**
+ * Bao mot lan khi o soan tin di tu RONG sang CO CHU, sau do nhieu nhat mot lan
+ * moi 3 giay. Goi theo tung phim la ban hang chuc lenh cho mot cau ngan.
+ *
+ * That bai thi im lang: UAT cho thay tin hieu nay nguoi that khong quan sat
+ * duoc, nen no khong duoc phep lam phien viec go va gui tin.
+ */
+function thuBaoDangSoan() {
+  const thread = state.selectedThread;
+  if (!thread) return;
+  if (!els.input.value.trim()) {
+    datLaiNhipGoPhim();
+    return;
+  }
+  const bayGio = Date.now();
+  if (composerDangCoChu && bayGio - mocGoPhimCuoi < NHIP_GO_PHIM_MS) return;
+  composerDangCoChu = true;
+  mocGoPhimCuoi = bayGio;
+  fetch("/api/messaging/typing", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ threadId: thread.id }),
+  }).catch(() => {});
+}
+
+els.input?.addEventListener("input", thuBaoDangSoan);
+els.input?.addEventListener("blur", datLaiNhipGoPhim);
+
+/* --- DA XEM: tu dong, va chi khi nguoi dung THAT SU dang nhin --- */
+
+/** Cach day duoi bao nhieu pixel thi van coi la dang doc tin moi nhat. */
+const BIEN_DAY_KHUNG_CHAT_PX = 40;
+const daBaoDaXem = new Map();
+
+function dangONhinTinMoiNhat() {
+  const khung = els.messages;
+  return khung.scrollHeight - khung.scrollTop - khung.clientHeight <= BIEN_DAY_KHUNG_CHAT_PX;
+}
+
+/**
+ * Bon dieu kien deu bat buoc. Bao da xem chi vi vua TAI VE lich su la noi doi:
+ * tin co the dang nam trong mot tab an, hoac o mot cuoc tro chuyen nguoi dung
+ * chua mo, hoac tren mot doan da cuon len tu lau.
+ *
+ * Best-effort thuan: khong thu lai, khong bao loi. Zalo co the nhan lenh ma
+ * dau da xem van khong hien ben kia — dieu do da biet va khong hua nguoc lai.
+ */
+function thuBaoDaXem() {
+  const thread = state.selectedThread;
+  if (!thread) return;
+  if (typeof document.visibilityState === "string" && document.visibilityState !== "visible") return;
+  const list = state.messagesByThread.get(thread.id) || [];
+  if (!list.length || !els.messages.childElementCount) return;
+  if (!dangONhinTinMoiNhat()) return;
+
+  let moiNhat = null;
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (!list[i].isSelf && list[i].id) { moiNhat = list[i]; break; }
+  }
+  if (!moiNhat) return;
+  if (daBaoDaXem.get(thread.id) === String(moiNhat.id)) return;
+  daBaoDaXem.set(thread.id, String(moiNhat.id));
+
+  fetch("/api/messaging/seen", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ threadId: thread.id, messageId: moiNhat.id }),
+  }).catch(() => {});
+}
+
+els.messages?.addEventListener("scroll", thuBaoDaXem);
+document.addEventListener("visibilitychange", thuBaoDaXem);

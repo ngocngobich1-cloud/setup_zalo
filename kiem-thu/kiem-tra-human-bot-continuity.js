@@ -371,6 +371,9 @@ function createAggregateHarness({ botEpoch = 0 } = {}) {
     originConHieuLuc: () => true,
     gopThanhMotTin,
     api: { sendSeenEvent: async () => undefined },
+    // traLoiCumTin khong con goi thang api.sendSeenEvent nua: duong bao da xem
+    // da chuyen sang phong bi day du qua mot cong tac vien rieng.
+    guiDaXemChoTins: () => undefined,
     thuThaCamXuc: async () => false,
     batDauGoPhim: () => () => undefined,
     aiChat: { tryReply: async () => { counters.ai += 1; return "AI reply"; } },
@@ -593,6 +596,9 @@ function createProductionContinuityHarness({
     handlePdfAutomation: null,
     PDF_AUTOMATION_HANDLED,
     api: { sendSeenEvent: async () => undefined },
+    // traLoiCumTin khong con goi thang api.sendSeenEvent nua: duong bao da xem
+    // da chuyen sang phong bi day du qua mot cong tac vien rieng.
+    guiDaXemChoTins: () => undefined,
     thuThaCamXuc: async () => false,
     batDauGoPhim: () => () => undefined,
     dungTrichDan: () => null,

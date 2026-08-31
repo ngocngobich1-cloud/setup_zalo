@@ -159,6 +159,17 @@ async function createHarness() {
     getAutoReplyRules: async () => [],
     getPdfAutomationRuleWithBlob: async () => null,
     listEnabledPdfAutomationRules: async () => [],
+    // Messaging Power Pack V1 them cac import nay vao zalo-service. Bang stub o
+    // day duoc giu bang tay nen phai di theo; thieu mot ten la module da bien
+    // doi nem ReferenceError truoc khi bat cu khang dinh nao chay.
+    deleteLocalMessage: async () => true,
+    markMessageRecalled: async () => true,
+    recomputeThreadPreview: async () => null,
+    resolveOwnedActionMessage: async () => ({ ok: false, code: "NOT_FOUND" }),
+    rutDanhTinhProvider: () => null,
+    layBieuTuongApp: () => null,
+    tenBieuTuongApp: () => "KHAC",
+    danhSachSticker: () => [],
     normalizeIncomingMessage: (message) => message,
     normalizeTs: (value) => Number(value),
     splitIntoBubbles: (text) => [String(text)],

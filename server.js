@@ -55,6 +55,14 @@ import {
   dangXuatZalo,
   kiemTraKetNoiKhiMoApp,
   applyBotEligibilityTransition,
+  listAppStickers,
+  appReactToMessage,
+  appSendSticker,
+  appSendTyping,
+  appMarkSeen,
+  appUndoMessage,
+  appDeleteMessageForMe,
+  appForwardMessage,
 } from "./lib/zalo-service.js";
 import * as aiChat from "./lib/ai-chat.js";
 import {
@@ -563,6 +571,93 @@ app.post("/api/threads/refresh", async (_req, res) => {
     res.status(500).json({ ok: false, error: error.message });
   }
 });
+
+/* =====================================================================
+ * /api/messaging — THAO TAC TREN TIN NHAN
+ *
+ * Moi route o day co nghia nghiep vu rieng. CO Y khong co mot route kieu
+ * "goi ham Zalo ten X voi tham so Y": mot cong nhu vay bien moi lo hong
+ * XSS thanh quyen dieu khien toan bo tai khoan Zalo, va khong con danh
+ * sach trang nao con y nghia.
+ *
+ * Trinh duyet chi duoc noi: cuoc nao, tin nao, muon lam gi. Con threadType,
+ * msgId, cliMsgId, uidFrom va onlyMe deu do may chu tu quyet.
+ * ===================================================================== */
+
+/** Ma loi -> ma HTTP. Khong lo chi tiet provider; thong bao da duoc lam sach o lop duoi. */
+const MA_HTTP_THEO_LOI = {
+  MALFORMED_REQUEST: 400,
+  ACTION_NOT_APPLICABLE: 409,
+  ACTION_IDENTITY_UNAVAILABLE: 409,
+  ZALO_RUNTIME_CHANGED: 409,
+  NOT_FOUND: 404,
+  PROVIDER_REJECTED: 502,
+};
+
+function traLoiThatBai(res, error) {
+  const code = MA_HTTP_THEO_LOI[error?.code] ? error.code : "INTERNAL_ERROR";
+  const status = MA_HTTP_THEO_LOI[code] || 500;
+  if (code === "INTERNAL_ERROR") console.error("[messaging]", error);
+  res.status(status).json({
+    ok: false,
+    code,
+    // Loi khong co ma la loi minh chua luong truoc: khong day thong bao goc ra
+    // ngoai vi no co the kem duong dan, tham so da ma hoa hoac ca stack.
+    error: code === "INTERNAL_ERROR" ? "Không thực hiện được thao tác." : error.message,
+  });
+}
+
+/**
+ * Chup quyen runtime TRUOC moi ranh gioi async, giong /api/send. Khong truong
+ * nao trong req.body duoc phep thay the token nay.
+ */
+function tuyenMessaging(handler) {
+  return async (req, res) => {
+    const capturedRuntimeAuthority = captureRuntimeAuthority();
+    try {
+      res.json({ ok: true, ...(await handler(req.body || {}, capturedRuntimeAuthority)) });
+    } catch (error) {
+      traLoiThatBai(res, error);
+    }
+  };
+}
+
+/** Danh muc sticker da duyet. Chi khoa va mo ta - khong id that cua Zalo. */
+app.get("/api/messaging/stickers", (_req, res) => {
+  res.json({ ok: true, stickers: listAppStickers() });
+});
+
+app.post("/api/messaging/reaction", tuyenMessaging(
+  ({ threadId, messageId, reaction }, quyen) =>
+    appReactToMessage({ threadId, messageId, reaction }, quyen)
+));
+
+app.post("/api/messaging/sticker", tuyenMessaging(
+  ({ threadId, stickerKey }, quyen) => appSendSticker({ threadId, stickerKey }, quyen)
+));
+
+app.post("/api/messaging/typing", tuyenMessaging(
+  ({ threadId }, quyen) => appSendTyping({ threadId }, quyen)
+));
+
+app.post("/api/messaging/seen", tuyenMessaging(
+  ({ threadId, messageId }, quyen) => appMarkSeen({ threadId, messageId }, quyen)
+));
+
+app.post("/api/messaging/undo", tuyenMessaging(
+  ({ threadId, messageId }, quyen) => appUndoMessage({ threadId, messageId }, quyen)
+));
+
+// onlyMe KHONG doc tu req.body. Xoa ca hai dau la thao tac khong hoan tac
+// duoc, va no chua bao gio nam trong pham vi da duyet cua V1.
+app.post("/api/messaging/delete", tuyenMessaging(
+  ({ threadId, messageId }, quyen) => appDeleteMessageForMe({ threadId, messageId }, quyen)
+));
+
+app.post("/api/messaging/forward", tuyenMessaging(
+  ({ threadId, messageId, targetThreadId }, quyen) =>
+    appForwardMessage({ threadId, messageId, targetThreadId }, quyen)
+));
 
 app.get("/api/auto-reply", async (_req, res) => {
   try {
