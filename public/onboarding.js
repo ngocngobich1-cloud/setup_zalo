@@ -16,11 +16,16 @@ const els = {
   progress: document.querySelector("#onboarding-progress"),
   keyLinks: document.querySelector("#onboarding-key-links"),
   trainingPanel: document.querySelector("#module-training"),
+  trainingTitle: document.querySelector("#training-title"),
+  trainingMobileTitle: document.querySelector("#training-mobile-title"),
+  btnSetup: document.querySelector("#btn-training-setup"),
+  btnExitSetup: document.querySelector("#btn-training-exit-setup"),
+  btnSynth: document.querySelector("#btn-training-synth"),
+  btnReset: document.querySelector("#btn-training-reset"),
 };
 
 const portalSpecs = [
-  ["#ai-key-provider", ".key-block", "#onboarding-slot-api-key", null],
-  ["#ai-oc-provider", ".smtp-grid", "#onboarding-slot-model", "ai-chat-form"],
+  ["#ai-oc-provider", ".ai-model-config", "#onboarding-slot-model", "ai-chat-form"],
   ["#ai-soul", ".form-group", "#onboarding-slot-soul", "ai-chat-form"],
   ["#ai-role", ".form-group", "#onboarding-slot-tone", "ai-chat-form"],
   ["#ai-topics", ".form-group", "#onboarding-slot-topics", "ai-chat-form"],
@@ -81,7 +86,7 @@ const BUOC = {
 const BUOC_LUU_CAU_HINH = {
   target: "#onboarding-slot-ai-actions button[type='submit']",
   title: "Lưu cấu hình đã duyệt",
-  body: "Nếu cấu hình đã ổn, chị bấm Ghi nhớ giúp em nhé.",
+  body: "Nếu cấu hình đã ổn, chị bấm Lưu cấu hình trợ lý giúp em nhé.",
 };
 
 let state = null;
@@ -89,13 +94,14 @@ let callbacks = null;
 let portalRecords = [];
 let trainingActive = false;
 let currentTarget = null;
-let loginTimer = null;
 let lastOwnerUid = null;
 let ownerGeneration = 0;
 let initialized = false;
 let completionJustReached = false;
-let deferredThisSession = false;
 let reviewReadyToSave = false;
+let explicitSetupMode = false;
+let coachDismissedThisSetup = false;
+let inviteSeenRequest = null;
 
 async function jsonFetch(url, options) {
   const res = await fetch(url, options);
@@ -172,7 +178,11 @@ export function traControlCanonical() {
 
 function datTrainingController() {
   const step = Number(state?.step) || 0;
-  const active = trainingActive && step >= 4 && step <= 7;
+  const active = trainingActive
+    && explicitSetupMode
+    && state?.data?.guidanceCompleted !== true
+    && step >= 4
+    && step <= 7;
   datDieuPhoiOnboarding({
     active,
     spotlightComposer: active,
@@ -207,6 +217,23 @@ function anCoach() {
   currentTarget = null;
 }
 
+function dismissCoachForThisSetup() {
+  coachDismissedThisSetup = true;
+  anCoach();
+}
+
+function datCheDoSetupUI() {
+  const explicit = Boolean(explicitSetupMode);
+  if (els.trainingPanel) els.trainingPanel.dataset.trainingMode = explicit ? "explicit" : "normal";
+  const title = explicit ? "Thiết lập trợ lý" : "Huấn luyện bot";
+  if (els.trainingTitle) els.trainingTitle.textContent = title;
+  if (els.trainingMobileTitle) els.trainingMobileTitle.textContent = title;
+  els.btnSetup?.classList.toggle("hidden", explicit);
+  els.btnExitSetup?.classList.toggle("hidden", !explicit);
+  els.btnSynth?.classList.toggle("hidden", explicit);
+  els.btnReset?.classList.toggle("hidden", explicit);
+}
+
 function taoNut(label, onClick, secondary = false) {
   const button = document.createElement("button");
   button.type = "button";
@@ -226,6 +253,44 @@ async function xuLyCta(stepDef) {
 function layTargets(targetDef) {
   const selectors = Array.isArray(targetDef) ? targetDef : [targetDef];
   return selectors.map((selector) => document.querySelector(selector)).filter(Boolean);
+}
+
+function datTrangThaiAccordion(toggle, expanded) {
+  if (!toggle) return;
+  const contentId = toggle.getAttribute("aria-controls");
+  const content = contentId ? document.getElementById(contentId) : null;
+  if (!content) return;
+  toggle.setAttribute("aria-expanded", String(expanded));
+  content.hidden = !expanded;
+  const group = toggle.closest(".canonical-config-accordion, .provider-other-group");
+  group?.classList.toggle("is-collapsed", !expanded);
+  const verb = expanded ? "Thu gọn" : "Mở";
+  const currentLabel = toggle.getAttribute("aria-label");
+  if (currentLabel) toggle.setAttribute("aria-label", currentLabel.replace(/^(Mở|Thu gọn)/, verb));
+}
+
+function khoiTaoAccordion() {
+  document.querySelectorAll(".canonical-section-toggle, .provider-other-toggle").forEach((toggle) => {
+    datTrangThaiAccordion(toggle, toggle.getAttribute("aria-expanded") === "true");
+    toggle.addEventListener("click", () => {
+      datTrangThaiAccordion(toggle, toggle.getAttribute("aria-expanded") !== "true");
+    });
+  });
+}
+
+function moAccordionChoTargets(targets) {
+  for (const target of targets) {
+    const section = target.closest(".canonical-config-accordion");
+    const sectionToggle = section?.querySelector(".canonical-section-toggle");
+    if (sectionToggle?.getAttribute("aria-expanded") !== "true") {
+      datTrangThaiAccordion(sectionToggle, true);
+    }
+    const otherContent = target.closest(".provider-other-content");
+    const otherToggle = otherContent?.parentElement?.querySelector(".provider-other-toggle");
+    if (otherToggle?.getAttribute("aria-expanded") !== "true") {
+      datTrangThaiAccordion(otherToggle, true);
+    }
+  }
 }
 
 function rectBao(targets) {
@@ -315,6 +380,9 @@ function hienCoach(step, { completion = false } = {}) {
   const targets = layTargets(stepDef.target);
   if (!targets.length) return anCoach();
 
+  els.coach.classList.add("hidden");
+  moAccordionChoTargets(targets);
+
   els.bubbleStep.textContent = completion ? "Hoàn tất" : `Bước ${step}/9`;
   els.bubbleTitle.textContent = stepDef.title;
   els.bubbleBody.textContent = stepDef.body;
@@ -328,19 +396,34 @@ function hienCoach(step, { completion = false } = {}) {
         };
     els.bubbleActions.append(taoNut(stepDef.cta, action));
   }
-  els.coach.classList.remove("hidden");
-  const targetRect = rectBao(targets);
-  if (targetRect.top < 0 || targetRect.bottom > window.innerHeight) {
-    targets[0].scrollIntoView({ behavior: "smooth", block: "center" });
-  }
-  requestAnimationFrame(() => datViTriCoach(targets));
+  requestAnimationFrame(() => {
+    const targetRect = rectBao(targets);
+    if (targetRect.top < 0 || targetRect.bottom > window.innerHeight) {
+      targets[0].scrollIntoView({ behavior: "auto", block: "center" });
+    }
+    requestAnimationFrame(() => {
+      els.coach.classList.remove("hidden");
+      datViTriCoach(targets);
+    });
+  });
 }
 
 async function render(owner = chupOnboardingOwner()) {
   if (!state || !onboardingOwnerConHieuLuc(owner)) return;
   const step = Number(state.step) || 0;
-  els.progress.classList.toggle("hidden", state.completed || !state.started);
-  if (!state.completed && state.started) els.progress.textContent = `Bước ${step}/9`;
+  const guidanceCompleted = state.data?.guidanceCompleted === true;
+  datCheDoSetupUI();
+  if (explicitSetupMode) {
+    const segment = step >= 4 && step <= 7 ? "chat" : "config";
+    window.dispatchEvent(new CustomEvent("zalo:training-segment", { detail: { segment } }));
+  }
+  els.progress.classList.toggle(
+    "hidden",
+    !explicitSetupMode || guidanceCompleted || state.completed || !state.started
+  );
+  if (explicitSetupMode && !guidanceCompleted && !state.completed && state.started) {
+    els.progress.textContent = `Bước ${step} trên 9`;
+  }
 
   if (trainingActive) {
     ganControlCanonical();
@@ -349,7 +432,9 @@ async function render(owner = chupOnboardingOwner()) {
   }
   datTrainingController();
 
-  if (step === 4) {
+  if (!explicitSetupMode || guidanceCompleted) {
+    hienTinOnboarding("");
+  } else if (step === 4) {
     hienTinOnboarding(
       state.prompt
       || "Bot Chỉ huy đã sẵn sàng. Chị chọn gợi ý bên dưới hoặc tự gõ điều chị muốn tạo nhé."
@@ -357,7 +442,7 @@ async function render(owner = chupOnboardingOwner()) {
   } else if (step >= 5 && step <= 7) hienTinOnboarding(state.prompt);
   else if (step === 8) {
     hienTinOnboarding(reviewReadyToSave
-      ? "Nếu cấu hình đã ổn, chị bấm Ghi nhớ giúp em nhé."
+      ? "Nếu cấu hình đã ổn, chị bấm Lưu cấu hình trợ lý giúp em nhé."
       : "Em đã điền cấu hình được chị duyệt. Chị đọc lại toàn bộ Soul, Giọng điệu và Chủ đề được phép trả lời giúp em.");
     dienBanTongHop();
   } else if (step === 9) {
@@ -368,25 +453,37 @@ async function render(owner = chupOnboardingOwner()) {
     hienTinOnboarding("");
   }
 
-  if (state.completed) {
-    if (completionJustReached) {
+  if (state.completed || guidanceCompleted) {
+    if (completionJustReached && explicitSetupMode && !guidanceCompleted && !coachDismissedThisSetup) {
       hienCoach(9, { completion: true });
       completionJustReached = false;
     } else anCoach();
     return;
   }
-  if (step > 0) hienCoach(step);
+  if (explicitSetupMode && !coachDismissedThisSetup && step > 0) hienCoach(step);
   else anCoach();
 }
 
-export async function datManHinhHuanLuyen(active) {
+export async function datManHinhHuanLuyen(active, { explicitSetup = false } = {}) {
+  const wasActive = trainingActive;
   trainingActive = Boolean(active);
   if (!trainingActive) {
+    explicitSetupMode = false;
+    coachDismissedThisSetup = false;
+    datCheDoSetupUI();
     anCoach();
     traControlCanonical();
     datDieuPhoiOnboarding(null);
     return;
   }
+  if (!wasActive) {
+    explicitSetupMode = Boolean(explicitSetup);
+    coachDismissedThisSetup = false;
+  } else if (explicitSetup) {
+    explicitSetupMode = true;
+    coachDismissedThisSetup = false;
+  }
+  datCheDoSetupUI();
   // URL/agent la runtime canonical, con model thuoc owner. Moi lan mo Training
   // phai nap lai sau khi owner da co; khong dua vao request page-mount co the da
   // chay truoc dang nhap. Trong luc nap, dua controls ve Settings de Save cu
@@ -415,25 +512,60 @@ export function sauKhiDongCauHinh() {
   }
 }
 
+async function ghiNhanDaThayLoiMoi() {
+  if (state?.data?.firstSetupInviteSeen === true) return state;
+  if (inviteSeenRequest) return inviteSeenRequest;
+  inviteSeenRequest = hanhDong("invite_seen");
+  try {
+    return await inviteSeenRequest;
+  } finally {
+    inviteSeenRequest = null;
+  }
+}
+
+async function vaoThietLapTroLy() {
+  explicitSetupMode = true;
+  coachDismissedThisSetup = false;
+  datCheDoSetupUI();
+  if (state && !state.completed && Number(state.step) === 0) {
+    await hanhDong("start");
+  }
+  callbacks?.selectModule("training", { explicitSetup: true });
+  if (state) await render(chupOnboardingOwner());
+}
+
+async function thoatThietLapTroLy() {
+  explicitSetupMode = false;
+  coachDismissedThisSetup = false;
+  completionJustReached = false;
+  reviewReadyToSave = false;
+  anCoach();
+  datCheDoSetupUI();
+  if (state) await render(chupOnboardingOwner());
+}
+
 export async function dongBoTrangThaiZalo({ loggedIn, justLoggedIn, ownerUid }) {
-  clearTimeout(loginTimer);
-  loginTimer = null;
   const nextOwnerUid = loggedIn && ownerUid ? String(ownerUid) : null;
-  if (lastOwnerUid !== nextOwnerUid) {
+  const ownerChanged = lastOwnerUid !== nextOwnerUid;
+  if (ownerChanged) {
     ownerGeneration += 1;
     state = null;
-    deferredThisSession = false;
     completionJustReached = false;
     reviewReadyToSave = false;
+    explicitSetupMode = false;
+    coachDismissedThisSetup = false;
+    inviteSeenRequest = null;
     els.firstRun.classList.add("hidden");
     els.progress.classList.add("hidden");
     anCoach();
+    datCheDoSetupUI();
   }
   if (!loggedIn || !ownerUid) {
     lastOwnerUid = null;
     return;
   }
   lastOwnerUid = nextOwnerUid;
+  if (ownerChanged || justLoggedIn) callbacks?.selectModule("zalo");
   const owner = chupOnboardingOwner();
   try {
     if (!await napTrangThai()) return;
@@ -441,41 +573,56 @@ export async function dongBoTrangThaiZalo({ loggedIn, justLoggedIn, ownerUid }) 
   catch { return; }
 
   if (!onboardingOwnerConHieuLuc(owner)) return;
-  if (state.completed) return;
-  if (justLoggedIn) callbacks?.selectModule("zalo");
-  loginTimer = setTimeout(() => {
-    if (!onboardingOwnerConHieuLuc(owner)) return;
-    if (!state?.started && !deferredThisSession) {
-      els.firstRun.classList.remove("hidden");
-      return;
-    }
-    callbacks?.selectModule("training");
-  }, justLoggedIn ? 700 : 350);
+  if (state.data?.firstSetupInviteSeen !== true) {
+    els.firstRun.classList.remove("hidden");
+    // Persist ngay khi loi moi da xuat hien. Neu request hong, modal van o do va
+    // hai nut se thu lai; khong co client-only canonical state.
+    void ghiNhanDaThayLoiMoi().catch(() => {});
+  }
 }
 
 export function khoiTaoOnboarding(options) {
   if (initialized) return;
   initialized = true;
   callbacks = options;
+  khoiTaoAccordion();
   thuThapPortal();
 
   els.btnStart.addEventListener("click", async () => {
     els.btnStart.disabled = true;
+    els.btnLater.disabled = true;
     try {
-      if (!await hanhDong("start")) return;
+      if (!await ghiNhanDaThayLoiMoi()) return;
       els.firstRun.classList.add("hidden");
-      callbacks?.selectModule("training");
+      await vaoThietLapTroLy();
     } catch (error) {
       els.firstRun.querySelector("p").textContent = error.message;
     } finally {
       els.btnStart.disabled = false;
+      els.btnLater.disabled = false;
     }
   });
-  els.btnLater.addEventListener("click", () => {
-    deferredThisSession = true;
-    els.firstRun.classList.add("hidden");
+  els.btnLater.addEventListener("click", async () => {
+    els.btnStart.disabled = true;
+    els.btnLater.disabled = true;
+    try {
+      if (!await ghiNhanDaThayLoiMoi()) return;
+      els.firstRun.classList.add("hidden");
+      callbacks?.selectModule("zalo");
+    } catch (error) {
+      els.firstRun.querySelector("p").textContent = error.message;
+    } finally {
+      els.btnStart.disabled = false;
+      els.btnLater.disabled = false;
+    }
   });
-  els.dismiss.addEventListener("click", anCoach);
+  els.dismiss.addEventListener("click", dismissCoachForThisSetup);
+  els.btnSetup?.addEventListener("click", () => {
+    void vaoThietLapTroLy().catch((error) => {
+      if (trainingActive) hienTinOnboarding("Lỗi: " + error.message);
+    });
+  });
+  els.btnExitSetup?.addEventListener("click", () => { void thoatThietLapTroLy(); });
 
   els.keyLinks.addEventListener("click", (event) => {
     if (!event.target.closest("a") || Number(state?.step) !== 1) return;
@@ -484,6 +631,7 @@ export function khoiTaoOnboarding(options) {
 
   window.addEventListener("zalo:canonical-save", async (event) => {
     const detail = event.detail || {};
+    if (!explicitSetupMode) return;
     try {
       if (detail.section === "api-key" && [1, 2].includes(Number(state?.step))) {
         await hanhDong("key_saved");
@@ -496,7 +644,7 @@ export function khoiTaoOnboarding(options) {
         await hanhDong("admin_saved", { adminUid: detail.adminUid });
       }
     } catch (error) {
-      if (trainingActive) {
+      if (trainingActive && explicitSetupMode) {
         els.bubbleBody.textContent = error.message;
         els.coach.classList.remove("hidden");
       }

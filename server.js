@@ -831,7 +831,7 @@ app.post("/api/ai-chat", async (req, res) => {
     if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
     const {
       allowedTopics, roleTone, allowedGroupId, allowedSenderIds, useKnowledge, knowledgeFileIds,
-      soul, opencodeBaseUrl, opencodeAgent, opencodeModel,
+      soul, opencodeBaseUrl, opencodeAgent, opencodeModel, opencodeFallbackModel,
     } = req.body;
 
     // Lưu kết nối AI là một action boundary riêng: vẫn dùng canonical endpoint
@@ -842,17 +842,22 @@ app.post("/api/ai-chat", async (req, res) => {
       if (!splitModel(opencodeModel)) {
         return res.status(400).json({ error: "Hãy chọn đủ Hãng AI và Model" });
       }
+      const fallbackProvided = opencodeFallbackModel !== undefined && opencodeFallbackModel !== null;
+      const fallbackModel = fallbackProvided ? String(opencodeFallbackModel || "").trim() : null;
+      if (fallbackProvided && fallbackModel && !splitModel(fallbackModel)) {
+        return res.status(400).json({ error: "Model Phụ không hợp lệ" });
+      }
 
-      const { saveAiChatConfig, getAiChatConfig } = await import("./lib/db.js");
-      const current = await getAiChatConfig(ownerUid);
+      const { saveAiChatConfig } = await import("./lib/db.js");
       await saveAiChatConfig(ownerUid, {
-        ...(current || {}),
         opencodeBaseUrl: String(opencodeBaseUrl).trim(),
         opencodeAgent: String(opencodeAgent || "general").trim() || "general",
         opencodeModel: String(opencodeModel).trim(),
+        ...(fallbackProvided ? { opencodeFallbackModel: fallbackModel } : {}),
       });
       await aiChat.refreshConfig();
-      return res.json({ ok: true, config: aiChat.getConfig(), ready: aiChat.isAiChatReady() });
+      const config = aiChat.getConfig(ownerUid);
+      return res.json({ ok: true, config, ready: aiChat.isAiChatReady(config) });
     }
 
     if (!soul) return res.status(400).json({ error: "Soul là bắt buộc — đây là nội dung nạp vào session OpenCode" });
@@ -899,7 +904,7 @@ app.post("/api/ai-chat", async (req, res) => {
     // duoc ghi qua action boundary "ai-connection" o tren.
     await saveAiChatConfig(ownerUid, {
       allowedTopics, roleTone, useKnowledge, knowledgeFileIds: ownedKnowledgeFileIds,
-      soul, opencodeModel,
+      soul,
     });
 
     // Truong RIENG tung tai khoan Zalo.
@@ -937,8 +942,13 @@ app.post("/api/ai-chat", async (req, res) => {
       });
     }
     await aiChat.refreshConfig();
-    
-    res.json({ ok: true, config: aiChat.getConfig(), ready: aiChat.isAiChatReady() });
+
+    // Chi nhanh save cau hinh tro ly (Soul/giong dieu/chu de) thanh cong moi
+    // hoan tat guidance. Nhanh saveScope="ai-connection" da return o tren.
+    const onboarding = await import("./lib/onboarding.js");
+    await onboarding.xuLyHanhDongOnboarding(ownerUid, "guidance_completed");
+    const config = aiChat.getConfig(ownerUid);
+    res.json({ ok: true, config, ready: aiChat.isAiChatReady(config) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

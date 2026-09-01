@@ -6,6 +6,7 @@ const els = {
   starters: document.querySelector("#onboarding-starters"),
   btnStarter: document.querySelector("#btn-onboarding-starter"),
   meta: document.querySelector("#training-meta"),
+  mobileMeta: document.querySelector("#training-mobile-meta"),
   form: document.querySelector("#training-form"),
   text: document.querySelector("#training-text"),
   fileInput: document.querySelector("#training-file-input"),
@@ -13,6 +14,10 @@ const els = {
   btnAttach: document.querySelector("#btn-training-attach"),
   btnSynth: document.querySelector("#btn-training-synth"),
   btnReset: document.querySelector("#btn-training-reset"),
+  layout: document.querySelector("#training-layout"),
+  configPanel: document.querySelector("#training-config-panel"),
+  btnConfigToggle: document.querySelector("#btn-training-config-toggle"),
+  segmentButtons: [...document.querySelectorAll("[data-training-segment]")],
 };
 
 let dinhKem = [];
@@ -38,8 +43,35 @@ export function invalidateTrainingOwnerState() {
   veDanhSachTep();
   els.log.innerHTML = "";
   els.meta.textContent = "Đang tải hồ sơ Zalo hiện tại…";
+  if (els.mobileMeta) els.mobileMeta.textContent = els.meta.textContent;
   els.meta.classList.remove("training-warn");
 }
+
+function datMobileSegment(segment) {
+  const next = segment === "config" ? "config" : "chat";
+  els.panel.dataset.mobileSegment = next;
+  for (const button of els.segmentButtons) {
+    const active = button.dataset.trainingSegment === next;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  }
+}
+
+for (const button of els.segmentButtons) {
+  button.addEventListener("click", () => datMobileSegment(button.dataset.trainingSegment));
+}
+
+window.addEventListener("zalo:training-segment", (event) => {
+  datMobileSegment(event.detail?.segment);
+});
+
+els.btnConfigToggle?.addEventListener("click", () => {
+  const collapsed = els.layout.classList.toggle("training-config-collapsed");
+  els.btnConfigToggle.setAttribute("aria-expanded", String(!collapsed));
+  els.btnConfigToggle.textContent = collapsed ? "Mở cấu hình" : "Thu gọn cấu hình";
+  els.btnConfigToggle.title = collapsed ? "Mở cấu hình" : "Thu gọn cấu hình";
+});
 
 export function datDieuPhoiOnboarding(controller) {
   onboardingController = controller || null;
@@ -206,6 +238,7 @@ function apDungMetaHuanLuyen(data) {
   els.meta.textContent =
     `Model: ${data.model} · ${docDuocAnh ? "đọc được ảnh" : "KHÔNG đọc được ảnh"}` +
     (data.sessionId ? "" : " · chưa có phiên nào");
+  if (els.mobileMeta) els.mobileMeta.textContent = els.meta.textContent;
   els.meta.classList.toggle("training-warn", !docDuocAnh);
   els.btnAttach.disabled = dangGui;
   els.btnAttach.title = docDuocAnh
@@ -249,6 +282,7 @@ export async function napHuanLuyen() {
   } catch (error) {
     if (generation !== ownerGeneration) return;
     els.meta.textContent = error.message;
+    if (els.mobileMeta) els.mobileMeta.textContent = els.meta.textContent;
     els.meta.classList.add("training-warn");
     daNap = false;
   }
@@ -258,6 +292,7 @@ window.addEventListener("zalo:canonical-save", (event) => {
   if (!["ai-model", "ai-config"].includes(event.detail?.section)) return;
   void napMetaHuanLuyen().catch((error) => {
     els.meta.textContent = error.message;
+    if (els.mobileMeta) els.mobileMeta.textContent = els.meta.textContent;
     els.meta.classList.add("training-warn");
   });
 });
