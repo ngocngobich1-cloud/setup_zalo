@@ -31,13 +31,13 @@
         </div>
 
         <nav class="module-nav" id="module-nav">
-          <button class="module-item active" type="button" data-module="zalo" title="Chat Zalo" aria-label="Chat Zalo">
+          <button class="module-item active" type="button" data-module="zalo" title="Hội thoại / Inbox" aria-label="Hội thoại / Inbox">
             <span class="module-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M20.5 11.5a8.5 8.5 0 0 1-12.2 7.7L3.5 20.5l1.3-4.8A8.5 8.5 0 1 1 20.5 11.5z" />
               </svg>
             </span>
-            <span class="module-label">Chat Zalo</span>
+            <span class="module-label">Hội thoại / Inbox</span>
           </button>
           <button class="module-item" type="button" data-module="training" title="Huấn luyện bot" aria-label="Huấn luyện bot">
             <span class="module-icon" aria-hidden="true">
@@ -272,91 +272,237 @@
           </section>
         </section>
 
-        <section class="module-panel hidden" id="module-training">
-          <div class="training-layout">
-          <div class="training-panel training-command-panel">
-            <header class="training-header">
-              <div>
-                <h2>Huấn luyện bot</h2>
-                <p id="training-meta" class="training-meta"></p>
-              </div>
-              <div class="training-actions">
-                <button id="btn-training-synth" class="secondary-button" type="button">Tổng hợp thành Soul</button>
-                <button id="btn-training-reset" class="secondary-button" type="button">Phiên mới</button>
-              </div>
-            </header>
-
-            <div id="training-log" class="training-log"></div>
-
-            <div id="onboarding-starters" class="onboarding-starters hidden" aria-label="Gợi ý bắt đầu">
-              <button id="btn-onboarding-starter" class="onboarding-starter-chip" type="button">Mình cần tạo 1 bot AI</button>
+        <section class="module-panel hidden" id="module-training" data-mobile-segment="chat" data-training-mode="normal">
+          <header class="training-mobile-topbar">
+            <button class="mobile-menu-button" type="button" aria-label="Mở menu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <path d="M4 7h16M4 12h16M4 17h16" />
+              </svg>
+            </button>
+            <div>
+              <h1 id="training-mobile-title">Huấn luyện bot</h1>
+              <p id="training-mobile-meta" class="training-meta"></p>
             </div>
+          </header>
 
-            <form id="training-form" class="training-form">
-              <div id="training-files" class="training-files hidden"></div>
-              <div class="training-input-row">
-                <textarea id="training-text" rows="2"
-                  placeholder="Dán ảnh chat mẫu bằng Ctrl+V, hoặc gõ lời dặn về giọng điệu…"></textarea>
-                <div class="training-buttons">
-                  <input type="file" id="training-file-input" class="hidden" multiple
-                    accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv" />
-                  <button type="button" id="btn-training-attach" class="secondary-button" title="Đính tệp">📎</button>
-                  <button type="submit" class="primary-button">Gửi</button>
-                </div>
-              </div>
-            </form>
+          <div class="training-mobile-segments" role="tablist" aria-label="Nội dung Huấn luyện bot">
+            <button class="active" type="button" role="tab" aria-selected="true" data-training-segment="chat">Trò chuyện</button>
+            <button type="button" role="tab" aria-selected="false" data-training-segment="config">Cấu hình</button>
           </div>
 
-          <aside class="training-config-panel" id="training-config-panel" aria-label="Cấu hình trợ lý">
-            <header class="training-config-header">
-              <div>
-                <span class="training-config-kicker">Cấu hình trợ lý</span>
-                <h3>Dùng đúng cấu hình đang có</h3>
+          <div class="training-layout" id="training-layout">
+            <div class="training-panel training-command-panel">
+              <header class="training-header">
+                <div class="training-heading">
+                  <h1 id="training-title">Huấn luyện bot</h1>
+                  <p id="training-meta" class="training-meta"></p>
+                </div>
+                <div class="training-actions">
+                  <button id="btn-training-setup" class="primary-button" type="button">Thiết lập trợ lý</button>
+                  <button id="btn-training-exit-setup" class="secondary-button hidden" type="button">Thoát thiết lập</button>
+                  <button id="btn-training-synth" class="secondary-button" type="button">Tổng hợp thành Soul</button>
+                  <button id="btn-training-reset" class="secondary-button" type="button">Phiên mới</button>
+                  <button id="btn-training-config-toggle" class="secondary-button training-config-toggle" type="button"
+                    aria-expanded="true" aria-controls="training-config-panel" title="Thu gọn cấu hình">Thu gọn cấu hình</button>
+                </div>
+              </header>
+
+              <div id="training-log" class="training-log"></div>
+
+              <div id="onboarding-starters" class="onboarding-starters hidden" aria-label="Gợi ý bắt đầu">
+                <button id="btn-onboarding-starter" class="onboarding-starter-chip" type="button">Mình cần tạo 1 bot AI</button>
               </div>
-              <span id="onboarding-progress" class="onboarding-progress hidden">Bước 1/9</span>
-            </header>
 
-            <div id="onboarding-key-links" class="onboarding-key-links">
-              <span>Lấy API key:</span>
-              <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer">Groq</a>
-              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">Google AI</a>
-              <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">OpenAI</a>
-              <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">Anthropic</a>
+              <form id="training-form" class="training-form">
+                <div id="training-files" class="training-files hidden"></div>
+                <div class="training-input-row">
+                  <textarea id="training-text" rows="2"
+                    placeholder="Dán ảnh chat mẫu bằng Ctrl+V, hoặc gõ lời dặn về giọng điệu…"></textarea>
+                  <div class="training-buttons">
+                    <input type="file" id="training-file-input" class="hidden" multiple
+                      accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv" />
+                    <button type="button" id="btn-training-attach" class="secondary-button" title="Đính tệp">📎</button>
+                    <button type="submit" class="primary-button">Gửi</button>
+                  </div>
+                </div>
+              </form>
             </div>
 
-            <div class="canonical-config-stack">
-              <section class="canonical-config-section" data-canonical-slot="api-key">
-                <h4>1. API Key</h4>
-                <div id="onboarding-slot-api-key"></div>
-              </section>
-              <section class="canonical-config-section" data-canonical-slot="model">
-                <h4>2–3. Hãng AI và Model</h4>
-                <div id="onboarding-slot-model"></div>
-              </section>
-              <section class="canonical-config-section" data-canonical-slot="soul">
-                <h4>4. Soul</h4>
-                <div id="onboarding-slot-soul"></div>
-              </section>
-              <section class="canonical-config-section" data-canonical-slot="tone">
-                <h4>5. Giọng điệu</h4>
-                <div id="onboarding-slot-tone"></div>
-              </section>
-              <section class="canonical-config-section" data-canonical-slot="topics">
-                <h4>6. Chủ đề được phép trả lời</h4>
-                <div id="onboarding-slot-topics"></div>
-              </section>
-              <section class="canonical-config-section canonical-actions-section" data-canonical-slot="ai-actions">
-                <div id="onboarding-slot-ai-actions"></div>
-              </section>
-              <section class="canonical-config-section" data-canonical-slot="admin">
-                <h4>7. Admin</h4>
-                <div id="onboarding-slot-admin"></div>
-              </section>
-              <section class="canonical-config-section canonical-actions-section" data-canonical-slot="admin-actions">
-                <div id="onboarding-slot-admin-actions"></div>
-              </section>
-            </div>
-          </aside>
+            <aside class="training-config-panel" id="training-config-panel" aria-label="Cấu hình trợ lý">
+              <header class="training-config-header">
+                <div>
+                  <span class="training-config-kicker">Cấu hình bot</span>
+                  <h3>Dùng đúng cấu hình đang có</h3>
+                </div>
+                <span id="onboarding-progress" class="onboarding-progress hidden">Bước 1 trên 9</span>
+              </header>
+
+              <div class="canonical-config-stack">
+                <section class="canonical-config-section canonical-config-accordion provider-resource-section is-collapsed" data-canonical-slot="resource-links">
+                  <header class="canonical-config-section-header">
+                    <h2 class="training-config-section-title">1. Lấy API key</h2>
+                    <button class="canonical-section-toggle" type="button" aria-expanded="false" aria-controls="training-section-api-resources" aria-label="Mở mục Lấy API key">
+                      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg>
+                    </button>
+                  </header>
+                  <div id="training-section-api-resources" class="canonical-config-section-content" hidden>
+                    <div id="onboarding-key-links" class="onboarding-key-links">
+                      <div class="provider-resource-group is-collapsed" data-provider-group="free-trial">
+                        <h3 class="provider-resource-heading">
+                          <button class="provider-other-toggle" type="button" aria-expanded="false" aria-controls="training-free-providers">
+                            <span>Có gói miễn phí / dùng thử</span>
+                            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg>
+                          </button>
+                        </h3>
+                        <div id="training-free-providers" class="provider-other-content provider-resource-links" hidden>
+                          <a class="provider-resource-row" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">Google Gemini</a>
+                          <a class="provider-resource-row" href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer">Groq</a>
+                          <a class="provider-resource-row" href="https://console.mistral.ai/api-keys/" target="_blank" rel="noopener noreferrer">Mistral AI</a>
+                          <a class="provider-resource-row" href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">OpenRouter</a>
+                          <a class="provider-resource-row" href="https://cloud.cerebras.ai/" target="_blank" rel="noopener noreferrer">Cerebras</a>
+                          <span class="provider-resource-row provider-resource-name">Hugging Face</span>
+                          <span class="provider-resource-row provider-resource-name">Cohere</span>
+                          <span class="provider-resource-row provider-resource-name">Cloudflare Workers AI</span>
+                        </div>
+                      </div>
+                      <div class="provider-resource-group is-collapsed" data-provider-group="paid">
+                        <h3 class="provider-resource-heading">
+                          <button class="provider-other-toggle" type="button" aria-expanded="false" aria-controls="training-paid-providers">
+                            <span>Trả phí</span>
+                            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg>
+                          </button>
+                        </h3>
+                        <div id="training-paid-providers" class="provider-other-content provider-resource-links" hidden>
+                          <a class="provider-resource-row" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">OpenAI</a>
+                          <a class="provider-resource-row" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">Anthropic</a>
+                          <a class="provider-resource-row" href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer">DeepSeek</a>
+                          <a class="provider-resource-row" href="https://console.x.ai/" target="_blank" rel="noopener noreferrer">xAI</a>
+                          <a class="provider-resource-row" href="https://api.together.ai/settings/projects/~current/api-keys" target="_blank" rel="noopener noreferrer">Together AI</a>
+                          <a class="provider-resource-row" href="https://docs.fireworks.ai/getting-started/onboarding" target="_blank" rel="noopener noreferrer">Fireworks AI</a>
+                          <span class="provider-resource-row provider-resource-name">Azure OpenAI</span>
+                          <span class="provider-resource-row provider-resource-name">AWS Bedrock</span>
+                          <span class="provider-resource-row provider-resource-name">Google Vertex AI</span>
+                          <span class="provider-resource-row provider-resource-name">IBM watsonx.ai</span>
+                          <span class="provider-resource-row provider-resource-name">NVIDIA NIM</span>
+                          <span class="provider-resource-row provider-resource-name">Perplexity API</span>
+                          <span class="provider-resource-row provider-resource-name">Replicate</span>
+                          <span class="provider-resource-row provider-resource-name">AI21 Labs</span>
+                          <span class="provider-resource-row provider-resource-name">SambaNova Cloud</span>
+                          <span class="provider-resource-row provider-resource-name">Nebius AI Studio</span>
+                          <span class="provider-resource-row provider-resource-name">Baseten</span>
+                          <span class="provider-resource-row provider-resource-name">Modal</span>
+                          <span class="provider-resource-row provider-resource-name">RunPod</span>
+                          <span class="provider-resource-row provider-resource-name">DeepInfra</span>
+                          <span class="provider-resource-row provider-resource-name">Hyperbolic</span>
+                          <span class="provider-resource-row provider-resource-name">Novita AI</span>
+                          <span class="provider-resource-row provider-resource-name">Lepton AI</span>
+                          <span class="provider-resource-row provider-resource-name">Lambda AI</span>
+                          <span class="provider-resource-row provider-resource-name">Oracle Cloud Generative AI</span>
+                          <span class="provider-resource-row provider-resource-name">Alibaba Cloud Model Studio</span>
+                          <span class="provider-resource-row provider-resource-name">Tencent Cloud AI</span>
+                          <span class="provider-resource-row provider-resource-name">Baidu AI Cloud</span>
+                          <span class="provider-resource-row provider-resource-name">Huawei Cloud ModelArts</span>
+                          <span class="provider-resource-row provider-resource-name">Snowflake Cortex AI</span>
+                          <span class="provider-resource-row provider-resource-name">Databricks Mosaic AI</span>
+                          <span class="provider-resource-row provider-resource-name">DigitalOcean Gradient AI</span>
+                          <span class="provider-resource-row provider-resource-name">OVHcloud AI</span>
+                          <span class="provider-resource-row provider-resource-name">Scaleway Generative APIs</span>
+                          <span class="provider-resource-row provider-resource-name">Clarifai</span>
+                          <span class="provider-resource-row provider-resource-name">Voyage AI</span>
+                          <span class="provider-resource-row provider-resource-name">Jina AI</span>
+                          <span class="provider-resource-row provider-resource-name">Aleph Alpha</span>
+                          <span class="provider-resource-row provider-resource-name">Writer AI</span>
+                          <span class="provider-resource-row provider-resource-name">Reka AI</span>
+                          <span class="provider-resource-row provider-resource-name">Nscale</span>
+                          <span class="provider-resource-row provider-resource-name">CoreWeave AI</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="canonical-config-section canonical-config-accordion training-key-disabled" data-canonical-slot="api-key">
+                  <header class="canonical-config-section-header">
+                    <h2 class="training-config-section-title">2. Kết nối API key</h2>
+                    <button class="canonical-section-toggle" type="button" aria-expanded="true" aria-controls="training-section-api-key" aria-label="Thu gọn mục Kết nối API key">
+                      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg>
+                    </button>
+                  </header>
+                  <div id="training-section-api-key" class="canonical-config-section-content">
+                    <div class="training-key-grid">
+                      <select id="training-key-provider" class="auth-input" disabled aria-label="Chọn hãng AI">
+                        <option>Chọn hãng</option>
+                      </select>
+                      <input id="training-key-value" class="auth-input" type="password" disabled
+                        placeholder="Dán API key" autocomplete="off" aria-label="API key" />
+                    </div>
+                    <div class="training-key-actions">
+                      <button id="btn-training-key-save" class="secondary-button" type="button" disabled aria-disabled="true">Lưu key</button>
+                      <button id="btn-training-key-test" class="secondary-button" type="button" disabled aria-disabled="true">Thử key</button>
+                      <button id="btn-training-key-clear" class="secondary-button" type="button" disabled aria-disabled="true">Gỡ toàn bộ key</button>
+                    </div>
+                    <div id="training-connected-providers" class="training-connected-providers" aria-live="polite">
+                      <span>Hãng đã kết nối</span>
+                      <p>Chưa có kết nối.</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="canonical-config-section canonical-config-accordion" data-canonical-slot="model">
+                  <header class="canonical-config-section-header">
+                    <h2 class="training-config-section-title">3. Hãng AI và Model</h2>
+                    <button class="canonical-section-toggle" type="button" aria-expanded="true" aria-controls="training-section-model" aria-label="Thu gọn mục Hãng AI và Model">
+                      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg>
+                    </button>
+                  </header>
+                  <div id="training-section-model" class="canonical-config-section-content"><div id="onboarding-slot-model"></div></div>
+                </section>
+                <section class="canonical-config-section canonical-config-accordion" data-canonical-slot="soul">
+                  <header class="canonical-config-section-header">
+                    <h2 class="training-config-section-title">4. Soul</h2>
+                    <button class="canonical-section-toggle" type="button" aria-expanded="true" aria-controls="training-section-soul" aria-label="Thu gọn mục Soul">
+                      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg>
+                    </button>
+                  </header>
+                  <div id="training-section-soul" class="canonical-config-section-content"><div id="onboarding-slot-soul"></div></div>
+                </section>
+                <section class="canonical-config-section canonical-config-accordion" data-canonical-slot="tone">
+                  <header class="canonical-config-section-header">
+                    <h2 class="training-config-section-title">5. Giọng điệu và vai trò</h2>
+                    <button class="canonical-section-toggle" type="button" aria-expanded="true" aria-controls="training-section-tone" aria-label="Thu gọn mục Giọng điệu và vai trò">
+                      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg>
+                    </button>
+                  </header>
+                  <div id="training-section-tone" class="canonical-config-section-content"><div id="onboarding-slot-tone"></div></div>
+                </section>
+                <section class="canonical-config-section canonical-config-accordion" data-canonical-slot="topics">
+                  <header class="canonical-config-section-header">
+                    <h2 class="training-config-section-title">6. Chủ đề được phép trả lời</h2>
+                    <button class="canonical-section-toggle" type="button" aria-expanded="true" aria-controls="training-section-topics" aria-label="Thu gọn mục Chủ đề được phép trả lời">
+                      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg>
+                    </button>
+                  </header>
+                  <div id="training-section-topics" class="canonical-config-section-content">
+                    <div id="onboarding-slot-topics"></div>
+                    <p class="training-assistant-save-copy">Lưu Soul, giọng điệu và chủ đề được phép trả lời.</p>
+                    <div id="onboarding-slot-ai-actions"></div>
+                  </div>
+                </section>
+                <section class="canonical-config-section canonical-config-accordion canonical-admin-section" data-canonical-slot="admin">
+                  <header class="canonical-config-section-header">
+                    <h2 class="training-config-section-title">7. Admin</h2>
+                    <button class="canonical-section-toggle" type="button" aria-expanded="true" aria-controls="training-section-admin" aria-label="Thu gọn mục Admin">
+                      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg>
+                    </button>
+                  </header>
+                  <div id="training-section-admin" class="canonical-config-section-content">
+                    <div id="onboarding-slot-admin"></div>
+                    <div id="onboarding-slot-admin-actions"></div>
+                  </div>
+                </section>
+                <button id="btn-training-open-config" class="training-open-config" type="button">Xem toàn bộ cấu hình</button>
+              </div>
+            </aside>
           </div>
         </section>
 
@@ -364,6 +510,11 @@
         <section class="module-panel hidden" id="module-note">
           <div class="tools-panel">
             <header class="tools-header">
+              <button class="mobile-menu-button" type="button" aria-label="Mở menu">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                  <path d="M4 7h16M4 12h16M4 17h16" />
+                </svg>
+              </button>
               <h2>Công cụ</h2>
               <p>Kết nối các dịch vụ để bot có thể hỗ trợ công việc của bạn.</p>
             </header>

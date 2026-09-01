@@ -62,7 +62,7 @@ const els = {
   btnImage: document.querySelector("#btn-chat-image"),
   btnAttach: document.querySelector("#btn-chat-attach"),
   btnSend: document.querySelector("#btn-chat-send"),
-  mobileMenu: document.querySelector(".mobile-menu-button"),
+  mobileMenus: [...document.querySelectorAll(".mobile-menu-button")],
   mobileChatBack: document.querySelector(".mobile-chat-back"),
   mobileDrawerBackdrop: document.querySelector(".mobile-drawer-backdrop"),
   
@@ -168,7 +168,7 @@ els.fileInput.addEventListener("change", async () => {
   }
 });
 
-els.mobileMenu?.addEventListener("click", openMobileDrawer);
+els.mobileMenus.forEach((button) => button.addEventListener("click", openMobileDrawer));
 els.mobileChatBack?.addEventListener("click", closeMobileLayerWithHistory);
 els.mobileDrawerBackdrop?.addEventListener("click", closeMobileLayerWithHistory);
 window.addEventListener("popstate", () => {
@@ -999,6 +999,7 @@ railSettings?.addEventListener("click", openSettings);
 railSettings?.addEventListener("click", () => {
   if (isMobileInbox() && els.appShell.classList.contains("mobile-drawer-open")) closeMobileLayerWithHistory();
 });
+document.querySelector("#btn-training-open-config")?.addEventListener("click", openSettings);
 
 function toggleRailLogoutMenu(open) {
   if (!railLogoutMenu) return;
@@ -1088,7 +1089,7 @@ toolGrid?.addEventListener("keydown", (event) => {
 
 chonCongCu(activeTool);
 
-function chonPhanHe(target) {
+function chonPhanHe(target, options = {}) {
   const button = els.moduleNav?.querySelector(`[data-module="${target}"]`);
   if (!button) return;
   els.moduleNav.querySelectorAll("[data-module]").forEach((item) => {
@@ -1099,7 +1100,7 @@ function chonPhanHe(target) {
   });
 
   // Nap lan dau khi thuc su mo phan he, khong goi OpenCode ngay luc tai trang.
-  void datManHinhHuanLuyen(target === "training");
+  void datManHinhHuanLuyen(target === "training", options);
   if (target === "training") napHuanLuyen();
   // Cau hinh Zoho gio nam trong phan he Cong cu (khoa "note"), khong con phan he
   // Email rieng nua. Khoa van la "note" vi no da nam trong hop dong dieu huong.

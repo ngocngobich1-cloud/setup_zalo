@@ -322,21 +322,45 @@ export const CONFIG_TABS = [
             </details>
           </div>
 
-          <div class="form-group">
-            <label>2. Hãng AI và Model</label>
-            <div class="smtp-grid ai-model-grid">
-              <label class="ai-model-field">
-                <span>Hãng AI</span>
-                <select id="ai-oc-provider" class="auth-input"></select>
-              </label>
-              <label class="ai-model-field">
-                <span>Model</span>
-                <select id="ai-oc-model" class="auth-input"></select>
-              </label>
+          <div class="form-group ai-model-config">
+            <label class="portal-shared-label">Hãng AI và Model</label>
+            <div class="ai-model-row">
+              <h3 class="ai-model-kind">CHÍNH</h3>
+              <div class="smtp-grid ai-model-grid">
+                <label class="ai-model-field">
+                  <span>Hãng AI</span>
+                  <select id="ai-oc-provider" class="auth-input"></select>
+                </label>
+                <label class="ai-model-field">
+                  <span>Model</span>
+                  <select id="ai-oc-model" class="auth-input"></select>
+                </label>
+              </div>
+            </div>
+            <div class="ai-model-row">
+              <div class="ai-model-kind-row">
+                <h3 class="ai-model-kind">PHỤ</h3>
+                <span class="field-hint">Không bắt buộc</span>
+              </div>
+              <div class="smtp-grid ai-model-grid">
+                <label class="ai-model-field">
+                  <span>Hãng AI</span>
+                  <select id="ai-oc-fallback-provider" class="auth-input"></select>
+                </label>
+                <label class="ai-model-field">
+                  <span>Model</span>
+                  <select id="ai-oc-fallback-model" class="auth-input"></select>
+                </label>
+              </div>
+            </div>
+            <div class="ai-model-save-row">
+              <p class="field-hint">
+                Dùng khi API chính bị lỗi. Không bắt buộc.
+              </p>
               <button type="button" id="btn-ai-model-save" class="primary-button ai-model-save">Lưu</button>
             </div>
             <p class="field-hint" style="color: var(--muted); font-size: 12px; margin: 6px 0 0;">
-              Danh sách lấy trực tiếp từ OpenCode. Đổi Hãng AI hoặc Model chỉ thay lựa chọn đang chờ; bấm <strong>Lưu</strong> mới áp dụng.
+              Chọn hãng và model muốn bot sử dụng, sau đó bấm <strong>Lưu</strong>. Model Phụ có thể để trống.
             </p>
           </div>
 
@@ -352,20 +376,20 @@ export const CONFIG_TABS = [
           </details>
 
           <div class="form-group">
-            <label>Soul (nhân cách + bối cảnh nạp vào session):</label>
+            <label class="portal-shared-label">Soul</label>
             <textarea id="ai-soul" rows="6" placeholder="Bạn là trợ lý của shop X. Bối cảnh, nguyên tắc, giới hạn..."></textarea>
             <p class="field-hint" style="color: var(--muted); font-size: 12px; margin: 4px 0 0;">
-              Soul chỉ được nạp một lần lúc tạo session. Sửa Soul thì các session cũ sẽ bị xoá để nạp lại.
+              Soul mô tả nhân cách, bối cảnh và nguyên tắc trả lời của trợ lý.
             </p>
           </div>
 
           <div class="form-group">
-            <label>Các chủ đề cho phép trả lời:</label>
+            <label class="portal-shared-label">Các chủ đề cho phép</label>
             <textarea id="ai-topics" rows="5" placeholder="giá sản phẩm\ngiao hàng\nđổi trả" required></textarea>
           </div>
 
           <div class="form-group">
-            <label>Vai trò và giọng điệu:</label>
+            <label class="portal-shared-label">Vai trò và giọng điệu</label>
             <textarea id="ai-role" rows="4" placeholder="Bạn là CSKH shop thời trang, thân thiện..." required></textarea>
           </div>
 
@@ -413,7 +437,7 @@ export const CONFIG_TABS = [
             <span id="ai-status" style="color: var(--muted); font-size: 14px; flex: 1; min-width: 0;"></span>
             <button type="button" id="btn-oc-test" class="secondary-button">Kiểm tra OpenCode</button>
             <button type="button" id="btn-oc-reset" class="secondary-button">Nạp lại Soul</button>
-            <button type="submit" id="btn-ai-assistant-save" class="primary-button">Ghi nhớ cấu hình trợ lý</button>
+            <button type="submit" id="btn-ai-assistant-save" class="primary-button">Lưu cấu hình trợ lý</button>
           </div>
         </form>
       `;
@@ -423,6 +447,8 @@ export const CONFIG_TABS = [
       const ocAgent = panel.querySelector("#ai-oc-agent");
       const ocProvider = panel.querySelector("#ai-oc-provider");
       const ocModel = panel.querySelector("#ai-oc-model");
+      const ocFallbackProvider = panel.querySelector("#ai-oc-fallback-provider");
+      const ocFallbackModel = panel.querySelector("#ai-oc-fallback-model");
       const soulInput = panel.querySelector("#ai-soul");
       const topicsInput = panel.querySelector("#ai-topics");
       const roleInput = panel.querySelector("#ai-role");
@@ -498,6 +524,7 @@ export const CONFIG_TABS = [
       let napDuocDanhSach = false;
       let modelMacDinhHeThong = "";
       let modelDaLuuTheoOwner = "";
+      let fallbackModelDaLuuTheoOwner = "";
       const ghiChuThieu = () =>
         napDuocDanhSach ? "không còn key" : "chưa kiểm tra được — OpenCode không phản hồi";
 
@@ -517,45 +544,53 @@ export const CONFIG_TABS = [
         return modelMacDinhHeThong;
       }
 
-      function veOModel(hangId, modelDangChon) {
-        ocModel.innerHTML = "";
+      function fallbackModelHieuLucTheoOwner() {
+        if (fallbackModelDaLuuTheoOwner
+          && (!napDuocDanhSach || modelCoTrongDanhSach(fallbackModelDaLuuTheoOwner))) {
+          return fallbackModelDaLuuTheoOwner;
+        }
+        return fallbackModelDaLuuTheoOwner;
+      }
+
+      function veOModel(hangId, modelDangChon, modelSelect = ocModel, { optional = false } = {}) {
+        modelSelect.innerHTML = "";
 
         if (!hangId) {
-          ocModel.append(new Option("— Theo mặc định —", ""));
-          ocModel.disabled = true;
+          modelSelect.append(new Option(optional ? "— Không dùng model phụ —" : "— Theo mặc định —", ""));
+          modelSelect.disabled = true;
           return;
         }
-        ocModel.disabled = false;
+        modelSelect.disabled = false;
 
         const models = danhSachHang.find((h) => h.id === hangId)?.models || [];
         for (const model of models) {
           const nhan =
             `${model.label}${model.beta ? " (beta)" : ""} · ${Math.round(model.context / 1000)}k ngữ cảnh`;
-          ocModel.append(new Option(nhan, model.id));
+          modelSelect.append(new Option(nhan, model.id));
         }
 
         // Model da luu nhung khong con trong danh sach: van giu lai, khong tu nhay
         // sang model khac sau lung nguoi dung.
         const conDung = models.some((m) => m.id === modelDangChon);
         if (modelDangChon && !conDung) {
-          ocModel.append(new Option(`${modelDangChon} (${ghiChuThieu()})`, modelDangChon));
-          ocModel.value = modelDangChon;
+          modelSelect.append(new Option(`${modelDangChon} (${ghiChuThieu()})`, modelDangChon));
+          modelSelect.value = modelDangChon;
         } else {
-          ocModel.value = conDung ? modelDangChon : models[0]?.id || "";
+          modelSelect.value = conDung ? modelDangChon : models[0]?.id || "";
         }
       }
 
-      function veOHang(modelDangChon) {
-        ocProvider.innerHTML = "";
-        ocProvider.append(new Option("— Mặc định của OpenCode —", ""));
-        for (const hang of danhSachHang) ocProvider.append(new Option(hang.name, hang.id));
+      function veOHang(modelDangChon, providerSelect = ocProvider, modelSelect = ocModel, { optional = false } = {}) {
+        providerSelect.innerHTML = "";
+        providerSelect.append(new Option(optional ? "— Không dùng model phụ —" : "— Mặc định của OpenCode —", ""));
+        for (const hang of danhSachHang) providerSelect.append(new Option(hang.name, hang.id));
 
         const hangCuaModel = modelDangChon ? modelDangChon.split("/")[0] : "";
         if (hangCuaModel && !danhSachHang.some((h) => h.id === hangCuaModel)) {
-          ocProvider.append(new Option(`${hangCuaModel} (${ghiChuThieu()})`, hangCuaModel));
+          providerSelect.append(new Option(`${hangCuaModel} (${ghiChuThieu()})`, hangCuaModel));
         }
-        ocProvider.value = hangCuaModel;
-        veOModel(hangCuaModel, modelDangChon);
+        providerSelect.value = hangCuaModel;
+        veOModel(hangCuaModel, modelDangChon, modelSelect, { optional });
       }
 
       function chonModelKhongDungLaiDanhSach(modelDangChon) {
@@ -564,7 +599,13 @@ export const CONFIG_TABS = [
         veOModel(hangCuaModel, modelDangChon);
       }
 
-      async function napAgentVaModel(modelTamThoi = null) {
+      function chonFallbackKhongDungLaiDanhSach(modelDangChon) {
+        const hangCuaModel = modelDangChon ? modelDangChon.split("/")[0] : "";
+        ocFallbackProvider.value = hangCuaModel;
+        veOModel(hangCuaModel, modelDangChon, ocFallbackModel, { optional: true });
+      }
+
+      async function napAgentVaModel(modelTamThoi = null, fallbackTamThoi = null) {
         const generationLucBatDau = settingsOwnerGeneration;
         let names = ["general", "build", "plan"];
         try {
@@ -594,10 +635,22 @@ export const CONFIG_TABS = [
           ? modelTamThoi
           : null;
         veOHang(modelPendingConHieuLuc || modelHieuLucTheoOwner());
+        const fallbackPendingConHieuLuc = generationLucBatDau === settingsOwnerGeneration
+          ? fallbackTamThoi
+          : null;
+        veOHang(
+          fallbackPendingConHieuLuc === null ? fallbackModelHieuLucTheoOwner() : fallbackPendingConHieuLuc,
+          ocFallbackProvider,
+          ocFallbackModel,
+          { optional: true }
+        );
       }
 
       // Doi hang thi model ben duoi nap lai theo hang do.
       ocProvider.addEventListener("change", () => veOModel(ocProvider.value, ""));
+      ocFallbackProvider.addEventListener("change", () => {
+        veOModel(ocFallbackProvider.value, "", ocFallbackModel, { optional: true });
+      });
 
       // --- Khoa API cua cac hang ---
 
@@ -667,7 +720,10 @@ export const CONFIG_TABS = [
           if (!res.ok) throw new Error(data.error || "Lưu thất bại");
           keyValue.value = "";
           await napDanhSachHangChoKey();
-          await napAgentVaModel(ocProvider.value ? ocModel.value : "");
+          await napAgentVaModel(
+            ocProvider.value ? ocModel.value : "",
+            ocFallbackProvider.value ? ocFallbackModel.value : ""
+          );
           baoKey("Đã lưu key. Bấm Thử key để chắc chắn key còn dùng được.", "var(--ok)");
           window.dispatchEvent(new CustomEvent("zalo:canonical-save", {
             detail: { section: "api-key", providerId: keyProvider.value },
@@ -702,7 +758,10 @@ export const CONFIG_TABS = [
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "Gỡ thất bại");
           await napDanhSachHangChoKey();
-          await napAgentVaModel(ocProvider.value ? ocModel.value : "");
+          await napAgentVaModel(
+            ocProvider.value ? ocModel.value : "",
+            ocFallbackProvider.value ? ocFallbackModel.value : ""
+          );
           baoKey("Đã gỡ toàn bộ key.", "var(--ok)");
         } catch (e) {
           baoKey(e.message, "var(--danger)");
@@ -722,7 +781,10 @@ export const CONFIG_TABS = [
           const soModel = (data.providers || []).reduce((n, h) => n + h.models.length, 0);
           statusText.textContent =
             `OK · ${data.agents.length} agent · ${(data.providers || []).length} hãng · ${soModel} model chat được`;
-          await napAgentVaModel(ocProvider.value ? ocModel.value : "");
+          await napAgentVaModel(
+            ocProvider.value ? ocModel.value : "",
+            ocFallbackProvider.value ? ocFallbackModel.value : ""
+          );
         } catch (err) {
           statusText.textContent = "Lỗi: " + err.message;
         }
@@ -743,6 +805,18 @@ export const CONFIG_TABS = [
           return;
         }
 
+        // Handler nay con duoc suite P9.17 tach rieng de chay voi fixture cua
+        // giao dien cu (chua co control fallback). typeof giu callback tuong
+        // thich trong fixture do, con production van doc du control Part 1.
+        const fallbackProviderValue = typeof ocFallbackProvider === "undefined"
+          ? ""
+          : ocFallbackProvider.value;
+        const fallbackModelValue = typeof ocFallbackModel === "undefined"
+          ? ""
+          : ocFallbackModel.value;
+        const hadSavedFallback = typeof fallbackModelDaLuuTheoOwner !== "undefined"
+          && Boolean(fallbackModelDaLuuTheoOwner);
+
         try {
           statusText.textContent = "Đang lưu Hãng AI và Model...";
           const res = await fetch("/api/ai-chat", {
@@ -753,17 +827,28 @@ export const CONFIG_TABS = [
               opencodeBaseUrl: ocUrl.value.trim(),
               opencodeAgent: ocAgent.value,
               opencodeModel: ocModel.value,
+              ...(hadSavedFallback || fallbackProviderValue
+                ? { opencodeFallbackModel: fallbackProviderValue ? fallbackModelValue : "" }
+                : {}),
             }),
           });
           const data = await res.json();
           if (actionGeneration !== settingsOwnerGeneration) return;
           if (!res.ok) throw new Error(data.error || "Lỗi lưu Hãng AI và Model");
+          if (typeof modelDaLuuTheoOwner !== "undefined") {
+            modelDaLuuTheoOwner = data.config?.opencodeModel || ocModel.value;
+          }
+          if (typeof fallbackModelDaLuuTheoOwner !== "undefined") {
+            fallbackModelDaLuuTheoOwner = data.config?.opencodeFallbackModel || "";
+          }
           statusText.textContent = "Đã lưu Hãng AI và Model.";
           window.dispatchEvent(new CustomEvent("zalo:canonical-save", {
             detail: {
               section: "ai-model",
               providerId: ocProvider.value,
               modelId: data.config?.opencodeModel || ocModel.value,
+              fallbackProviderId: fallbackProviderValue,
+              fallbackModelId: data.config?.opencodeFallbackModel || "",
             },
           }));
         } catch (error) {
@@ -863,7 +948,9 @@ export const CONFIG_TABS = [
             }
             ocAgent.value = agentDaLuu;
             modelDaLuuTheoOwner = data.config.opencodeModel || "";
+            fallbackModelDaLuuTheoOwner = data.config.opencodeFallbackModel || "";
             chonModelKhongDungLaiDanhSach(modelHieuLucTheoOwner());
+            chonFallbackKhongDungLaiDanhSach(fallbackModelHieuLucTheoOwner());
             topicsInput.value = data.config.allowedTopics || "";
             roleInput.value = data.config.roleTone || "";
             
@@ -911,7 +998,6 @@ export const CONFIG_TABS = [
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              opencodeModel: ocProvider.value ? ocModel.value : "",
               soul: soulInput.value.trim(),
               allowedTopics: topicsInput.value.trim(),
               roleTone: roleInput.value.trim(),
@@ -927,8 +1013,6 @@ export const CONFIG_TABS = [
             window.dispatchEvent(new CustomEvent("zalo:canonical-save", {
               detail: {
                 section: "ai-config",
-                providerId: ocProvider.value,
-                modelId: ocProvider.value ? ocModel.value : "",
               },
             }));
           } else {
@@ -992,10 +1076,13 @@ export const CONFIG_TABS = [
         sendersSelect.disabled = true;
         currentMembers = [];
         modelDaLuuTheoOwner = "";
+        fallbackModelDaLuuTheoOwner = "";
         // Model la lua chon owner; cac option provider/model va API key la global.
         // Chi bo selection, tuyet doi khong xoa/dung lai option node khi doi UID.
         ocProvider.value = "";
         ocModel.value = "";
+        ocFallbackProvider.value = "";
+        ocFallbackModel.value = "";
         statusText.textContent = "Đang tải hồ sơ Zalo hiện tại…";
       };
 
