@@ -431,6 +431,7 @@ input {
 }
 
 .chat-panel {
+  position: relative;
   height: 100%;
   display: grid;
   grid-template-rows: 60px minmax(0, 1fr) auto;
@@ -1107,7 +1108,7 @@ input {
     margin: 0;
   }
 
-  #message-input {
+  .chat-panel #message-input {
     grid-column: 3;
     grid-row: 3;
     height: 40px;
@@ -3908,6 +3909,9 @@ textarea {
 /* --- Thao tac cua tung tin --- */
 
 .msg-action-trigger {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 4px);
   width: 24px;
   height: 24px;
   padding: 0;
@@ -3929,6 +3933,10 @@ textarea {
 .msg-action-trigger:hover { background: var(--surface-2); color: var(--text); }
 
 .bubble-wrap { position: relative; }
+.bubble-row.self .msg-action-trigger {
+  right: calc(100% + 4px);
+  left: auto;
+}
 
 .msg-reactions {
   display: flex;
@@ -4122,10 +4130,27 @@ textarea {
 
   /* Tren dien thoai khong co tro chuot de "hover" ra, nen nut phai hien san. */
   .msg-action-trigger {
+    top: 2px;
     width: 28px;
     height: 28px;
     opacity: 1;
     font-size: 17px;
+  }
+
+  .bubble-row.other .msg-action-trigger {
+    right: -18px;
+    left: auto;
+  }
+
+  .bubble-row.self .msg-action-trigger {
+    right: auto;
+    left: -18px;
+  }
+
+  .msg-action-trigger::before {
+    content: "";
+    position: absolute;
+    inset: -8px;
   }
 
   .msg-action-backdrop { background: rgba(15, 28, 46, 0.34); }

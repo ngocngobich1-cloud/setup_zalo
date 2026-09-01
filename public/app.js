@@ -1254,6 +1254,8 @@ function dongLopThaoTacTin() {
   els.msgActionBackdrop?.classList.add("hidden");
   els.msgActionSheet?.style.removeProperty("top");
   els.msgActionSheet?.style.removeProperty("left");
+  els.msgActionSheet?.style.removeProperty("max-height");
+  els.msgActionSheet?.style.removeProperty("overflow-y");
 }
 
 function themMucThaoTac(nhan, kieu, khiBam) {
@@ -1306,18 +1308,55 @@ function moLopThaoTacTin(message, neo) {
  * Tren may tinh no phai bam vao dung bong bong vua bam.
  */
 function datViTriLopThaoTac(neo) {
-  if (isMobileInbox() || !neo?.getBoundingClientRect) return;
-  const o = neo.getBoundingClientRect();
-  const khung = els.chatPanel.getBoundingClientRect();
-  els.msgActionSheet.style.top = `${Math.max(o.bottom - khung.top + 6, 8)}px`;
-  els.msgActionSheet.style.left = `${Math.max(o.left - khung.left - 120, 8)}px`;
+  const sheet = els.msgActionSheet;
+  sheet?.style.removeProperty("top");
+  sheet?.style.removeProperty("left");
+  sheet?.style.removeProperty("max-height");
+  sheet?.style.removeProperty("overflow-y");
+  if (isMobileInbox() || !neo?.getBoundingClientRect || !sheet?.getBoundingClientRect) return;
+
+  const neoRect = neo.getBoundingClientRect();
+  const panelRect = els.chatPanel.getBoundingClientRect();
+  let sheetRect = sheet.getBoundingClientRect();
+  const le = 8;
+  const khoangCach = 6;
+
+  // style.top/left thuoc he toa do cua .chat-panel. Gioi han nhin thay duoc la
+  // giao cua panel voi viewport, cung duoc doi ve he toa do panel truoc khi so.
+  const trenThayDuoc = Math.max(panelRect.top, 0) - panelRect.top;
+  const duoiThayDuoc = Math.min(panelRect.bottom, window.innerHeight) - panelRect.top;
+  const traiThayDuoc = Math.max(panelRect.left, 0) - panelRect.left;
+  const phaiThayDuoc = Math.min(panelRect.right, window.innerWidth) - panelRect.left;
+  const chieuCaoKhaDung = Math.max(0, duoiThayDuoc - trenThayDuoc - le * 2);
+
+  if (sheetRect.height > chieuCaoKhaDung) {
+    sheet.style.maxHeight = `${chieuCaoKhaDung}px`;
+    sheet.style.overflowY = "auto";
+    sheetRect = sheet.getBoundingClientRect();
+  }
+
+  const cao = Math.min(sheetRect.height, chieuCaoKhaDung);
+  const rong = sheetRect.width;
+  const viTriDuoi = neoRect.bottom - panelRect.top + khoangCach;
+  const viTriTren = neoRect.top - panelRect.top - khoangCach - cao;
+  const duChoPhiaDuoi = viTriDuoi + cao <= duoiThayDuoc - le;
+  const topMongMuon = duChoPhiaDuoi ? viTriDuoi : viTriTren;
+  const topToiDa = Math.max(trenThayDuoc + le, duoiThayDuoc - le - cao);
+  const top = Math.min(Math.max(topMongMuon, trenThayDuoc + le), topToiDa);
+
+  const leftMongMuon = neoRect.right - panelRect.left - rong;
+  const leftToiDa = Math.max(traiThayDuoc + le, phaiThayDuoc - le - rong);
+  const left = Math.min(Math.max(leftMongMuon, traiThayDuoc + le), leftToiDa);
+
+  sheet.style.top = `${top}px`;
+  sheet.style.left = `${left}px`;
 }
 
 /** Chi tin CHU moi chuyen tiep duoc trong V1; may chu con chan lai mot lan nua. */
 function coTheChuyenTiep(message) {
   if (daThuHoi(message)) return false;
   if (message.stickerUrl || message.isSticker) return false;
-  if (!["text", "chat.text", null, undefined, ""].includes(message.msgType ?? "")) return false;
+  if (!["text", "chat.text", "webchat"].includes(message.msgType)) return false;
   return Boolean(String(message.content || "").trim());
 }
 

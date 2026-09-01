@@ -35,6 +35,7 @@ const STICKER_SRC = fs.readFileSync(path.join(REPO, "lib", "sticker-zalo.js"), "
 
 /** Cong danh sach trang THAT cua app - harness khong duoc thay the. */
 const CAM_XUC_THAT = await import(pathToFileURL(path.join(REPO, "lib", "cam-xuc.js")).href);
+const MESSAGE_UTILS_THAT = await import(pathToFileURL(path.join(REPO, "lib", "message-utils.js")).href);
 
 /**
  * Doc mot tep tai DUNG commit goc cua goi tin nay, khong qua git CLI: doc thang
@@ -94,6 +95,7 @@ function tenImportCuaZaloService() {
  */
 function taoProviderGia(quaTai = {}) {
   const goi = [];
+  const listenerHandlers = new Map();
   const ghi = (ten, mac) => (...args) => {
     goi.push({ ten, args });
     if (quaTai[ten]) return quaTai[ten](...args);
@@ -101,6 +103,7 @@ function taoProviderGia(quaTai = {}) {
   };
   return {
     goi,
+    listenerHandlers,
     lanGoi: (ten) => goi.filter((g) => g.ten === ten),
     addReaction: ghi("addReaction", { msgIds: [1] }),
     sendSticker: ghi("sendSticker", { msgId: 991 }),
@@ -112,7 +115,10 @@ function taoProviderGia(quaTai = {}) {
     parseLink: ghi("parseLink", { data: {}, error_maps: {} }),
     sendMessage: ghi("sendMessage", { message: { msgId: 1 } }),
     sendLink: ghi("sendLink", { msgId: "1" }),
-    listener: { on() {}, start() {} },
+    listener: {
+      on(event, handler) { listenerHandlers.set(event, handler); },
+      start() {},
+    },
   };
 }
 
@@ -170,7 +176,8 @@ export {
   ghiNhanThuHoiTuProvider as __ghiNhanThuHoiTuProvider,
   capNhatCamXucCucBo as __capNhatCamXucCucBo,
   guiDaXemChoTins as __guiDaXemChoTins,
-  taoOriginRuntime as __taoOriginRuntime
+  taoOriginRuntime as __taoOriginRuntime,
+  setupListener as __setupListenerForTest
 };
 export function __setRuntime(testApi, uid) {
   api = testApi;
@@ -1013,6 +1020,23 @@ function tinCotTextNhungRawLaMedia({ id, kieuProvider, caption }) {
   return message;
 }
 
+/** Noi CSDL tep tam vao service harness de thu tron vong send/echo/action. */
+function depsCsdlMessaging(db) {
+  return {
+    normalizeIncomingMessage: MESSAGE_UTILS_THAT.normalizeIncomingMessage,
+    insertMessage: db.insertMessage,
+    upsertThread: db.upsertThread,
+    listThreads: db.listThreads,
+    getThreadMessages: db.getThreadMessages,
+    getThread: db.getThread,
+    resolveOwnedActionMessage: db.resolveOwnedActionMessage,
+    rutDanhTinhProvider: db.rutDanhTinhProvider,
+    markMessageRecalled: db.markMessageRecalled,
+    recomputeThreadPreview: db.recomputeThreadPreview,
+    deleteLocalMessage: db.deleteLocalMessage,
+  };
+}
+
 await bai("M6.7", "F2-A text that van forward duoc: incoming direct/group va self-sent", async () => {
   for (const [nhan, threadType, isSelf] of [
     ["incoming-direct", 0, false],
@@ -1506,8 +1530,8 @@ await bai("M11.6", "bang ma loi -> ma HTTP day du va on dinh", () => {
 group("M12");
 
 const TIN_MAU = [
-  { id: "A1", threadId: "peer-1", content: "khach chao", isSelf: false, ts: 1700000000000 },
-  { id: "B1", threadId: "peer-1", content: "minh dap", isSelf: true, ts: 1700000001000 },
+  { id: "A1", threadId: "peer-1", content: "khach chao", isSelf: false, msgType: "text", ts: 1700000000000 },
+  { id: "B1", threadId: "peer-1", content: "minh dap", isSelf: true, msgType: "text", ts: 1700000001000 },
 ];
 
 await bai("M12.1", "moi bong bong co nut thao tac rieng, khong dung nut ba cham cua hoi thoai", async () => {
@@ -1967,6 +1991,432 @@ await bai("M16.6", "khong xay tinh nang xem truoc link / quan ly chua doc / ghim
   }
 });
 
+/* =====================================================================
+ * T1..T9 — UAT BLOCKER FIX 01
+ * ===================================================================== */
+
+const SO_BAI_CU = results.length;
+
+function echoWebchat({ id, threadId, threadType, content = "tin tu gui" }) {
+  return {
+    threadId: String(threadId),
+    type: Number(threadType),
+    isSelf: true,
+    data: {
+      msgId: String(id),
+      cliMsgId: `cli-${id}`,
+      uidFrom: "owner-A",
+      idTo: String(threadId),
+      msgType: "webchat",
+      content,
+      st: 1,
+      at: 2,
+      cmd: 501,
+      ts: "1700000010000",
+    },
+  };
+}
+
+async function taoVongDoiSelf({ threadType = 0, thuTu = "local-first", khongCoMsgId = false } = {}) {
+  const { db } = await moCsdlTam();
+  const threadId = threadType === 1 ? "group-self" : "direct-self";
+  const targetId = `${threadId}-target`;
+  const messageId = `${threadType}-${thuTu}-${khongCoMsgId ? "echo-only" : "with-id"}`;
+  const content = `noi dung ${messageId}`;
+  await db.upsertThread("owner-A", { id: threadId, threadType, title: "Nguon" });
+  await db.upsertThread("owner-A", { id: targetId, threadType: threadType === 1 ? 0 : 1, title: "Dich" });
+
+  const echo = echoWebchat({ id: messageId, threadId, threadType, content });
+  let provider;
+  let groupHistoryCalls = 0;
+  provider = taoProviderGia({
+    sendMessage: async () => {
+      if (thuTu === "echo-first") {
+        await provider.listenerHandlers.get("message")(echo);
+      }
+      return khongCoMsgId ? { message: null } : { message: { msgId: messageId } };
+    },
+  });
+  provider.getGroupChatHistory = async () => {
+    groupHistoryCalls += 1;
+    throw new Error("group history seam must stay unused");
+  };
+
+  const { service, suKienSocket } = await taoDichVu({
+    provider,
+    deps: depsCsdlMessaging(db),
+  });
+  service.__setupListenerForTest();
+
+  const sendResult = await service.sendChatMessage({ threadId, threadType, text: content });
+  const rowsAfterSend = await db.getThreadMessages("owner-A", threadId, 50);
+  if (thuTu === "local-first" || khongCoMsgId) {
+    await provider.listenerHandlers.get("message")(echo);
+  }
+  const rows = await db.getThreadMessages("owner-A", threadId, 50);
+  const resolution = await db.resolveOwnedActionMessage("owner-A", threadId, messageId);
+  return {
+    db,
+    service,
+    provider,
+    suKienSocket,
+    threadId,
+    targetId,
+    messageId,
+    content,
+    sendResult,
+    rowsAfterSend,
+    rows,
+    resolution,
+    groupHistoryCalls: () => groupHistoryCalls,
+  };
+}
+
+function ketThucKhoiNgoac(source, viTriMo) {
+  let doSau = 0;
+  for (let i = viTriMo; i < source.length; i += 1) {
+    if (source[i] === "{") doSau += 1;
+    else if (source[i] === "}") {
+      doSau -= 1;
+      if (doSau === 0) return i + 1;
+    }
+  }
+  throw new Error("Khoi CSS khong dong ngoac");
+}
+
+function cacKhoiMobile760() {
+  const blocks = [];
+  const re = /@media\s*\(max-width:\s*760px\)\s*\{/g;
+  for (const match of CSS_SRC.matchAll(re)) {
+    const open = CSS_SRC.indexOf("{", match.index);
+    const end = ketThucKhoiNgoac(CSS_SRC, open);
+    blocks.push({ start: match.index, end, body: CSS_SRC.slice(open + 1, end - 1) });
+  }
+  return blocks;
+}
+
+function quyTacMessageInput() {
+  return [...CSS_SRC.matchAll(/\.chat-panel #message-input\s*\{([^}]*)\}/g)]
+    .map((match) => ({ index: match.index, body: match[1] }));
+}
+
+group("T1");
+
+await bai("T1a", "webchat chu incoming direct hien Forward va goi wrapper mot lan", async () => {
+  const nguon = threadGia("webchat-direct", 0);
+  const dich = threadGia("webchat-direct-target", 1);
+  const message = tinGia({ id: "W-D", msgType: "webchat", content: "webchat direct" });
+  const { service, provider } = await taoDichVu({
+    deps: {
+      ...depsHanhDong({ thread: nguon, message }),
+      getThread: async (_owner, id) => (String(id) === nguon.id ? nguon : String(id) === dich.id ? dich : null),
+    },
+  });
+  await service.appForwardMessage({ threadId: nguon.id, messageId: message.id, targetThreadId: dich.id });
+  assert.equal(provider.lanGoi("forwardMessage").length, 1);
+
+  const ui = await taoGiaoDien();
+  await ui.chonCuocTroChuyen(nguon, [{ ...message, threadId: nguon.id }]);
+  ui.document.querySelector(".msg-action-trigger").click();
+  assert.ok([...ui.document.querySelectorAll(".msg-action-item")].some((node) => node.textContent === "Chuyển tiếp"));
+});
+
+await bai("T1b", "webchat chu incoming group hien Forward va goi wrapper mot lan", async () => {
+  const nguon = threadGia("webchat-group", 1);
+  const dich = threadGia("webchat-group-target", 0);
+  const message = tinGia({ id: "W-G", msgType: "webchat", content: "webchat group" });
+  const { service, provider } = await taoDichVu({
+    deps: {
+      ...depsHanhDong({ thread: nguon, message }),
+      getThread: async (_owner, id) => (String(id) === nguon.id ? nguon : String(id) === dich.id ? dich : null),
+    },
+  });
+  await service.appForwardMessage({ threadId: nguon.id, messageId: message.id, targetThreadId: dich.id });
+  assert.equal(provider.lanGoi("forwardMessage").length, 1);
+
+  const ui = await taoGiaoDien();
+  await ui.chonCuocTroChuyen(nguon, [{ ...message, threadId: nguon.id }]);
+  ui.document.querySelector(".msg-action-trigger").click();
+  assert.ok([...ui.document.querySelectorAll(".msg-action-item")].some((node) => node.textContent === "Chuyển tiếp"));
+});
+
+await bai("T1c", "webchat co provider content object bi chan fail-closed", async () => {
+  const nguon = threadGia("webchat-object", 0);
+  const dich = threadGia("webchat-object-target", 0);
+  const message = tinGia({ id: "W-O", msgType: "webchat", content: "caption" });
+  message.rawJson.data.content = { href: "https://fixture.invalid/media.jpg", description: "caption" };
+  const { service, provider } = await taoDichVu({
+    deps: {
+      ...depsHanhDong({ thread: nguon, message }),
+      getThread: async (_owner, id) => (String(id) === nguon.id ? nguon : dich),
+    },
+  });
+  const error = await batLoi(() => service.appForwardMessage({ threadId: nguon.id, messageId: message.id, targetThreadId: dich.id }));
+  assert.equal(error?.code, "ACTION_NOT_APPLICABLE");
+  assert.equal(provider.lanGoi("forwardMessage").length, 0);
+});
+
+await bai("T1d", "stored text nhung raw chat.photo bi chan fail-closed", async () => {
+  const nguon = threadGia("raw-photo", 0);
+  const dich = threadGia("raw-photo-target", 1);
+  const message = tinCotTextNhungRawLaMedia({ id: "W-P", kieuProvider: "chat.photo", caption: "caption" });
+  const { service, provider } = await taoDichVu({
+    deps: {
+      ...depsHanhDong({ thread: nguon, message }),
+      getThread: async (_owner, id) => (String(id) === nguon.id ? nguon : dich),
+    },
+  });
+  const error = await batLoi(() => service.appForwardMessage({ threadId: nguon.id, messageId: message.id, targetThreadId: dich.id }));
+  assert.equal(error?.code, "ACTION_NOT_APPLICABLE");
+  assert.equal(provider.lanGoi("forwardMessage").length, 0);
+});
+
+await bai("T1e", "frontend va backend dong y dung ba kieu text, unknown bi chan", async () => {
+  const backend = ZALO_SRC.match(/const KIEU_TIN_CHUYEN_TIEP_DUOC = new Set\(\[([^\]]+)\]\)/);
+  const frontend = APP_SRC.match(/if \(!\[([^\]]+)\]\.includes\(message\.msgType\)\) return false/);
+  assert.ok(backend && frontend);
+  const tach = (source) => [...source.matchAll(/["']([^"']+)["']/g)].map((m) => m[1]);
+  assert.deepEqual(tach(backend[1]), ["text", "chat.text", "webchat"]);
+  assert.deepEqual(tach(frontend[1]), ["text", "chat.text", "webchat"]);
+
+  const ui = await taoGiaoDien();
+  const messages = ["text", "chat.text", "webchat", "unknown"].map((msgType, index) => ({
+    id: `F-${index}`, threadId: "predicate", msgType, content: "co chu", isSelf: false, ts: 1700000000000 + index,
+  }));
+  await ui.chonCuocTroChuyen(threadGia("predicate", 0), messages);
+  const triggers = ui.document.querySelectorAll(".msg-action-trigger");
+  for (let i = 0; i < triggers.length; i += 1) {
+    triggers[i].click();
+    const coForward = [...ui.document.querySelectorAll(".msg-action-item")].some((node) => node.textContent === "Chuyển tiếp");
+    assert.equal(coForward, i < 3, `${messages[i].msgType} co forward sai`);
+  }
+});
+
+group("T2");
+
+await bai("T2", "local-first direct duoc enrich webchat, mot dong va mot bong bong", async () => {
+  const ctx = await taoVongDoiSelf({ threadType: 0, thuTu: "local-first" });
+  assert.equal(ctx.rows.length, 1);
+  assert.equal(ctx.rows[0].msgType, "text");
+  assert.equal(ctx.rows[0].rawJson?.data?.msgType, "webchat");
+  assert.equal(ctx.resolution.ok, true);
+  assert.equal(ctx.resolution.identity.cliMsgId, `cli-${ctx.messageId}`);
+  assert.equal(ctx.suKienSocket.filter((event) => event.event === "new-message").length, 1);
+  await ctx.service.appForwardMessage({ threadId: ctx.threadId, messageId: ctx.messageId, targetThreadId: ctx.targetId });
+  assert.equal(ctx.provider.lanGoi("forwardMessage").length, 1);
+});
+
+group("T2B");
+
+await bai("T2B", "echo-first direct giu msg_type webchat, khong trung dong hay socket", async () => {
+  const ctx = await taoVongDoiSelf({ threadType: 0, thuTu: "echo-first" });
+  assert.equal(ctx.rows.length, 1);
+  assert.equal(ctx.rows[0].msgType, "webchat");
+  assert.equal(ctx.resolution.ok, true);
+  assert.equal(ctx.suKienSocket.filter((event) => event.event === "new-message").length, 1);
+  await ctx.service.appForwardMessage({ threadId: ctx.threadId, messageId: ctx.messageId, targetThreadId: ctx.targetId });
+  assert.equal(ctx.provider.lanGoi("forwardMessage").length, 1);
+});
+
+group("T2C");
+
+await bai("T2C", "send khong co msgId khong ghi placeholder; self echo tao tin duy nhat", async () => {
+  const ctx = await taoVongDoiSelf({ threadType: 0, thuTu: "local-first", khongCoMsgId: true });
+  assert.equal(ctx.sendResult, null);
+  assert.equal(ctx.rowsAfterSend.length, 0, "khong co msgId thi local path khong ghi dong");
+  assert.equal(ctx.rows.length, 1);
+  assert.equal(ctx.rows[0].id, ctx.messageId);
+  assert.equal(ctx.rows[0].msgType, "webchat");
+  assert.equal(ctx.resolution.ok, true);
+  assert.equal(ctx.suKienSocket.filter((event) => event.event === "new-message").length, 1);
+  await ctx.service.appForwardMessage({ threadId: ctx.threadId, messageId: ctx.messageId, targetThreadId: ctx.targetId });
+  assert.equal(ctx.provider.lanGoi("forwardMessage").length, 1);
+});
+
+group("T3");
+
+await bai("T3", "self group webchat enrich tu echo, khong can group history", async () => {
+  const ctx = await taoVongDoiSelf({ threadType: 1, thuTu: "local-first" });
+  assert.equal(ctx.rows.length, 1);
+  assert.equal(ctx.rows[0].msgType, "text");
+  assert.equal(ctx.rows[0].rawJson?.data?.msgType, "webchat");
+  assert.equal(ctx.resolution.ok, true);
+  assert.equal(ctx.groupHistoryCalls(), 0);
+  assert.equal(ctx.suKienSocket.filter((event) => event.event === "new-message").length, 1);
+  await ctx.service.appForwardMessage({ threadId: ctx.threadId, messageId: ctx.messageId, targetThreadId: ctx.targetId });
+  assert.equal(ctx.provider.lanGoi("forwardMessage").length, 1);
+});
+
+group("T4");
+
+for (const threadType of [0, 1]) {
+  await bai(`T4${threadType === 0 ? "a" : "b"}`, `undo self ${threadType === 0 ? "direct" : "group"} sau enrich goi mot lan`, async () => {
+    const ctx = await taoVongDoiSelf({ threadType, thuTu: "local-first" });
+    await ctx.service.appUndoMessage({ threadId: ctx.threadId, messageId: ctx.messageId });
+    assert.equal(ctx.provider.lanGoi("undo").length, 1);
+  });
+}
+
+await bai("T4c", "undo thieu identity van fail-closed, provider zero", async () => {
+  const thread = threadGia("undo-no-id", 0);
+  const message = tinGia({ id: "UNDO-NO-ID", isSelf: true, identity: false });
+  const { service, provider } = await taoDichVu({ deps: depsHanhDong({ thread, message }) });
+  const error = await batLoi(() => service.appUndoMessage({ threadId: thread.id, messageId: message.id }));
+  assert.equal(error?.code, "ACTION_IDENTITY_UNAVAILABLE");
+  assert.equal(provider.lanGoi("undo").length, 0);
+});
+
+group("T5");
+
+for (const threadType of [0, 1]) {
+  await bai(`T5${threadType === 0 ? "a" : "b"}`, `delete-for-me self ${threadType === 0 ? "direct" : "group"} sau enrich chi onlyMe=true`, async () => {
+    const ctx = await taoVongDoiSelf({ threadType, thuTu: "local-first" });
+    await ctx.service.appDeleteMessageForMe({ threadId: ctx.threadId, messageId: ctx.messageId });
+    const calls = ctx.provider.lanGoi("deleteMessage");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].args[1], true);
+    assert.equal((await ctx.db.getThreadMessages("owner-A", ctx.threadId, 50)).length, 0);
+  });
+}
+
+await bai("T5c", "delete-for-me thieu identity fail-closed va khong co onlyMe=false", async () => {
+  const thread = threadGia("delete-no-id", 0);
+  const message = tinGia({ id: "DELETE-NO-ID", isSelf: true, identity: false });
+  const { service, provider } = await taoDichVu({ deps: depsHanhDong({ thread, message }) });
+  const error = await batLoi(() => service.appDeleteMessageForMe({ threadId: thread.id, messageId: message.id }));
+  assert.equal(error?.code, "ACTION_IDENTITY_UNAVAILABLE");
+  assert.equal(provider.lanGoi("deleteMessage").length, 0);
+  assert.doesNotMatch(boGhiChu(ZALO_SRC), /deleteMessage\([^)]*,\s*false\s*\)/);
+});
+
+group("T6");
+
+await bai("T6a", "desktop flip/clamp dung he toa do chat-panel va gioi han menu cao", async () => {
+  const ui = await taoGiaoDien();
+  Object.defineProperty(ui.window, "innerHeight", { configurable: true, value: 800 });
+  Object.defineProperty(ui.window, "innerWidth", { configurable: true, value: 1280 });
+  await ui.chonCuocTroChuyen(threadGia("desktop-geometry", 0), [
+    { id: "G1", threadId: "desktop-geometry", msgType: "text", content: "x", isSelf: false, ts: 1 },
+  ]);
+  const panel = ui.document.querySelector("#chat-panel");
+  const trigger = ui.document.querySelector(".msg-action-trigger");
+  const sheet = ui.document.querySelector("#msg-action-sheet");
+  panel.getBoundingClientRect = () => ({ top: 100, bottom: 700, left: 100, right: 1100, width: 1000, height: 600 });
+  let anchorRect = { top: 650, bottom: 674, left: 1064, right: 1088, width: 24, height: 24 };
+  let naturalHeight = 300;
+  trigger.getBoundingClientRect = () => anchorRect;
+  sheet.getBoundingClientRect = () => {
+    const max = Number.parseFloat(sheet.style.maxHeight);
+    const height = Number.isFinite(max) ? Math.min(naturalHeight, max) : naturalHeight;
+    return { top: 0, bottom: height, left: 0, right: 240, width: 240, height };
+  };
+
+  trigger.click();
+  const flippedTop = Number.parseFloat(sheet.style.top);
+  assert.ok(flippedTop < anchorRect.top - 100, "anchor sat day phai lat menu len tren");
+  assert.ok(flippedTop >= 8 && flippedTop + 300 <= 592);
+  assert.ok(Number.parseFloat(sheet.style.left) >= 8);
+  assert.ok(Number.parseFloat(sheet.style.left) + 240 <= 992);
+
+  anchorRect = { top: 300, bottom: 324, left: 102, right: 110, width: 8, height: 24 };
+  trigger.click();
+  assert.equal(Number.parseFloat(sheet.style.left), 8, "tran ngang ben trai trong he panel");
+
+  naturalHeight = 900;
+  anchorRect = { top: 650, bottom: 674, left: 500, right: 524, width: 24, height: 24 };
+  trigger.click();
+  assert.equal(sheet.style.maxHeight, "584px");
+  assert.equal(sheet.style.overflowY, "auto");
+  const tallTop = Number.parseFloat(sheet.style.top);
+  assert.ok(tallTop >= 8 && tallTop + 584 <= 592);
+});
+
+await bai("T6b", "mobile khong nhan inline top/left cua desktop", async () => {
+  const ui = await taoGiaoDien({ mobile: true });
+  await ui.chonCuocTroChuyen(threadGia("mobile-no-inline", 0), [
+    { id: "GM", threadId: "mobile-no-inline", msgType: "text", content: "x", isSelf: false, ts: 1 },
+  ]);
+  ui.document.querySelector(".msg-action-trigger").click();
+  const sheet = ui.document.querySelector("#msg-action-sheet");
+  assert.equal(sheet.style.top, "");
+  assert.equal(sheet.style.left, "");
+});
+
+group("T7");
+
+await bai("T7", "trigger absolute, touch expansion chi o mobile va binding dung message", async () => {
+  const baseTrigger = CSS_SRC.match(/\.msg-action-trigger\s*\{([^}]*)\}/);
+  assert.match(baseTrigger?.[1] || "", /position:\s*absolute/);
+  const mobileBlocks = cacKhoiMobile760();
+  const pseudoIndex = CSS_SRC.indexOf(".msg-action-trigger::before");
+  assert.ok(pseudoIndex >= 0);
+  const touchBlock = mobileBlocks.find((block) => pseudoIndex > block.start && pseudoIndex < block.end);
+  assert.ok(touchBlock, "touch expansion phai nam trong media 760");
+  assert.match(touchBlock.body, /\.msg-action-trigger::before\s*\{[\s\S]*?inset:\s*-8px/);
+  assert.match(touchBlock.body, /\.msg-action-trigger\s*\{[\s\S]*?opacity:\s*1/);
+  assert.equal((CSS_SRC.match(/\.msg-action-trigger::before/g) || []).length, 1);
+
+  const ui = await taoGiaoDien({ mobile: true });
+  await ui.chonCuocTroChuyen(threadGia("binding", 0), TIN_MAU.map((message) => ({ ...message, threadId: "binding" })));
+  const triggers = ui.document.querySelectorAll(".msg-action-trigger");
+  assert.deepEqual([...triggers].map((node) => node.dataset.messageId), ["A1", "B1"]);
+  triggers[1].click();
+  [...ui.document.querySelectorAll(".msg-action-item")]
+    .find((node) => node.textContent === "Xóa ở phía tôi").click();
+  await flush(6);
+  const callsB = ui.goiMang.filter((call) => call.url === "/api/messaging/delete");
+  assert.deepEqual(callsB.map((call) => call.body.messageId), ["B1"], "trigger B phai thay binding A");
+
+  const uiA = await taoGiaoDien({ mobile: true });
+  await uiA.chonCuocTroChuyen(threadGia("binding-a", 0), TIN_MAU.map((message) => ({ ...message, threadId: "binding-a" })));
+  uiA.document.querySelectorAll(".msg-action-trigger")[0].click();
+  [...uiA.document.querySelectorAll(".msg-action-item")]
+    .find((node) => node.textContent === "Xóa ở phía tôi").click();
+  await flush(6);
+  const callsA = uiA.goiMang.filter((call) => call.url === "/api/messaging/delete");
+  assert.deepEqual(callsA.map((call) => call.body.messageId), ["A1"]);
+  assert.equal(ui.document.querySelector("#btn-chat-more").disabled, true);
+  assert.doesNotMatch(APP_SRC, /btn-chat-more|chat-more-button/);
+});
+
+group("T8");
+
+await bai("T8", "cascade composer mobile cung specificity, dung source order va khong bi de lai", () => {
+  const rules = quyTacMessageInput();
+  const gridRules = rules.filter((rule) => /grid-column\s*:/.test(rule.body));
+  assert.equal(gridRules.length, 2, "chi base va mobile duoc khai grid-column");
+  const [baseRule, mobileRule] = gridRules;
+  assert.match(baseRule.body, /grid-column:\s*1\s*\/\s*4/);
+  assert.match(mobileRule.body, /grid-column:\s*3(?:\s*;|\s*$)/);
+  assert.ok(mobileRule.index > baseRule.index);
+  const mobileBlocks = cacKhoiMobile760();
+  assert.equal(mobileBlocks.length, 4, "khong tao them media 760 ngoai bon block da co");
+  const containingBlock = mobileBlocks.find((block) => mobileRule.index > block.start && mobileRule.index < block.end);
+  assert.ok(containingBlock, "mobile selector phai nam trong media 760 co san");
+  const laterCompeting = rules.filter((rule) => rule.index > mobileRule.index && /grid-column\s*:/.test(rule.body));
+  assert.equal(laterCompeting.length, 0);
+  assert.match(containingBlock.body, /\.send-form\s*\{[\s\S]*?grid-template-columns:\s*44px 44px minmax\(0, 1fr\) 44px/);
+  assert.match(containingBlock.body, /#btn-chat-image\s*\{[\s\S]*?grid-column:\s*1/);
+  assert.match(containingBlock.body, /#btn-chat-attach\s*\{[\s\S]*?grid-column:\s*2/);
+  assert.match(containingBlock.body, /\.send-button\s*\{[\s\S]*?min-width:\s*64px/);
+  assert.match(CSS_SRC, /#btn-chat-sticker\s*\{[\s\S]*?grid-column:\s*3/);
+  assert.match(CSS_SRC.slice(mobileRule.index), /\.chat-panel #message-input\s*\{\s*padding-right:\s*44px/);
+  assert.match(containingBlock.body, /env\(safe-area-inset-bottom\)/);
+});
+
+group("T9");
+
+await bai("T9", "copy bot per-thread khong con khai dang tra loi va app.js van inert", () => {
+  const dom = new JSDOM(HTML_SRC).window.document;
+  const desktopLabels = [...dom.querySelectorAll(".thread-bot-desktop-label")];
+  const mobileLabels = [...dom.querySelectorAll(".thread-bot-mobile-label")];
+  assert.ok(desktopLabels.length > 0 && mobileLabels.length > 0);
+  for (const node of [...desktopLabels, ...mobileLabels]) {
+    assert.doesNotMatch(node.textContent, /đang trả lời/);
+  }
+  assert.doesNotMatch(APP_SRC, /thread-bot-status|btn-thread-bot-toggle|botPerThread/);
+});
+
 /* ===================================================================== */
 
 try {
@@ -1989,6 +2439,10 @@ for (const [ten, muc] of theoNhom) {
   console.log(`${ten} = ${muc.dat}/${muc.tong} PASS${muc.dat === muc.tong ? "" : "  <-- FAIL"}`);
 }
 console.log(`TOTAL = ${dat}/${results.length} PASS`);
+const baiCuDat = results.slice(0, SO_BAI_CU).filter((r) => r.ok).length;
+const baiMoiDat = results.slice(SO_BAI_CU).filter((r) => r.ok).length;
+console.log(`OLD_TESTS = ${baiCuDat}/${SO_BAI_CU} PASS`);
+console.log(`NEW_BLOCKER_TESTS = ${baiMoiDat}/${results.length - SO_BAI_CU} PASS`);
 console.log("REAL_ZALO_CALL = 0");
 console.log("REAL_PROVIDER_UAT = NOT_RERUN");
 console.log("PRODUCTION_DB_TOUCHED = NO");
