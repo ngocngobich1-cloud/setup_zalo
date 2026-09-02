@@ -1452,10 +1452,18 @@ await bai("UI09B", "Mobile Bot Commander has one scoped dynamic owner and four l
   const mobile600Rules = styleRulesInMedia("(max-width: 600px)");
   const mobile980Rule = (selector) => mobile980Rules.find((rule) => rule.selectorText === selector);
   const mobile600Rule = (selector) => mobile600Rules.find((rule) => rule.selectorText === selector);
+  const viewportHeight = "var(--mobile-vv-height, 100dvh)";
   const botHeightScopes = cssRules
     .filter((rule) => rule.type === cssDom.window.CSSRule.MEDIA_RULE)
     .filter((rule) => [...rule.cssRules].some((child) => (
-      child.selectorText === "#module-training:not(.hidden)" && child.style.height === "100dvh"
+      child.selectorText === "#module-training:not(.hidden)" && child.style.height === viewportHeight
+    )))
+    .map((rule) => rule.conditionText);
+  const botBodyHeightScopes = cssRules
+    .filter((rule) => rule.type === cssDom.window.CSSRule.MEDIA_RULE)
+    .filter((rule) => [...rule.cssRules].some((child) => (
+      child.selectorText === "body:has(#module-training:not(.hidden))"
+      && child.style.getPropertyValue("min-height") === viewportHeight
     )))
     .map((rule) => rule.conditionText);
   const botLockScopes = cssRules
@@ -1485,9 +1493,14 @@ await bai("UI09B", "Mobile Bot Commander has one scoped dynamic owner and four l
     undefined,
     "body must keep its desktop base min-height throughout the 761-980px Inbox range",
   );
-  assert.equal(mobile980Rule("#module-training:not(.hidden)")?.style.height, "100dvh");
+  assert.equal(mobile980Rule("#module-training:not(.hidden)")?.style.height, viewportHeight);
+  assert.equal(
+    mobile980Rule("body:has(#module-training:not(.hidden))")?.style.getPropertyValue("min-height"),
+    viewportHeight,
+  );
   assert.equal(mobile980Rule("body:has(#module-training:not(.hidden))")?.style.overflow, "hidden");
   assert.deepEqual(botHeightScopes, ["(max-width: 980px)"]);
+  assert.deepEqual(botBodyHeightScopes, ["(max-width: 980px)"]);
   assert.deepEqual(botLockScopes, ["(max-width: 980px)"]);
   assert.equal(mobile980Rule(".app-shell"), undefined, "Inbox shell must not change at the 980px breakpoint");
   assert.equal(
@@ -1511,6 +1524,14 @@ await bai("UI09B", "Mobile Bot Commander has one scoped dynamic owner and four l
     mobile600Rule(".training-form")?.style.getPropertyValue("padding") || "",
     /env\(safe-area-inset-bottom\)/,
   );
+  assert.match(
+    cssRules.find((rule) => rule.selectorText === ".training-panel")?.style.getPropertyValue("grid-template-rows") || "",
+    /^auto minmax\(0, 1fr\) auto$/,
+  );
+  assert.equal([...publicAppSource.matchAll(/function syncMobileVisualViewport\s*\(/g)].length, 1);
+  assert.equal([...publicAppSource.matchAll(/visualViewport\?\.addEventListener\("resize"/g)].length, 1);
+  assert.match(publicAppSource, /--mobile-vv-height/);
+  assert.doesNotMatch(publicTrainingSource, /visualViewport|mobile-vv-height/);
 });
 
 await bai("UI10", "Both attachment actions reuse the canonical input without changing paste or send behavior", async () => {

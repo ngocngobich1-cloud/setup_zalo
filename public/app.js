@@ -100,6 +100,48 @@ let dangGuiTin = false;
 let frontendOwnerGeneration = 0;
 let mobileThreadScrollTop = 0;
 
+const MOBILE_VISUAL_VIEWPORT_HEIGHT_PROPERTY = "--mobile-vv-height";
+const MOBILE_VISUAL_VIEWPORT_SETTLE_MS = 120;
+let mobileVisualViewportSyncInitialized = false;
+let mobileVisualViewportAnimationFrame = null;
+let mobileVisualViewportSettleTimer = null;
+
+export function syncMobileVisualViewport({ settle = true } = {}) {
+  const visualHeight = Number(window.visualViewport?.height);
+  const fallbackHeight = Number(window.innerHeight);
+  const height = Number.isFinite(visualHeight) && visualHeight > 0
+    ? visualHeight
+    : fallbackHeight;
+  if (!Number.isFinite(height) || height <= 0) return;
+
+  document.documentElement.style.setProperty(MOBILE_VISUAL_VIEWPORT_HEIGHT_PROPERTY, `${height}px`);
+  if (!settle) return;
+
+  if (mobileVisualViewportAnimationFrame !== null && typeof window.cancelAnimationFrame === "function") {
+    window.cancelAnimationFrame(mobileVisualViewportAnimationFrame);
+  }
+  if (typeof window.requestAnimationFrame === "function") {
+    mobileVisualViewportAnimationFrame = window.requestAnimationFrame(() => {
+      mobileVisualViewportAnimationFrame = null;
+      syncMobileVisualViewport({ settle: false });
+    });
+  }
+
+  if (mobileVisualViewportSettleTimer !== null) window.clearTimeout(mobileVisualViewportSettleTimer);
+  mobileVisualViewportSettleTimer = window.setTimeout(() => {
+    mobileVisualViewportSettleTimer = null;
+    syncMobileVisualViewport({ settle: false });
+  }, MOBILE_VISUAL_VIEWPORT_SETTLE_MS);
+}
+
+export function initMobileVisualViewportSync() {
+  if (mobileVisualViewportSyncInitialized) return;
+  mobileVisualViewportSyncInitialized = true;
+  window.visualViewport?.addEventListener("resize", syncMobileVisualViewport, { passive: true });
+  window.addEventListener("resize", syncMobileVisualViewport, { passive: true });
+  syncMobileVisualViewport();
+}
+
 function chupFrontendOwner() {
   return {
     ownerUid: state.uid ? String(state.uid) : null,
@@ -228,6 +270,7 @@ socket.on("message-deleted", ({ threadId, messageId }) => {
   if (state.selectedThread?.id === threadId) renderMessages(con);
 });
 
+initMobileVisualViewportSync();
 bootstrap();
 
 async function bootstrap() {
