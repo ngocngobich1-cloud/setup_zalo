@@ -1023,6 +1023,10 @@ input {
     pointer-events: auto;
   }
 
+  .chat-app.mobile-chat-open {
+    height: 100dvh;
+  }
+
   .chat-empty { display: none; }
   .chat-panel { grid-template-rows: 56px minmax(0, 1fr) auto; }
 

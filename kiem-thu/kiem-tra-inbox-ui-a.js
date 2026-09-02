@@ -95,6 +95,15 @@ function publicSources() {
 }
 
 const staticDom = new JSDOM(htmlSource).window.document;
+const cssDom = new JSDOM("<!doctype html><style></style>");
+cssDom.window.document.querySelector("style").textContent = cssSource;
+const cssRules = [...cssDom.window.document.styleSheets[0].cssRules];
+
+function styleRulesInMedia(conditionText) {
+  return cssRules
+    .filter((rule) => rule.type === cssDom.window.CSSRule.MEDIA_RULE && rule.conditionText === conditionText)
+    .flatMap((rule) => [...rule.cssRules]);
+}
 
 await test("STATIC", "T1 required app.js IDs remain in index.html", () => {
   const ids = [...appSource.matchAll(/document\.querySelector\("#([A-Za-z][\w-]*)"\)/g)].map((match) => match[1]);
@@ -140,6 +149,37 @@ await test("STATIC", "T6b three locked CSS anchors remain", () => {
   assert.match(cssSource, /\.chat-image\s*\{[\s\S]*?max-width:[\s\S]*?max-height:[\s\S]*?object-fit:\s*contain/);
 });
 
+await test("STATIC", "T6c mobile CHAT owns the dynamic viewport, fixed rows and safe-area bottom stack", () => {
+  const mobileRules = styleRulesInMedia("(max-width: 760px)");
+  const mobileRule = (selector) => mobileRules.find((rule) => rule.selectorText === selector);
+  const desktopRule = cssRules.find((rule) => rule.selectorText === ".app-shell");
+  const panel = staticDom.querySelector("#chat-panel");
+  const header = panel?.querySelector(":scope > .chat-header");
+  const messages = panel?.querySelector(":scope > #messages.messages");
+  const bottomStack = panel?.querySelector(":scope > #send-form.send-form");
+
+  assert.equal(mobileRule(".chat-app.mobile-chat-open")?.style.height, "100dvh");
+  assert.equal(desktopRule?.style.height, "100vh", "desktop shell height must remain unchanged");
+  assert.match(
+    mobileRule(".chat-panel")?.style.getPropertyValue("grid-template-rows") || "",
+    /^56px minmax\(0, 1fr\) auto$/,
+  );
+  assert.equal(
+    cssRules.find((rule) => rule.selectorText === ".messages")?.style.getPropertyValue("overflow-y"),
+    "auto",
+  );
+  assert.match(
+    mobileRule(".send-form")?.style.getPropertyValue("padding") || "",
+    /env\(safe-area-inset-bottom\)/,
+  );
+  assert.ok(header && messages && bottomStack);
+  assert.equal(header.parentElement, panel);
+  assert.equal(messages.parentElement, panel);
+  assert.equal(bottomStack.parentElement, panel);
+  assert.equal(messages.contains(header), false);
+  assert.equal(messages.contains(bottomStack), false);
+});
+
 await test("STATIC", "T16 per-thread Bot scaffold is present and inert by source", () => {
   const status = staticDom.querySelector("#thread-bot-status");
   const button = staticDom.querySelector("#btn-thread-bot-toggle");
@@ -163,7 +203,7 @@ await test("STATIC", "T17 no unread tracking or persistence was added", () => {
   assert.doesNotMatch(publicSources(), /unreadCount|markAsRead|lastReadAt/);
 });
 
-await test("STATIC", "T18 diff stays inside the four-file allowlist", () => {
+await test("STATIC", "T18 viewport fix stays inside the four-file allowlist", () => {
   const allowed = new Set([
     "public/index.html",
     "public/app.js",
@@ -175,9 +215,11 @@ await test("STATIC", "T18 diff stays inside the four-file allowlist", () => {
     || file.startsWith("caddy-config/")
     || file.startsWith("caddy-data/")
     || file.startsWith("opencode-data/")
+    || file.startsWith("kiem-thu/evidence/")
     || /^data\/(?:credentials\.json|\.secret-key|.+\.db(?:-.+)?)$/.test(file);
   const changed = workingTreeChanges().filter((file) => !runtimeOnly(file));
-  assert.ok(changed.length >= 3);
+  assert.ok(changed.includes("public/style.css"));
+  assert.ok(changed.includes("kiem-thu/kiem-tra-inbox-ui-a.js"));
   for (const file of changed) assert.ok(allowed.has(file), `Out-of-scope source file: ${file}`);
 
   const ids = [...htmlSource.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
