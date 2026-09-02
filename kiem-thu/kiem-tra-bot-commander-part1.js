@@ -49,6 +49,9 @@ const publicOnboardingSource = fs.readFileSync(PUBLIC_ONBOARDING_PATH, "utf8");
 const publicConfigSource = fs.readFileSync(PUBLIC_CONFIG_PATH, "utf8");
 const publicTrainingSource = fs.readFileSync(PUBLIC_TRAINING_PATH, "utf8");
 const publicAppSource = fs.readFileSync(PUBLIC_APP_PATH, "utf8");
+const cssDom = new JSDOM("<!doctype html><style></style>");
+cssDom.window.document.querySelector("style").textContent = css;
+const cssRules = [...cssDom.window.document.styleSheets[0].cssRules];
 
 function response(status, data) {
   return {
@@ -110,6 +113,12 @@ function layCssBlock(source, selector) {
   const match = source.match(new RegExp(`(?:^|\\n)[\\t ]*${escaped}[\\t ]*\\{([^}]*)\\}`, "m"));
   assert.ok(match, `CSS block must exist: ${selector}`);
   return match[1];
+}
+
+function styleRulesInMedia(conditionText) {
+  return cssRules
+    .filter((rule) => rule.type === cssDom.window.CSSRule.MEDIA_RULE && rule.conditionText === conditionText)
+    .flatMap((rule) => [...rule.cssRules]);
 }
 
 function taoUiFixture() {
@@ -1436,6 +1445,72 @@ await bai("UI09", "Mobile composer keeps 44px touch targets and safe-area paddin
   assert.match(mobileCss, /\.training-form\s*\{[^}]*env\(safe-area-inset-bottom\)/s);
   assert.match(mobileCss, /\.training-tool-action,\s*\.training-send-button\s*\{[^}]*min-height:\s*44px/s);
   assert.match(css, /\.training-mobile-segments button\s*\{[^}]*min-height:\s*44px/s);
+});
+
+await bai("UI09B", "Mobile Bot Commander has one scoped dynamic owner and four locked-shell rows", async () => {
+  const mobile980Rules = styleRulesInMedia("(max-width: 980px)");
+  const mobile600Rules = styleRulesInMedia("(max-width: 600px)");
+  const mobile980Rule = (selector) => mobile980Rules.find((rule) => rule.selectorText === selector);
+  const mobile600Rule = (selector) => mobile600Rules.find((rule) => rule.selectorText === selector);
+  const botHeightScopes = cssRules
+    .filter((rule) => rule.type === cssDom.window.CSSRule.MEDIA_RULE)
+    .filter((rule) => [...rule.cssRules].some((child) => (
+      child.selectorText === "#module-training:not(.hidden)" && child.style.height === "100dvh"
+    )))
+    .map((rule) => rule.conditionText);
+  const botLockScopes = cssRules
+    .filter((rule) => rule.type === cssDom.window.CSSRule.MEDIA_RULE)
+    .filter((rule) => [...rule.cssRules].some((child) => (
+      child.selectorText === "body:has(#module-training:not(.hidden))" && child.style.overflow === "hidden"
+    )))
+    .map((rule) => rule.conditionText);
+  const desktopBodyRule = cssRules.find((rule) => rule.selectorText === "body");
+  const root = ui.document.querySelector("#module-training");
+  const panel = root?.querySelector(":scope > .training-layout > .training-command-panel");
+  const header = panel?.querySelector(":scope > .training-header");
+  const log = panel?.querySelector(":scope > #training-log");
+  const starters = panel?.querySelector(":scope > #onboarding-starters");
+  const form = panel?.querySelector(":scope > #training-form");
+
+  assert.ok(root && panel && header && log && starters && form);
+  assert.equal(panel.children.length, 4);
+  assert.deepEqual([...panel.children], [header, log, starters, form]);
+  assert.equal(log.contains(header), false);
+  assert.equal(log.contains(starters), false);
+  assert.equal(log.contains(form), false);
+
+  assert.equal(desktopBodyRule?.style.getPropertyValue("min-height"), "100vh");
+  assert.equal(
+    mobile980Rule("body"),
+    undefined,
+    "body must keep its desktop base min-height throughout the 761-980px Inbox range",
+  );
+  assert.equal(mobile980Rule("#module-training:not(.hidden)")?.style.height, "100dvh");
+  assert.equal(mobile980Rule("body:has(#module-training:not(.hidden))")?.style.overflow, "hidden");
+  assert.deepEqual(botHeightScopes, ["(max-width: 980px)"]);
+  assert.deepEqual(botLockScopes, ["(max-width: 980px)"]);
+  assert.equal(mobile980Rule(".app-shell"), undefined, "Inbox shell must not change at the 980px breakpoint");
+  assert.equal(
+    cssRules.find((rule) => rule.selectorText === "#module-training:not(.hidden)"),
+    undefined,
+    "Bot Commander dynamic height must not escape its mobile media scope",
+  );
+  assert.match(
+    mobile980Rule(".training-command-panel")?.style.getPropertyValue("grid-template-rows") || "",
+    /^auto minmax\(0, 1fr\) auto auto$/,
+  );
+  assert.equal(
+    mobile980Rule(".training-command-panel > #training-log")?.style.getPropertyValue("min-height"),
+    "0",
+  );
+  assert.equal(
+    cssRules.find((rule) => rule.selectorText === ".training-log")?.style.getPropertyValue("overflow-y"),
+    "auto",
+  );
+  assert.match(
+    mobile600Rule(".training-form")?.style.getPropertyValue("padding") || "",
+    /env\(safe-area-inset-bottom\)/,
+  );
 });
 
 await bai("UI10", "Both attachment actions reuse the canonical input without changing paste or send behavior", async () => {

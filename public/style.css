@@ -1023,10 +1023,6 @@ input {
     pointer-events: auto;
   }
 
-  .chat-app.mobile-chat-open {
-    height: 100dvh;
-  }
-
   .chat-empty { display: none; }
   .chat-panel { grid-template-rows: 56px minmax(0, 1fr) auto; }
 
@@ -1047,7 +1043,10 @@ input {
     opacity: 1;
   }
 
-  .messages { padding: 12px 12px 8px; }
+  .messages {
+    min-height: 0;
+    padding: 12px 12px 8px;
+  }
   .bubble-row { gap: 8px; }
   .bubble-row.cluster-end { margin-bottom: 10px; }
   .bubble-wrap { max-width: 78%; }
@@ -2521,6 +2520,14 @@ input {
 }
 
 @media (max-width: 980px) {
+  body:has(#module-training:not(.hidden)) {
+    overflow: hidden;
+  }
+
+  #module-training:not(.hidden) {
+    height: 100dvh;
+  }
+
   #module-training {
     grid-template-rows: auto auto minmax(0, 1fr);
     background: var(--surface);
@@ -2591,6 +2598,14 @@ input {
     min-height: 0;
     border: 0;
     visibility: visible !important;
+  }
+
+  .training-command-panel {
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+  }
+
+  .training-command-panel > #training-log {
+    min-height: 0;
   }
 
   #module-training[data-mobile-segment="chat"] .training-config-panel,
@@ -4200,7 +4215,16 @@ textarea {
    voi rule goc, nen neu dat truoc .app-shell thi rule goc se de len va khong
    bao gio co tac dung. */
 @media (max-width: 760px) {
+  body {
+    min-height: 100dvh;
+  }
+
+  body:has(.chat-app.mobile-chat-open) {
+    overflow: hidden;
+  }
+
   .app-shell {
+    height: 100dvh;
     grid-template-columns: minmax(0, 1fr);
   }
 

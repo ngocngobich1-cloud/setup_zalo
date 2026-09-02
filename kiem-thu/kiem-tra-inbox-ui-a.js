@@ -149,17 +149,30 @@ await test("STATIC", "T6b three locked CSS anchors remain", () => {
   assert.match(cssSource, /\.chat-image\s*\{[\s\S]*?max-width:[\s\S]*?max-height:[\s\S]*?object-fit:\s*contain/);
 });
 
-await test("STATIC", "T6c mobile CHAT owns the dynamic viewport, fixed rows and safe-area bottom stack", () => {
+await test("STATIC", "T6c Inbox mobile has one dynamic owner, fixed rows and safe-area bottom stack", () => {
   const mobileRules = styleRulesInMedia("(max-width: 760px)");
   const mobileRule = (selector) => mobileRules.find((rule) => rule.selectorText === selector);
-  const desktopRule = cssRules.find((rule) => rule.selectorText === ".app-shell");
+  const desktopShellRule = cssRules.find((rule) => rule.selectorText === ".app-shell");
+  const desktopBodyRule = cssRules.find((rule) => rule.selectorText === "body");
+  const chatApp = staticDom.querySelector("#chat-app");
   const panel = staticDom.querySelector("#chat-panel");
   const header = panel?.querySelector(":scope > .chat-header");
   const messages = panel?.querySelector(":scope > #messages.messages");
   const bottomStack = panel?.querySelector(":scope > #send-form.send-form");
 
-  assert.equal(mobileRule(".chat-app.mobile-chat-open")?.style.height, "100dvh");
-  assert.equal(desktopRule?.style.height, "100vh", "desktop shell height must remain unchanged");
+  assert.equal(desktopShellRule?.style.height, "100vh", "desktop shell height must remain unchanged");
+  assert.equal(desktopBodyRule?.style.getPropertyValue("min-height"), "100vh");
+  assert.equal(mobileRule(".app-shell")?.style.height, "100dvh");
+  assert.equal(mobileRule("body")?.style.getPropertyValue("min-height"), "100dvh");
+  assert.notEqual(mobileRule("body")?.style.getPropertyValue("min-height"), "100vh");
+  assert.equal(mobileRule("body:has(.chat-app.mobile-chat-open)")?.style.overflow, "hidden");
+  for (const selector of [".chat-app", ".chat-app.mobile-chat-open", ".chat-main", ".chat-panel"]) {
+    assert.notEqual(
+      mobileRule(selector)?.style.height,
+      "100dvh",
+      `${selector} must not become a second dynamic viewport owner`,
+    );
+  }
   assert.match(
     mobileRule(".chat-panel")?.style.getPropertyValue("grid-template-rows") || "",
     /^56px minmax\(0, 1fr\) auto$/,
@@ -168,10 +181,12 @@ await test("STATIC", "T6c mobile CHAT owns the dynamic viewport, fixed rows and 
     cssRules.find((rule) => rule.selectorText === ".messages")?.style.getPropertyValue("overflow-y"),
     "auto",
   );
+  assert.equal(mobileRule(".messages")?.style.getPropertyValue("min-height"), "0");
   assert.match(
     mobileRule(".send-form")?.style.getPropertyValue("padding") || "",
     /env\(safe-area-inset-bottom\)/,
   );
+  assert.equal(chatApp?.querySelector(":scope > .chat-main > #chat-panel"), panel);
   assert.ok(header && messages && bottomStack);
   assert.equal(header.parentElement, panel);
   assert.equal(messages.parentElement, panel);
@@ -203,12 +218,13 @@ await test("STATIC", "T17 no unread tracking or persistence was added", () => {
   assert.doesNotMatch(publicSources(), /unreadCount|markAsRead|lastReadAt/);
 });
 
-await test("STATIC", "T18 viewport fix stays inside the four-file allowlist", () => {
+await test("STATIC", "T18 V3.2 viewport fix stays inside the authorized file allowlist", () => {
   const allowed = new Set([
     "public/index.html",
     "public/app.js",
     "public/style.css",
     "kiem-thu/kiem-tra-inbox-ui-a.js",
+    "kiem-thu/kiem-tra-bot-commander-part1.js",
   ]);
   const runtimeOnly = (file) => file === "data/.gitkeep"
     || file.startsWith("data.ui-a-fresh-backup-")
@@ -220,6 +236,7 @@ await test("STATIC", "T18 viewport fix stays inside the four-file allowlist", ()
   const changed = workingTreeChanges().filter((file) => !runtimeOnly(file));
   assert.ok(changed.includes("public/style.css"));
   assert.ok(changed.includes("kiem-thu/kiem-tra-inbox-ui-a.js"));
+  assert.ok(changed.includes("kiem-thu/kiem-tra-bot-commander-part1.js"));
   for (const file of changed) assert.ok(allowed.has(file), `Out-of-scope source file: ${file}`);
 
   const ids = [...htmlSource.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
@@ -559,6 +576,21 @@ await test("GROUP", "G8 day boundary and canonical message immutability remain",
   assert.ok(rows[9].classList.contains("cluster-start"));
   assert.equal(document.querySelectorAll("#messages .date-divider").length, 2);
   assert.deepEqual(groupMessages, groupMessageSnapshot);
+});
+
+await test("GROUP", "G9 group thread renders through the same locked Inbox shell as direct", () => {
+  const chatApp = document.querySelector("#chat-app");
+  const panel = chatApp?.querySelector(":scope > .chat-main > #chat-panel");
+  const messages = panel?.querySelector(":scope > #messages");
+
+  assert.ok(chatApp.classList.contains("mobile-chat-open"));
+  assert.equal(document.querySelector("#chat-title-text")?.textContent, "Nhóm kiểm thử");
+  assert.equal(messages, document.querySelector("#messages"));
+  assert.ok(messages.querySelector(".sender"), "group sender data must render in the shared message region");
+  assert.equal(panel.querySelector(":scope > .chat-header")?.parentElement, panel);
+  assert.equal(panel.querySelector(":scope > #send-form")?.parentElement, panel);
+  assert.equal(document.querySelector(".group-chat, #group-chat, [data-group-chat-root]"), null);
+  assert.doesNotMatch(cssSource, /(?:group[-_]?chat|chat[-_]?group)/i);
 });
 
 await test("BEHAVIOR", "T12 image and file controls share the canonical picker with exact accept", () => {
