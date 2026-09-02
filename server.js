@@ -96,13 +96,6 @@ activityLog.setEmitter((entry) => io.emit("activity-log", entry));
 // DB phai san sang TRUOC khi dung session middleware, vi khoa ky session doc tu DB.
 await initDb();
 
-// Startup khong co owner active: xoa projection legacy/global neu sidecar da
-// san sang. Neu sidecar chua khoi dong kip, state van fail-closed; login owner
-// sau do se project lai truoc khi listener inbound duoc mo.
-await ownerCredentials.projectOwnerCredentials(null).catch((error) => {
-  console.error("[owner-credentials] Startup empty projection failed:", error.code || "UNKNOWN");
-});
-
 // Khoa ky session sinh MOT LAN roi luu vao DB. Truoc day sinh ngau nhien moi lan
 // khoi dong nen restart la moi nguoi bi dang xuat.
 async function layKhoaSession() {
@@ -1891,6 +1884,13 @@ server.listen(port, "0.0.0.0", async () => {
   const actualPort = server.address().port;
   console.log("Zalo Web Chat dang chay");
   console.log(`Mo trinh duyet: http://127.0.0.1:${actualPort}`);
+
+  // Listener da bind truoc khi xoa projection legacy/global. Neu sidecar chua
+  // san sang, credential van fail-closed nhung HTTP readiness khong bi chan.
+  await ownerCredentials.projectOwnerCredentials(null).catch((error) => {
+    console.error("[owner-credentials] Startup empty projection failed:", error.code || "UNKNOWN");
+  });
+
   // Dang nhap Zalo co han gio ben trong. Nuot loi o day: dang nhap hong thi app
   // van phai chay tiep de bat bo hen gio va mo giao dien - khong duoc keo ca
   // chuoi khoi dong chet theo.

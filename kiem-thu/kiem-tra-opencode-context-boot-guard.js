@@ -9,22 +9,33 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REPO = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const SERVER = path.join(REPO, "server.js");
 const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-context-boot-guard-"));
 const PRELOAD = path.join(TEST_ROOT, "fetch-fixture.mjs");
+const PRELOAD_URL = pathToFileURL(PRELOAD).href;
 const APP_SECRET_KEY = "44".repeat(32);
 const ERROR_CODE = "OPENCODE_CONTEXT_ROOT_REQUIRED";
 const results = [];
 
 fs.writeFileSync(PRELOAD, `
+  let delayedProviderCalls = 0;
   globalThis.fetch = async (input, options = {}) => {
     const url = new URL(String(input));
     const method = String(options.method || "GET").toUpperCase();
     let value = {};
     if (url.pathname === "/provider" && method === "GET") {
+      if (process.env.BOOT_GUARD_DELAY_PROJECTION === "true" && delayedProviderCalls++ === 0) {
+        console.log("BOOT_GUARD_PROJECTION_STARTED");
+        return new Promise((_, reject) => {
+          setTimeout(() => {
+            console.log("BOOT_GUARD_PROJECTION_SETTLED");
+            reject(new Error("fixture delayed projection rejection"));
+          }, 1200);
+        });
+      }
       value = { all: [], connected: [] };
     } else if (url.pathname === "/config/providers" && method === "GET") {
       value = { providers: [] };
@@ -67,7 +78,7 @@ function refusedStartup(contextRoot, caseName) {
   const cwd = fs.mkdtempSync(path.join(TEST_ROOT, `${caseName}-`));
   const result = spawnSync(
     process.execPath,
-    ["--import", PRELOAD, SERVER],
+    ["--import", PRELOAD_URL, SERVER],
     {
       cwd,
       env: childEnvironment(contextRoot),
@@ -83,20 +94,24 @@ function startedWithValidRoot(contextRoot) {
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
-      ["--import", PRELOAD, SERVER],
+      ["--import", PRELOAD_URL, SERVER],
       { cwd, env: childEnvironment(contextRoot), stdio: ["ignore", "pipe", "pipe"] }
     );
     let stdout = "";
     let stderr = "";
     let sawStartup = false;
     let settled = false;
+    const stopWhenReady = () => {
+      if (!settled && sawStartup && fs.existsSync(contextRoot)) child.kill("SIGTERM");
+    };
+    const readinessPoll = setInterval(stopWhenReady, 25);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       stdout += chunk;
       if (!sawStartup && stdout.includes("Zalo Web Chat dang chay")) {
         sawStartup = true;
-        child.kill("SIGTERM");
+        stopWhenReady();
       }
     });
     child.stderr.on("data", (chunk) => { stderr += chunk; });
@@ -104,12 +119,14 @@ function startedWithValidRoot(contextRoot) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearInterval(readinessPoll);
       reject(error);
     });
     child.once("exit", (code, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearInterval(readinessPoll);
       if (!sawStartup) {
         reject(new Error(
           `valid context root did not reach listen (exit=${code}, signal=${signal}, guard=${stderr.includes(ERROR_CODE)})`
@@ -122,8 +139,115 @@ function startedWithValidRoot(contextRoot) {
       if (settled) return;
       child.kill("SIGKILL");
       settled = true;
+      clearInterval(readinessPoll);
       reject(new Error("valid context root startup timed out"));
     }, 15000);
+  });
+}
+
+function startedBeforeSlowProjectionSettles(contextRoot) {
+  const cwd = fs.mkdtempSync(path.join(TEST_ROOT, "slow-projection-"));
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      ["--import", PRELOAD_URL, SERVER],
+      {
+        cwd,
+        env: {
+          ...childEnvironment(contextRoot),
+          BOOT_GUARD_DELAY_PROJECTION: "true",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      }
+    );
+    let stdout = "";
+    let stderr = "";
+    let port = null;
+    let projectionStarted = false;
+    let projectionSettled = false;
+    let projectionPendingAtHttpReady = false;
+    let httpReady = false;
+    let httpStatus = null;
+    let probeInFlight = false;
+    let expectedStop = false;
+    let completion = null;
+    let finished = false;
+
+    const output = () => `${stdout}\n${stderr}`;
+    const stopWithError = (error) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      if (child.exitCode === null) child.kill("SIGKILL");
+      reject(error);
+    };
+    const maybeComplete = () => {
+      const rejectionHandled = stderr.includes(
+        "[owner-credentials] Startup empty projection failed: CREDENTIAL_PROJECTION_FAILED"
+      );
+      if (!httpReady || !projectionSettled || !rejectionHandled || expectedStop) return;
+      completion = {
+        projectionStarted,
+        projectionPendingAtHttpReady,
+        httpReady,
+        httpStatus,
+        projectionSettled,
+        rejectionHandled,
+        aliveAfterProjectionRejection: child.exitCode === null,
+      };
+      expectedStop = true;
+      child.kill("SIGTERM");
+    };
+    const probeHttpWhileProjectionPending = async () => {
+      if (probeInFlight || httpReady || !projectionStarted || projectionSettled || !port) return;
+      probeInFlight = true;
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
+        httpStatus = response.status;
+        httpReady = response.status >= 200 && response.status < 400;
+        projectionPendingAtHttpReady = !projectionSettled;
+      } catch (error) {
+        stopWithError(new Error(`HTTP probe failed while projection pending: ${error.message}\n${output()}`));
+        return;
+      } finally {
+        probeInFlight = false;
+      }
+      maybeComplete();
+    };
+    const observeOutput = () => {
+      projectionStarted = stdout.includes("BOOT_GUARD_PROJECTION_STARTED");
+      projectionSettled = stdout.includes("BOOT_GUARD_PROJECTION_SETTLED");
+      const portMatch = stdout.match(/Mo trinh duyet: http:\/\/127\.0\.0\.1:(\d+)/);
+      if (portMatch) port = Number(portMatch[1]);
+      void probeHttpWhileProjectionPending();
+      maybeComplete();
+    };
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      observeOutput();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      observeOutput();
+    });
+    child.once("error", stopWithError);
+    child.once("exit", (code, signal) => {
+      if (finished) return;
+      clearTimeout(timer);
+      if (!expectedStop || !completion) {
+        finished = true;
+        reject(new Error(`slow projection child exited early (exit=${code}, signal=${signal})\n${output()}`));
+        return;
+      }
+      finished = true;
+      resolve({ cwd, stdout, stderr, ...completion });
+    });
+    const timer = setTimeout(() => {
+      stopWithError(new Error(`slow projection readiness test timed out\n${output()}`));
+    }, 10000);
   });
 }
 
@@ -149,6 +273,18 @@ await test("T69", "Valid OPENCODE_CONTEXT_ROOT continues normal startup", async 
   assert.ok(result.stdout.includes("Zalo Web Chat dang chay"));
   assert.ok(!result.stderr.includes(ERROR_CODE));
   assert.equal(fs.existsSync(contextRoot), true);
+});
+
+await test("T70", "HTTP listener is ready while startup credential projection is still pending", async () => {
+  const contextRoot = path.join(TEST_ROOT, "slow-projection-context-root");
+  const result = await startedBeforeSlowProjectionSettles(contextRoot);
+  assert.equal(result.projectionStarted, true);
+  assert.equal(result.projectionPendingAtHttpReady, true);
+  assert.equal(result.httpReady, true);
+  assert.ok(result.httpStatus >= 200 && result.httpStatus < 400);
+  assert.equal(result.projectionSettled, true);
+  assert.equal(result.rejectionHandled, true);
+  assert.equal(result.aliveAfterProjectionRejection, true);
 });
 
 const failed = results.filter((result) => !result.pass);
