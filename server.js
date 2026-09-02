@@ -65,6 +65,7 @@ import {
   appForwardMessage,
 } from "./lib/zalo-service.js";
 import * as aiChat from "./lib/ai-chat.js";
+import * as ownerCredentials from "./lib/owner-credentials.js";
 import {
   clearPendingPdfConfirmationsForRule,
   parsePdfEnabled,
@@ -72,6 +73,14 @@ import {
   validatePdfUpload,
 } from "./lib/pdf-automation.js";
 import { PDF_AUTOMATION_MULTER_OPTIONS } from "./lib/pdf-upload-options.js";
+
+const opencodeContextRoot = String(process.env.OPENCODE_CONTEXT_ROOT || "").trim();
+if (!opencodeContextRoot) {
+  console.error(
+    "[server-config] OPENCODE_CONTEXT_ROOT_REQUIRED: OPENCODE_CONTEXT_ROOT phải được cấu hình trước khi khởi động."
+  );
+  process.exit(1);
+}
 
 process.on("unhandledRejection", (error) => console.error("[server]", error));
 process.on("uncaughtException", (error) => console.error("[server]", error));
@@ -86,6 +95,13 @@ activityLog.setEmitter((entry) => io.emit("activity-log", entry));
 
 // DB phai san sang TRUOC khi dung session middleware, vi khoa ky session doc tu DB.
 await initDb();
+
+// Startup khong co owner active: xoa projection legacy/global neu sidecar da
+// san sang. Neu sidecar chua khoi dong kip, state van fail-closed; login owner
+// sau do se project lai truoc khi listener inbound duoc mo.
+await ownerCredentials.projectOwnerCredentials(null).catch((error) => {
+  console.error("[owner-credentials] Startup empty projection failed:", error.code || "UNKNOWN");
+});
 
 // Khoa ky session sinh MOT LAN roi luu vao DB. Truoc day sinh ngau nhien moi lan
 // khoi dong nen restart la moi nguoi bi dang xuat.
@@ -790,6 +806,7 @@ app.get("/api/ai-chat", async (_req, res) => {
     res.json({
       config: { ...config, knowledgeFileIds },
       ready: aiChat.isAiChatReady(config)
+        && ownerCredentials.ownerCredentialReadyForConfig(ownerUid, config)
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -797,8 +814,13 @@ app.get("/api/ai-chat", async (_req, res) => {
 });
 
 app.get("/api/bot/status", (_req, res) => {
-  const config = aiChat.getConfig();
-  res.json({ enabled: Boolean(config?.botEnabled), ready: aiChat.isAiChatReady() });
+  const ownerUid = chuHienTai();
+  const config = aiChat.getConfig(ownerUid);
+  res.json({
+    enabled: Boolean(config?.botEnabled),
+    ready: aiChat.isAiChatReady(config)
+      && ownerCredentials.ownerCredentialReadyForConfig(ownerUid, config),
+  });
 });
 
 app.post("/api/bot/toggle", async (req, res) => {
@@ -819,7 +841,12 @@ app.post("/api/bot/toggle", async (req, res) => {
       summary: bat ? "Đã BẬT bot tự động trả lời" : "Đã TẮT bot tự động trả lời",
       detail: { boi: req.session.username },
     });
-    res.json({ ok: true, enabled: bat, ready: aiChat.isAiChatReady() });
+    res.json({
+      ok: true,
+      enabled: bat,
+      ready: aiChat.isAiChatReady(aiChat.getConfig(chuBot))
+        && ownerCredentials.ownerCredentialReadyForConfig(chuBot, aiChat.getConfig(chuBot)),
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -857,7 +884,12 @@ app.post("/api/ai-chat", async (req, res) => {
       });
       await aiChat.refreshConfig();
       const config = aiChat.getConfig(ownerUid);
-      return res.json({ ok: true, config, ready: aiChat.isAiChatReady(config) });
+      return res.json({
+        ok: true,
+        config,
+        ready: aiChat.isAiChatReady(config)
+          && ownerCredentials.ownerCredentialReadyForConfig(ownerUid, config),
+      });
     }
 
     if (!soul) return res.status(400).json({ error: "Soul là bắt buộc — đây là nội dung nạp vào session OpenCode" });
@@ -948,7 +980,12 @@ app.post("/api/ai-chat", async (req, res) => {
     const onboarding = await import("./lib/onboarding.js");
     await onboarding.xuLyHanhDongOnboarding(ownerUid, "guidance_completed");
     const config = aiChat.getConfig(ownerUid);
-    res.json({ ok: true, config, ready: aiChat.isAiChatReady(config) });
+    res.json({
+      ok: true,
+      config,
+      ready: aiChat.isAiChatReady(config)
+        && ownerCredentials.ownerCredentialReadyForConfig(ownerUid, config),
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -974,52 +1011,97 @@ app.post("/api/ai-chat/doc-tep", async (req, res) => {
 
 app.post("/api/ai-chat/opencode-test", async (req, res) => {
   try {
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
     const { ping } = await import("./lib/opencode.js");
     const runtime = await getAiRuntimeConfig();
-    const info = await ping({ opencodeBaseUrl: req.body?.opencodeBaseUrl || runtime.opencodeBaseUrl });
+    const info = await ownerCredentials.withCurrentOwnerPlaneRead(
+      ownerUid,
+      () => ping({ opencodeBaseUrl: req.body?.opencodeBaseUrl || runtime.opencodeBaseUrl })
+    );
     res.json({ ok: true, ...info });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    const safe = ownerCredentials.ownerCredentialHttpError(error);
+    res.status(safe.status).json({ error: safe.message, code: safe.code });
   }
 });
 
 app.get("/api/ai-chat/providers", async (_req, res) => {
   try {
-    const { listAllProviders } = await import("./lib/opencode.js");
-    res.json({ providers: await listAllProviders(await getAiRuntimeConfig()) });
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    res.json({ providers: await ownerCredentials.listCurrentOwnerProviderCatalog(ownerUid) });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    const safe = ownerCredentials.ownerCredentialHttpError(error);
+    res.status(safe.status).json({ error: safe.message, code: safe.code });
   }
 });
 
-app.post("/api/ai-chat/provider-key", async (req, res) => {
+app.get("/api/ai-chat/owner-credentials", async (_req, res) => {
   try {
-    const { setProviderKey } = await import("./lib/opencode.js");
-    // Key khong bao gio duoc ghi vao log, khong luu vao DB, khong tra ve client.
-    await setProviderKey(await getAiRuntimeConfig(), req.body?.providerId, req.body?.apiKey);
-    res.json({ ok: true });
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    res.json(await ownerCredentials.listCurrentOwnerCredentialStatus(ownerUid));
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    const safe = ownerCredentials.ownerCredentialHttpError(error);
+    res.status(safe.status).json({ error: safe.message, code: safe.code });
   }
 });
 
-app.post("/api/ai-chat/provider-key/test", async (req, res) => {
+app.post("/api/ai-chat/owner-credentials", async (req, res) => {
   try {
-    const { testProviderKey } = await import("./lib/opencode.js");
-    const config = aiChat.getConfig() || await getAiRuntimeConfig();
-    res.json({ ok: true, ...(await testProviderKey(config, req.body?.providerId)) });
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    const saved = await ownerCredentials.saveCurrentOwnerCredential(
+      ownerUid,
+      req.body?.providerId,
+      req.body?.apiKey
+    );
+    await aiChat.refreshConfig();
+    res.json({ ok: true, providerId: saved.providerId, updatedAt: saved.updatedAt });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    const safe = ownerCredentials.ownerCredentialHttpError(error);
+    res.status(safe.status).json({ error: safe.message, code: safe.code });
   }
 });
 
-app.delete("/api/ai-chat/provider-key", async (_req, res) => {
+app.post("/api/ai-chat/owner-credentials/test", async (req, res) => {
   try {
-    const { clearAllProviderKeys } = await import("./lib/opencode.js");
-    await clearAllProviderKeys(await getAiRuntimeConfig());
-    res.json({ ok: true });
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    res.json({
+      ok: true,
+      ...(await ownerCredentials.testCurrentOwnerCredential(ownerUid, req.body?.providerId)),
+    });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    const safe = ownerCredentials.ownerCredentialHttpError(error);
+    res.status(safe.status).json({ ok: false, error: safe.code, message: safe.message });
+  }
+});
+
+app.delete("/api/ai-chat/owner-credentials/:providerId", async (req, res) => {
+  try {
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    const result = await ownerCredentials.deleteCurrentOwnerCredential(ownerUid, req.params.providerId);
+    await aiChat.refreshConfig();
+    res.json({ ok: true, providerId: result.providerId, removed: result.removed });
+  } catch (error) {
+    const safe = ownerCredentials.ownerCredentialHttpError(error);
+    res.status(safe.status).json({ error: safe.message, code: safe.code });
+  }
+});
+
+app.delete("/api/ai-chat/owner-credentials", async (_req, res) => {
+  try {
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    const result = await ownerCredentials.deleteAllCurrentOwnerCredentials(ownerUid);
+    await aiChat.refreshConfig();
+    res.json({ ok: true, removed: result.removed });
+  } catch (error) {
+    const safe = ownerCredentials.ownerCredentialHttpError(error);
+    res.status(safe.status).json({ error: safe.message, code: safe.code });
   }
 });
 
@@ -1611,9 +1693,16 @@ app.post("/api/onboarding/answer", async (req, res) => {
     const ownerUid = chuHienTai();
     if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
     const onboarding = await import("./lib/onboarding.js");
-    res.json(await onboarding.traLoiOnboarding(ownerUid, req.body?.text));
+    const { getAiChatConfig } = await import("./lib/db.js");
+    const config = aiChat.getConfig(ownerUid) || await getAiChatConfig(ownerUid);
+    res.json(await ownerCredentials.withCurrentOwnerCredentialRead(
+      ownerUid,
+      config,
+      () => onboarding.traLoiOnboarding(ownerUid, req.body?.text)
+    ));
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    const safe = ownerCredentials.ownerCredentialHttpError(error);
+    res.status(safe.status).json({ error: safe.message, code: safe.code });
   }
 });
 
@@ -1629,7 +1718,10 @@ app.get("/api/training", async (_req, res) => {
     const ownerUid = chuHienTai();
     if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
     const training = await import("./lib/training.js");
-    res.json(await training.trangThai(ownerUid));
+    res.json(await ownerCredentials.withCurrentOwnerPlaneRead(
+      ownerUid,
+      () => training.trangThai(ownerUid)
+    ));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1645,7 +1737,13 @@ app.post("/api/training/message", (req, res) => {
       const ownerUid = chuHienTai();
       if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
       const training = await import("./lib/training.js");
-      const reply = await training.guiTinHuanLuyen(ownerUid, req.body?.text || "", req.files || []);
+      const { getAiChatConfig } = await import("./lib/db.js");
+      const config = aiChat.getConfig(ownerUid) || await getAiChatConfig(ownerUid);
+      const reply = await ownerCredentials.withCurrentOwnerCredentialRead(
+        ownerUid,
+        config,
+        () => training.guiTinHuanLuyen(ownerUid, req.body?.text || "", req.files || [])
+      );
       res.json({ ok: true, reply });
     } catch (error) {
       res.status(400).json({ error: error.message });
@@ -1658,7 +1756,16 @@ app.post("/api/training/synthesize", async (_req, res) => {
     const ownerUid = chuHienTai();
     if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
     const training = await import("./lib/training.js");
-    res.json({ ok: true, reply: await training.tongHopSoul(ownerUid) });
+    const { getAiChatConfig } = await import("./lib/db.js");
+    const config = aiChat.getConfig(ownerUid) || await getAiChatConfig(ownerUid);
+    res.json({
+      ok: true,
+      reply: await ownerCredentials.withCurrentOwnerCredentialRead(
+        ownerUid,
+        config,
+        () => training.tongHopSoul(ownerUid)
+      ),
+    });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }

@@ -31,17 +31,18 @@ async function main() {
   let metadataCalls = 0;
   let realProviderCalls = 0;
   const runtime = http.createServer((req, res) => {
+    const pathname = new URL(req.url, "http://fixture.local").pathname;
     if (req.method !== "GET") realProviderCalls += 1;
     res.setHeader("Content-Type", "application/json");
-    if (req.method === "GET" && req.url === "/agent") {
+    if (req.method === "GET" && pathname === "/agent") {
       res.end(JSON.stringify([{ name: "general" }]));
       return;
     }
-    if (req.method === "GET" && req.url === "/experimental/tool/ids") {
+    if (req.method === "GET" && pathname === "/experimental/tool/ids") {
       res.end(JSON.stringify([]));
       return;
     }
-    if (req.method === "GET" && req.url === "/config/providers") {
+    if (req.method === "GET" && pathname === "/config/providers") {
       metadataCalls += 1;
       res.end(JSON.stringify({
         providers: [{
@@ -86,6 +87,11 @@ async function main() {
   const db = await import(pathToFileURL(path.join(REPO, "lib", "db.js")).href);
   await db.initDb();
   const opencode = await import(pathToFileURL(path.join(REPO, "lib", "opencode.js")).href);
+  opencode.markCredentialPlaneReady(
+    OWNER,
+    ["opencode", "google"],
+    "/tmp/test-ai-default-credential-context"
+  );
   const aiChat = await import(pathToFileURL(path.join(REPO, "lib", "ai-chat.js")).href);
   aiChat.capHinhChuTaiKhoan(() => OWNER);
   const architect = await import(pathToFileURL(path.join(REPO, "lib", "onboarding-architect.js")).href);

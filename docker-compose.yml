@@ -28,12 +28,16 @@ services:
       # tu sinh mat khau ngau nhien va in ra log dung mot lan.
       ADMIN_USERNAME: "${ADMIN_USERNAME:-}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+      # Namespace directory vat ly dung rieng cho moi credential projection.
+      # Phai cung absolute path voi OpenCode de session inference realpath duoc.
+      OPENCODE_CONTEXT_ROOT: "/opencode-context"
     ports:
       # Chi mo tren may noi bo. Tren VPS thi bo han dong nay: chi Caddy duoc
       # tiep xuc voi internet.
       - "127.0.0.1:3790:3790"
     volumes:
       - ./data:/app/data
+      - opencode-context:/opencode-context
 
   opencode:
     build: ./opencode
@@ -49,6 +53,7 @@ services:
       # container la mat sach key.
       - ./opencode-data/config:/root/.config/opencode
       - ./opencode-data/share:/root/.local/share/opencode
+      - opencode-context:/opencode-context
 
   caddy:
     image: caddy:2-alpine
@@ -71,3 +76,6 @@ services:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./caddy-data:/data
       - ./caddy-config:/config
+
+volumes:
+  opencode-context:

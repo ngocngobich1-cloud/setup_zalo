@@ -296,6 +296,14 @@
                 <div class="training-heading">
                   <h1 id="training-title">Huấn luyện bot</h1>
                   <p id="training-meta" class="training-meta"></p>
+                  <div id="onboarding-progress" class="training-setup-progress hidden" role="progressbar"
+                    aria-label="Tiến độ thiết lập trợ lý" aria-valuemin="1" aria-valuemax="9" aria-valuenow="1"
+                    aria-hidden="true">
+                    <span id="onboarding-progress-text">Bước 1 trên 9</span>
+                    <span class="training-setup-progress-track" aria-hidden="true">
+                      <span id="onboarding-progress-bar" class="training-setup-progress-bar"></span>
+                    </span>
+                  </div>
                 </div>
                 <div class="training-actions">
                   <button id="btn-training-setup" class="primary-button" type="button">Thiết lập trợ lý</button>
@@ -303,7 +311,14 @@
                   <button id="btn-training-synth" class="secondary-button" type="button">Tổng hợp thành Soul</button>
                   <button id="btn-training-reset" class="secondary-button" type="button">Phiên mới</button>
                   <button id="btn-training-config-toggle" class="secondary-button training-config-toggle" type="button"
-                    aria-expanded="true" aria-controls="training-config-panel" title="Thu gọn cấu hình">Thu gọn cấu hình</button>
+                    aria-expanded="true" aria-controls="training-config-panel" aria-label="Thu gọn cấu hình"
+                    title="Thu gọn cấu hình">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                      <rect x="3" y="4" width="18" height="16" rx="2" />
+                      <path d="M15 4v16M18 9h.01M18 12h.01M18 15h.01" />
+                    </svg>
+                    <span class="sr-only">Thu gọn cấu hình</span>
+                  </button>
                 </div>
               </header>
 
@@ -315,26 +330,36 @@
 
               <form id="training-form" class="training-form">
                 <div id="training-files" class="training-files hidden"></div>
+                <div class="training-tool-row" role="group" aria-label="Đính kèm nội dung">
+                  <input type="file" id="training-file-input" class="hidden" multiple
+                    accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv" />
+                  <button type="button" id="btn-training-attach" class="training-tool-action" aria-label="Đính kèm ảnh" title="Đính kèm ảnh">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                      <rect x="3" y="4" width="18" height="16" rx="2" />
+                      <circle cx="8.5" cy="9" r="1.5" />
+                      <path d="m5 17 4.5-4.5 3.2 3.2 2.2-2.2L19 17" />
+                    </svg>
+                    <span>Ảnh</span>
+                  </button>
+                  <button type="button" id="btn-training-attach-file" class="training-tool-action" aria-label="Đính kèm tệp" title="Đính kèm tệp">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                      <path d="M7 3h7l4 4v14H7z" />
+                      <path d="M14 3v5h5M10 13h5M10 17h5" />
+                    </svg>
+                    <span>Tệp</span>
+                  </button>
+                </div>
                 <div class="training-input-row">
-                  <textarea id="training-text" rows="2"
+                  <textarea id="training-text" rows="1"
                     placeholder="Dán ảnh chat mẫu bằng Ctrl+V, hoặc gõ lời dặn về giọng điệu…"></textarea>
-                  <div class="training-buttons">
-                    <input type="file" id="training-file-input" class="hidden" multiple
-                      accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv" />
-                    <button type="button" id="btn-training-attach" class="secondary-button" title="Đính tệp">📎</button>
-                    <button type="submit" class="primary-button">Gửi</button>
-                  </div>
+                  <button type="submit" class="primary-button training-send-button" aria-label="Gửi tin nhắn">Gửi</button>
                 </div>
               </form>
             </div>
 
             <aside class="training-config-panel" id="training-config-panel" aria-label="Cấu hình trợ lý">
               <header class="training-config-header">
-                <div>
-                  <span class="training-config-kicker">Cấu hình bot</span>
-                  <h3>Dùng đúng cấu hình đang có</h3>
-                </div>
-                <span id="onboarding-progress" class="onboarding-progress hidden">Bước 1 trên 9</span>
+                <span class="training-config-kicker">Cấu hình bot</span>
               </header>
 
               <div class="canonical-config-stack">
@@ -421,7 +446,7 @@
                   </div>
                 </section>
 
-                <section class="canonical-config-section canonical-config-accordion training-key-disabled" data-canonical-slot="api-key">
+                <section class="canonical-config-section canonical-config-accordion" data-canonical-slot="api-key">
                   <header class="canonical-config-section-header">
                     <h2 class="training-config-section-title">2. Kết nối API key</h2>
                     <button class="canonical-section-toggle" type="button" aria-expanded="true" aria-controls="training-section-api-key" aria-label="Thu gọn mục Kết nối API key">
@@ -430,16 +455,17 @@
                   </header>
                   <div id="training-section-api-key" class="canonical-config-section-content">
                     <div class="training-key-grid">
-                      <select id="training-key-provider" class="auth-input" disabled aria-label="Chọn hãng AI">
-                        <option>Chọn hãng</option>
+                      <select id="training-key-provider" class="auth-input" aria-label="Chọn hãng AI">
+                        <option value="">Chọn hãng</option>
                       </select>
-                      <input id="training-key-value" class="auth-input" type="password" disabled
+                      <input id="training-key-value" class="auth-input" type="password"
                         placeholder="Dán API key" autocomplete="off" aria-label="API key" />
                     </div>
                     <div class="training-key-actions">
                       <button id="btn-training-key-save" class="secondary-button" type="button" disabled aria-disabled="true">Lưu key</button>
                       <button id="btn-training-key-test" class="secondary-button" type="button" disabled aria-disabled="true">Thử key</button>
-                      <button id="btn-training-key-clear" class="secondary-button" type="button" disabled aria-disabled="true">Gỡ toàn bộ key</button>
+                      <button id="btn-training-key-delete" class="secondary-button" type="button" disabled aria-disabled="true">Gỡ key hãng này</button>
+                      <button id="btn-training-key-clear" class="secondary-button" type="button" disabled aria-disabled="true">Gỡ tất cả key của tôi</button>
                     </div>
                     <div id="training-connected-providers" class="training-connected-providers" aria-live="polite">
                       <span>Hãng đã kết nối</span>
@@ -650,11 +676,12 @@
       <div class="modal-content onboarding-first-run-card">
         <div class="onboarding-first-run-icon" aria-hidden="true">AI</div>
         <h2 id="first-run-title">Bắt đầu cài đặt trợ lý AI hỗ trợ bạn</h2>
-        <p>Em sẽ hướng dẫn từng bước ngay trên những ô cấu hình sẵn có. Chị có thể dừng và tiếp tục vào lần sau.</p>
+        <p class="onboarding-first-run-copy">Em sẽ hướng dẫn từng bước ngay trên những ô cấu hình sẵn có. Chị có thể dừng và tiếp tục vào lần sau.</p>
         <div class="onboarding-first-run-actions">
           <button id="btn-onboarding-later" class="secondary-button" type="button">Để sau</button>
           <button id="btn-onboarding-start" class="primary-button" type="button">Bắt đầu</button>
         </div>
+        <p class="onboarding-first-run-note">Hộp này chỉ hiện đúng một lần cho tài khoản Zalo mới. Bấm gì đi nữa thì lần sau mở app cũng không hiện lại.</p>
       </div>
     </div>
 

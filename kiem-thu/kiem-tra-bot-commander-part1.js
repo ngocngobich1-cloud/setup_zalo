@@ -24,6 +24,8 @@ const DB_SOURCE_PATH = path.join(REPO, "lib", "db.js");
 const ONBOARDING_SOURCE_PATH = path.join(REPO, "lib", "onboarding.js");
 const PUBLIC_ONBOARDING_PATH = path.join(REPO, "public", "onboarding.js");
 const PUBLIC_CONFIG_PATH = path.join(REPO, "public", "config.js");
+const PUBLIC_TRAINING_PATH = path.join(REPO, "public", "training.js");
+const PUBLIC_APP_PATH = path.join(REPO, "public", "app.js");
 const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "zalo-bot-commander-part1-"));
 const ORIGINAL_CWD = process.cwd();
 const APP_SECRET_KEY_TRUOC = process.env.APP_SECRET_KEY;
@@ -45,6 +47,8 @@ const dbSource = fs.readFileSync(DB_SOURCE_PATH, "utf8");
 const onboardingSource = fs.readFileSync(ONBOARDING_SOURCE_PATH, "utf8");
 const publicOnboardingSource = fs.readFileSync(PUBLIC_ONBOARDING_PATH, "utf8");
 const publicConfigSource = fs.readFileSync(PUBLIC_CONFIG_PATH, "utf8");
+const publicTrainingSource = fs.readFileSync(PUBLIC_TRAINING_PATH, "utf8");
+const publicAppSource = fs.readFileSync(PUBLIC_APP_PATH, "utf8");
 
 function response(status, data) {
   return {
@@ -131,6 +135,11 @@ function taoUiFixture() {
 
   let currentOwner = "historical";
   let mutationCalls = 0;
+  let onboardingGetCalls = 0;
+  let onboardingAnswerCalls = 0;
+  let trainingMessageCalls = 0;
+  let pendingOnboardingGate = null;
+  const ownerCredentialIds = new Set();
   const actionCalls = [];
   const routes = [];
   const states = new Map([
@@ -157,16 +166,43 @@ function taoUiFixture() {
   const providers = [{
     id: "openai",
     name: "OpenAI",
-    connected: true,
+    connected: false,
     models: [{ id: "openai/gpt-4.1", label: "GPT-4.1", context: 100000, beta: false }],
   }];
 
   const fetchImpl = async (input, options = {}) => {
     const url = String(input);
     const method = String(options.method || "GET").toUpperCase();
-    if (/^\/api\/ai-chat\/provider-key/.test(url)) {
+    if (url === "/api/ai-chat/owner-credentials" && method === "GET") {
+      return response(200, {
+        providers: [...ownerCredentialIds].map((providerId) => ({
+          providerId,
+          providerName: providers.find((provider) => provider.id === providerId)?.name || providerId,
+          connected: true,
+          updatedAt: Date.now(),
+        })),
+      });
+    }
+    if (url === "/api/ai-chat/owner-credentials" && method === "POST") {
+      const body = JSON.parse(options.body || "{}");
+      ownerCredentialIds.add(body.providerId);
       mutationCalls += 1;
-      return response(500, { error: "Part 1 fixture must never reach credential mutation." });
+      return response(200, { ok: true, providerId: body.providerId, updatedAt: Date.now() });
+    }
+    if (url === "/api/ai-chat/owner-credentials/test" && method === "POST") {
+      const body = JSON.parse(options.body || "{}");
+      if (!ownerCredentialIds.has(body.providerId)) return response(400, { error: "CREDENTIAL_NOT_SAVED" });
+      return response(200, { ok: true, model: `${body.providerId}/gpt-4.1`, reply: "OK" });
+    }
+    if (/^\/api\/ai-chat\/owner-credentials\//.test(url) && method === "DELETE") {
+      ownerCredentialIds.delete(decodeURIComponent(url.split("/").pop()));
+      mutationCalls += 1;
+      return response(200, { ok: true });
+    }
+    if (url === "/api/ai-chat/owner-credentials" && method === "DELETE") {
+      ownerCredentialIds.clear();
+      mutationCalls += 1;
+      return response(200, { ok: true });
     }
     if (url === "/api/zalo/groups") return response(200, { groups: [] });
     if (url === "/api/knowledge") return response(200, { files: [] });
@@ -191,6 +227,10 @@ function taoUiFixture() {
       });
     }
     if (url === "/api/onboarding" && method === "GET") {
+      onboardingGetCalls += 1;
+      const gate = pendingOnboardingGate;
+      pendingOnboardingGate = null;
+      if (gate) await gate.promise;
       return response(200, stateFor());
     }
     if (url === "/api/onboarding/action" && method === "POST") {
@@ -198,10 +238,30 @@ function taoUiFixture() {
       actionCalls.push({ owner: currentOwner, action: body.action });
       const state = stateFor();
       if (body.action === "invite_seen") state.data.firstSetupInviteSeen = true;
-      if (body.action === "start" && Number(state.step) === 0) {
-        state.step = 1;
+      if (body.action === "start" && (state.completed || Number(state.step) === 0)) {
+        const flags = {
+          firstSetupInviteSeen: state.data?.firstSetupInviteSeen === true,
+          guidanceCompleted: state.data?.guidanceCompleted === true,
+        };
+        state.step = 4;
         state.started = true;
+        state.completed = false;
+        state.prompt = "Bot Chỉ huy đã sẵn sàng.";
+        state.data = flags;
       }
+      return response(200, state);
+    }
+    if (url === "/api/onboarding/answer" && method === "POST") {
+      onboardingAnswerCalls += 1;
+      const body = JSON.parse(options.body || "{}");
+      const state = stateFor();
+      if (!state.data || typeof state.data !== "object") state.data = {};
+      if (!Array.isArray(state.data.transcript)) state.data.transcript = [];
+      state.data.transcript.push({ role: "user", content: body.text });
+      state.data.transcript.push({ role: "assistant", content: `Bot explicit: ${body.text}` });
+      state.step = Math.max(5, Number(state.step) || 0);
+      state.started = true;
+      state.prompt = `Bot explicit: ${body.text}`;
       return response(200, state);
     }
     if (url === "/api/training" && method === "GET") {
@@ -211,6 +271,10 @@ function taoUiFixture() {
         sessionId: null,
         messages: [],
       });
+    }
+    if (url === "/api/training/message" && method === "POST") {
+      trainingMessageCalls += 1;
+      return response(200, { ok: true, reply: "Bot normal" });
     }
     return response(404, { error: `Fixture route not found: ${method} ${url}` });
   };
@@ -224,6 +288,15 @@ function taoUiFixture() {
     get currentOwner() { return currentOwner; },
     set currentOwner(value) { currentOwner = value; },
     get mutationCalls() { return mutationCalls; },
+    get onboardingAnswerCalls() { return onboardingAnswerCalls; },
+    get onboardingGetCalls() { return onboardingGetCalls; },
+    get trainingMessageCalls() { return trainingMessageCalls; },
+    deferNextOnboardingGet() {
+      let release;
+      const promise = new Promise((resolve) => { release = resolve; });
+      pendingOnboardingGate = { promise, release };
+      return release;
+    },
     providers,
     routes,
     stateFor,
@@ -240,6 +313,7 @@ ui.document.querySelector("#modal-body-container").append(aiPanel);
 configModule.CONFIG_TABS.find((tab) => tab.id === "ai-chat").mount(aiPanel);
 await choDen(() => ui.document.querySelector("#ai-oc-provider")?.options.length > 1, "AI fixture mount failed.");
 const publicOnboarding = await import(pathToFileURL(PUBLIC_ONBOARDING_PATH).href);
+const publicTraining = await import(pathToFileURL(PUBLIC_TRAINING_PATH).href);
 publicOnboarding.khoiTaoOnboarding({
   selectModule(target, options = {}) {
     ui.routes.push({ target, options });
@@ -410,7 +484,7 @@ await bai("T6", "Explicit setup is transient and provides Exit Setup", async () 
   assert.equal(ui.document.querySelector("#module-training").dataset.trainingMode, "normal");
 });
 
-await bai("T7", "Common coach gate covers normal, explicit, rerender, dismissal and completed guidance", async () => {
+await bai("T7", "Common coach gate covers normal, explicit, rerender, dismissal and historical guidance", async () => {
   await publicOnboarding.datManHinhHuanLuyen(false);
   await publicOnboarding.datManHinhHuanLuyen(true);
   assert.equal(ui.document.querySelector("#onboarding-coach").classList.contains("hidden"), true);
@@ -434,21 +508,440 @@ await bai("T7", "Common coach gate covers normal, explicit, rerender, dismissal 
   await publicOnboarding.datManHinhHuanLuyen(true, { explicitSetup: true });
   publicOnboarding.sauKhiDongCauHinh();
   await choTick(20);
-  assert.equal(ui.document.querySelector("#onboarding-coach").classList.contains("hidden"), true);
-  assert.equal(ui.document.querySelector("#onboarding-progress").classList.contains("hidden"), true);
+  assert.equal(ui.document.querySelector("#onboarding-coach").classList.contains("hidden"), false);
+  assert.equal(ui.document.querySelector("#onboarding-progress").classList.contains("hidden"), false);
 });
 
 await bai("T8", "Only the successful assistant-config branch completes guidance", async () => {
   const routeStart = serverSource.indexOf('app.post("/api/ai-chat"');
   const aiConnection = serverSource.indexOf('saveScope === "ai-connection"', routeStart);
-  const connectionReturn = serverSource.indexOf("return res.json({ ok: true, config", aiConnection);
+  const connectionReturn = serverSource.indexOf("return res.json({", aiConnection);
   const guidance = serverSource.indexOf('"guidance_completed"', connectionReturn);
-  const assistantResponse = serverSource.indexOf("res.json({ ok: true, config", guidance);
+  const assistantResponse = serverSource.indexOf("res.json({", guidance);
   assert.ok(routeStart >= 0 && aiConnection > routeStart && connectionReturn > aiConnection);
   assert.ok(guidance > connectionReturn && assistantResponse > guidance);
   assert.equal(serverSource.slice(aiConnection, connectionReturn).includes("guidance_completed"), false);
   const adminRoute = serverSource.indexOf('app.post("/api/admin-zalo"');
   assert.equal(serverSource.slice(adminRoute, adminRoute + 1800).includes("guidance_completed"), false);
+});
+
+await bai("A1", "Completed setup can enter a clean explicit pass exactly once", async () => {
+  ui.states.set("lane-a-completed", {
+    step: "completed",
+    started: true,
+    completed: true,
+    prompt: "old prompt",
+    data: {
+      firstSetupInviteSeen: true,
+      guidanceCompleted: true,
+      transcript: [{ role: "user", content: "old" }],
+      draft: { soul: "old draft" },
+    },
+  });
+  publicTraining.invalidateTrainingOwnerState();
+  await becomeOwner("lane-a-completed");
+  await publicOnboarding.datManHinhHuanLuyen(true);
+  const before = ui.actionCalls.filter((entry) => entry.owner === "lane-a-completed" && entry.action === "start").length;
+  ui.document.querySelector("#btn-training-setup").click();
+  ui.document.querySelector("#btn-training-setup").click();
+  await choDen(() => ui.document.querySelector("#module-training").dataset.trainingMode === "explicit", "manual setup did not enter explicit mode");
+  const starts = ui.actionCalls.filter((entry) => entry.owner === "lane-a-completed" && entry.action === "start").length;
+  assert.equal(starts - before, 1);
+  assert.equal(ui.stateFor("lane-a-completed").completed, false);
+  assert.equal(ui.stateFor("lane-a-completed").step, 4);
+  assert.deepEqual(ui.stateFor("lane-a-completed").data, {
+    firstSetupInviteSeen: true,
+    guidanceCompleted: true,
+  });
+});
+
+await bai("T2-LA", "Auto-entry baseline stays unchanged for completed and first-run owners", async () => {
+  ui.states.set("lane-a-auto-completed", {
+    step: "completed", started: true, completed: true, prompt: "", data: {
+      firstSetupInviteSeen: true, guidanceCompleted: true,
+    },
+  });
+  ui.routes.length = 0;
+  const completedStarts = ui.actionCalls.filter((entry) => entry.owner === "lane-a-auto-completed" && entry.action === "start").length;
+  await becomeOwner("lane-a-auto-completed", { justLoggedIn: true });
+  assert.deepEqual(ui.routes.map((entry) => entry.target), ["zalo"]);
+  assert.equal(ui.document.querySelector("#first-run-modal").classList.contains("hidden"), true);
+  assert.equal(
+    ui.actionCalls.filter((entry) => entry.owner === "lane-a-auto-completed" && entry.action === "start").length,
+    completedStarts
+  );
+
+  ui.states.set("lane-a-auto-first", { step: 0, started: false, completed: false, prompt: "", data: {} });
+  ui.routes.length = 0;
+  await becomeOwner("lane-a-auto-first", { justLoggedIn: true });
+  assert.deepEqual(ui.routes.map((entry) => entry.target), ["zalo"]);
+  assert.equal(ui.document.querySelector("#first-run-modal").classList.contains("hidden"), false);
+  assert.equal(ui.actionCalls.some((entry) => entry.owner === "lane-a-auto-first" && entry.action === "start"), false);
+  ui.document.querySelector("#btn-onboarding-later").click();
+  await choDen(() => ui.document.querySelector("#first-run-modal").classList.contains("hidden"), "first-run cleanup failed");
+});
+
+await bai("A2", "Pre-hydration double-click is queued and replayed once", async () => {
+  ui.states.set("lane-a-deferred", {
+    step: "completed", started: true, completed: true, prompt: "", data: {
+      firstSetupInviteSeen: true, guidanceCompleted: true,
+    },
+  });
+  publicTraining.invalidateTrainingOwnerState();
+  ui.currentOwner = "lane-a-deferred";
+  configModule.setSettingsOwnerUid("lane-a-deferred");
+  const release = ui.deferNextOnboardingGet();
+  const getBefore = ui.onboardingGetCalls;
+  const sync = publicOnboarding.dongBoTrangThaiZalo({ loggedIn: true, justLoggedIn: false, ownerUid: "lane-a-deferred" });
+  await choDen(() => ui.onboardingGetCalls === getBefore + 1, "deferred hydration did not start");
+  ui.document.querySelector("#btn-training-setup").click();
+  ui.document.querySelector("#btn-training-setup").click();
+  release();
+  await sync;
+  await choDen(() => ui.document.querySelector("#module-training").dataset.trainingMode === "explicit", "queued setup intent was not replayed");
+  assert.equal(
+    ui.actionCalls.filter((entry) => entry.owner === "lane-a-deferred" && entry.action === "start").length,
+    1
+  );
+  assert.equal(ui.onboardingGetCalls, getBefore + 1);
+});
+
+await bai("A3", "Normal and explicit composers remain route-isolated with chronological transcript", async () => {
+  ui.states.set("lane-a-routes", {
+    step: 4, started: true, completed: false, prompt: "Bot explicit đầu", data: { firstSetupInviteSeen: true },
+  });
+  publicTraining.invalidateTrainingOwnerState();
+  await becomeOwner("lane-a-routes");
+  await publicOnboarding.datManHinhHuanLuyen(true);
+  const normalBefore = ui.trainingMessageCalls;
+  const explicitBefore = ui.onboardingAnswerCalls;
+  const setupBeforeNormal = structuredClone(ui.stateFor("lane-a-routes"));
+  const form = ui.document.querySelector("#training-form");
+  const input = ui.document.querySelector("#training-text");
+  input.value = "Lời dặn thường";
+  form.dispatchEvent(new ui.window.Event("submit", { bubbles: true, cancelable: true }));
+  await choDen(() => ui.trainingMessageCalls === normalBefore + 1, "normal route was not called");
+  await choDen(() => [...ui.document.querySelectorAll(".training-msg-body")].some((node) => node.textContent === "Bot normal"), "normal reply missing");
+  assert.deepEqual(ui.stateFor("lane-a-routes"), setupBeforeNormal);
+
+  ui.document.querySelector("#btn-training-setup").click();
+  await choDen(() => ui.document.querySelector("#module-training").dataset.trainingMode === "explicit", "explicit route did not activate");
+  input.value = "Câu trả lời explicit";
+  form.dispatchEvent(new ui.window.Event("submit", { bubbles: true, cancelable: true }));
+  await choDen(() => ui.onboardingAnswerCalls === explicitBefore + 1, "onboarding route was not called");
+  await choDen(
+    () => [...ui.document.querySelectorAll(".training-msg-body")].some((node) => node.textContent === "Bot explicit: Câu trả lời explicit"),
+    "explicit reply missing"
+  );
+  assert.equal(ui.trainingMessageCalls, normalBefore + 1);
+  const transcript = [...ui.document.querySelectorAll(".training-msg-body")].map((node) => node.textContent);
+  const ordered = ["Lời dặn thường", "Bot normal", "Câu trả lời explicit", "Bot explicit: Câu trả lời explicit"];
+  for (const text of ordered) assert.ok(transcript.includes(text), `Missing ${text}: ${JSON.stringify(transcript)}`);
+  for (let index = 1; index < ordered.length; index += 1) {
+    assert.ok(
+      transcript.indexOf(ordered[index - 1]) < transcript.indexOf(ordered[index]),
+      `Transcript order mismatch: ${JSON.stringify(transcript)}`
+    );
+  }
+});
+
+await bai("F1", "Explicit Setup preserves three complete interleaved user/assistant turns", async () => {
+  ui.states.set("final-chronology", {
+    step: 4, started: true, completed: false, prompt: "Bot mở đầu", data: { firstSetupInviteSeen: true, transcript: [] },
+  });
+  publicTraining.invalidateTrainingOwnerState();
+  await becomeOwner("final-chronology");
+  await publicOnboarding.datManHinhHuanLuyen(true, { explicitSetup: true });
+  const form = ui.document.querySelector("#training-form");
+  const input = ui.document.querySelector("#training-text");
+  const before = ui.onboardingAnswerCalls;
+  for (let turn = 1; turn <= 3; turn += 1) {
+    input.value = `USER-${turn}`;
+    form.dispatchEvent(new ui.window.Event("submit", { bubbles: true, cancelable: true }));
+    await choDen(() => ui.onboardingAnswerCalls === before + turn, `explicit turn ${turn} did not reach onboarding`);
+    await choDen(
+      () => [...ui.document.querySelectorAll(".training-msg-body")]
+        .some((node) => node.textContent === `Bot explicit: USER-${turn}`),
+      `explicit assistant turn ${turn} missing`
+    );
+  }
+  const rendered = [...ui.document.querySelectorAll(".training-msg-body")].map((node) => node.textContent);
+  const expected = [
+    "USER-1", "Bot explicit: USER-1",
+    "USER-2", "Bot explicit: USER-2",
+    "USER-3", "Bot explicit: USER-3",
+  ];
+  const positions = expected.map((text) => rendered.indexOf(text));
+  assert.ok(positions.every((position) => position >= 0), JSON.stringify(rendered));
+  assert.deepEqual([...positions].sort((a, b) => a - b), positions);
+  for (const text of expected.filter((_, index) => index % 2 === 1)) {
+    assert.equal(rendered.filter((entry) => entry === text).length, 1, text);
+  }
+});
+
+await bai("F2", "Assistant turns separated by a user remain distinct DOM rows", async () => {
+  const rows = [...ui.document.querySelectorAll("#training-log .training-msg")];
+  const bot1 = rows.find((row) => row.querySelector(".training-msg-body")?.textContent === "Bot explicit: USER-1");
+  const bot2 = rows.find((row) => row.querySelector(".training-msg-body")?.textContent === "Bot explicit: USER-2");
+  const user2 = rows.find((row) => row.querySelector(".training-msg-body")?.textContent === "USER-2");
+  assert.ok(bot1 && user2 && bot2);
+  assert.notEqual(bot1, bot2);
+  assert.ok(rows.indexOf(bot1) < rows.indexOf(user2));
+  assert.ok(rows.indexOf(user2) < rows.indexOf(bot2));
+});
+
+await bai("F4", "Completed Explicit composer cannot silently start a new pass", async () => {
+  const completedData = {
+    firstSetupInviteSeen: true,
+    guidanceCompleted: true,
+    transcript: [{ role: "assistant", content: "Đã hoàn tất" }],
+    draft: { soul: "draft cũ", roleTone: "tone cũ", allowedTopics: "topics cũ" },
+  };
+  ui.states.set("final-completed-send", {
+    step: "completed", started: true, completed: true, prompt: "", data: structuredClone(completedData),
+  });
+  publicTraining.invalidateTrainingOwnerState();
+  await becomeOwner("final-completed-send");
+  await publicOnboarding.datManHinhHuanLuyen(true, { explicitSetup: true });
+  const starts = ui.actionCalls.filter((entry) => entry.owner === "final-completed-send" && entry.action === "start").length;
+  const answers = ui.onboardingAnswerCalls;
+  const normal = ui.trainingMessageCalls;
+  ui.document.querySelector("#training-text").value = "Không được tự restart";
+  ui.document.querySelector("#training-form").dispatchEvent(new ui.window.Event("submit", { bubbles: true, cancelable: true }));
+  await choDen(
+    () => [...ui.document.querySelectorAll(".training-msg-body")]
+      .some((node) => node.textContent.includes("Hãy bấm Thiết lập trợ lý")),
+    "completed-state send did not show the canonical re-entry instruction"
+  );
+  assert.equal(ui.actionCalls.filter((entry) => entry.owner === "final-completed-send" && entry.action === "start").length, starts);
+  assert.equal(ui.onboardingAnswerCalls, answers);
+  assert.equal(ui.trainingMessageCalls, normal);
+  assert.equal(ui.stateFor("final-completed-send").completed, true);
+  assert.deepEqual(ui.stateFor("final-completed-send").data, completedData);
+});
+
+await bai("F5", "Completed owner manual re-entry still starts exactly one clean pass", async () => {
+  ui.states.set("final-manual-reentry", {
+    step: "completed", started: true, completed: true, prompt: "", data: {
+      firstSetupInviteSeen: true, guidanceCompleted: true,
+    },
+  });
+  publicTraining.invalidateTrainingOwnerState();
+  await becomeOwner("final-manual-reentry");
+  await publicOnboarding.datManHinhHuanLuyen(true);
+  ui.document.querySelector("#btn-training-setup").click();
+  ui.document.querySelector("#btn-training-setup").click();
+  await choDen(() => ui.stateFor("final-manual-reentry").completed === false, "manual re-entry did not start");
+  assert.equal(
+    ui.actionCalls.filter((entry) => entry.owner === "final-manual-reentry" && entry.action === "start").length,
+    1
+  );
+});
+
+await bai("F6", "Queued pre-hydration Setup consumes first-run invite exactly once", async () => {
+  ui.states.set("final-queued-invite", {
+    step: 0, started: false, completed: false, prompt: "", data: { firstSetupInviteSeen: false },
+  });
+  publicTraining.invalidateTrainingOwnerState();
+  ui.currentOwner = "final-queued-invite";
+  configModule.setSettingsOwnerUid("final-queued-invite");
+  const release = ui.deferNextOnboardingGet();
+  const gets = ui.onboardingGetCalls;
+  const sync = publicOnboarding.dongBoTrangThaiZalo({
+    loggedIn: true, justLoggedIn: false, ownerUid: "final-queued-invite",
+  });
+  await choDen(() => ui.onboardingGetCalls === gets + 1, "queued owner hydration did not start");
+  ui.document.querySelector("#btn-training-setup").click();
+  ui.document.querySelector("#btn-training-setup").click();
+  release();
+  await sync;
+  await choDen(() => ui.stateFor("final-queued-invite").data.firstSetupInviteSeen === true, "invite_seen was not persisted");
+  const ownerActions = ui.actionCalls.filter((entry) => entry.owner === "final-queued-invite").map((entry) => entry.action);
+  assert.equal(ownerActions.filter((action) => action === "start").length, 1);
+  assert.equal(ownerActions.filter((action) => action === "invite_seen").length, 1);
+
+  await publicOnboarding.dongBoTrangThaiZalo({
+    loggedIn: true, justLoggedIn: true, ownerUid: "final-queued-invite",
+  });
+  await choTick(20);
+  assert.equal(ui.document.querySelector("#first-run-modal").classList.contains("hidden"), true);
+  assert.equal(
+    ui.actionCalls.filter((entry) => entry.owner === "final-queued-invite" && entry.action === "invite_seen").length,
+    1
+  );
+});
+
+await bai("A4", "Invalid explicit state rehydrates once, errors visibly, and never falls through", async () => {
+  ui.states.set("lane-a-invalid", {
+    step: 8, started: true, completed: false, prompt: "", data: { firstSetupInviteSeen: true },
+  });
+  publicTraining.invalidateTrainingOwnerState();
+  await becomeOwner("lane-a-invalid");
+  await publicOnboarding.datManHinhHuanLuyen(true, { explicitSetup: true });
+  const gets = ui.onboardingGetCalls;
+  const normal = ui.trainingMessageCalls;
+  const explicit = ui.onboardingAnswerCalls;
+  ui.document.querySelector("#training-text").value = "Không được rơi route";
+  ui.document.querySelector("#training-form").dispatchEvent(new ui.window.Event("submit", { bubbles: true, cancelable: true }));
+  await choDen(
+    () => [...ui.document.querySelectorAll(".training-msg-body")].some((node) => node.textContent.startsWith("Lỗi: Tiến trình thiết lập")),
+    "explicit recovery error was not visible"
+  );
+  assert.equal(ui.onboardingGetCalls, gets + 1);
+  assert.equal(ui.trainingMessageCalls, normal);
+  assert.equal(ui.onboardingAnswerCalls, explicit);
+});
+
+await bai("A5", "Step 7 discloses exactly which non-empty editor fields will be replaced", async () => {
+  ui.states.set("lane-a-disclosure", {
+    step: 7, started: true, completed: false, prompt: "Duyệt bản nháp", data: { firstSetupInviteSeen: true },
+  });
+  publicTraining.invalidateTrainingOwnerState();
+  await becomeOwner("lane-a-disclosure");
+  await publicOnboarding.datManHinhHuanLuyen(true, { explicitSetup: true });
+  ui.document.querySelector("#ai-soul").value = "Soul đang lưu";
+  ui.document.querySelector("#ai-role").value = "Giọng đang lưu";
+  ui.document.querySelector("#ai-topics").value = "";
+  publicOnboarding.sauKhiDongCauHinh();
+  await choTick(30);
+  const disclosure = ui.document.querySelector("[data-onboarding-message]")?.textContent || "";
+  assert.match(disclosure, /Bản thiết lập mới sẽ thay nội dung hiện đang có trong editor ở:/);
+  assert.match(disclosure, /- Soul/);
+  assert.match(disclosure, /- Giọng điệu và vai trò/);
+  assert.equal(disclosure.includes("- Chủ đề được phép trả lời"), false);
+});
+
+await bai("A5B", "Step 8 stages draft only in the editor and canonical hydration restores saved config", async () => {
+  ui.states.set("lane-a-autofill", {
+    step: 8,
+    started: true,
+    completed: false,
+    prompt: "",
+    data: {
+      firstSetupInviteSeen: true,
+      draft: { soul: "Draft Soul", roleTone: "Draft role", allowedTopics: "Draft topics" },
+    },
+  });
+  publicTraining.invalidateTrainingOwnerState();
+  await becomeOwner("lane-a-autofill");
+  await publicOnboarding.datManHinhHuanLuyen(true, { explicitSetup: true });
+  assert.equal(ui.document.querySelector("#ai-soul").value, "Draft Soul");
+  assert.equal(ui.document.querySelector("#ai-role").value, "Draft role");
+  assert.equal(ui.document.querySelector("#ai-topics").value, "Draft topics");
+
+  await publicOnboarding.datManHinhHuanLuyen(false);
+  assert.equal(await configModule.refreshAiChatConfigForCurrentOwner(), true);
+  assert.equal(ui.document.querySelector("#ai-soul").value, "fixture");
+  assert.equal(ui.document.querySelector("#ai-role").value, "warm");
+  assert.equal(ui.document.querySelector("#ai-topics").value, "support");
+});
+
+await bai("A6", "Canonical owner invalidation resets transient starter consumption", async () => {
+  ui.states.set("lane-a-owner-a", {
+    step: 4, started: true, completed: false, prompt: "A", data: { firstSetupInviteSeen: true },
+  });
+  ui.states.set("lane-a-owner-b", {
+    step: 4, started: true, completed: false, prompt: "B", data: { firstSetupInviteSeen: true },
+  });
+  publicTraining.invalidateTrainingOwnerState();
+  await becomeOwner("lane-a-owner-a");
+  await publicOnboarding.datManHinhHuanLuyen(true, { explicitSetup: true });
+  const starter = ui.document.querySelector("#onboarding-starters");
+  assert.equal(starter.classList.contains("hidden"), false);
+  const answers = ui.onboardingAnswerCalls;
+  ui.document.querySelector("#btn-onboarding-starter").click();
+  await choDen(() => ui.onboardingAnswerCalls === answers + 1, "owner A did not consume starter");
+  assert.equal(starter.classList.contains("hidden"), true);
+
+  publicTraining.invalidateTrainingOwnerState();
+  await becomeOwner("lane-a-owner-b");
+  await publicOnboarding.datManHinhHuanLuyen(true, { explicitSetup: true });
+  assert.equal(starter.classList.contains("hidden"), false);
+  const invalidator = publicAppSource.slice(
+    publicAppSource.indexOf("function invalidateOwnerFrontendState"),
+    publicAppSource.indexOf("function renderShell")
+  );
+  assert.match(invalidator, /invalidateTrainingOwnerState\(\)/);
+});
+
+await bai("P0-STATIC", "Training and onboarding pre-save routes have zero assistant-config write authority", async () => {
+  const onboardingRouteStart = serverSource.indexOf('app.post("/api/onboarding/answer"');
+  const onboardingRouteEnd = serverSource.indexOf("/* --- XUONG HUAN LUYEN", onboardingRouteStart);
+  const trainingRouteStart = serverSource.indexOf('app.post("/api/training/message"');
+  const trainingRouteEnd = serverSource.indexOf('app.post("/api/training/synthesize"', trainingRouteStart);
+  assert.equal(serverSource.slice(onboardingRouteStart, onboardingRouteEnd).includes("saveAiChatConfig"), false);
+  assert.equal(serverSource.slice(trainingRouteStart, trainingRouteEnd).includes("saveAiChatConfig"), false);
+  assert.equal(onboardingSource.includes("saveAiChatConfig"), false);
+  assert.equal(fs.readFileSync(path.join(REPO, "lib", "training.js"), "utf8").includes("saveAiChatConfig"), false);
+  assert.equal((serverSource.match(/saveAiChatConfig\(ownerUid/g) || []).length, 2);
+  const connectionWrite = serverSource.slice(serverSource.indexOf("await saveAiChatConfig(ownerUid", serverSource.indexOf('saveScope === "ai-connection"')), serverSource.indexOf("await aiChat.refreshConfig()", serverSource.indexOf('saveScope === "ai-connection"')));
+  assert.equal(/allowedTopics|roleTone|soul/.test(connectionWrite), false);
+  const assistantSubmit = publicConfigSource.slice(publicConfigSource.indexOf('form.addEventListener("submit"'), publicConfigSource.indexOf("// Nap lai danh sach nhom", publicConfigSource.indexOf('form.addEventListener("submit"')));
+  assert.match(assistantSubmit, /fetch\("\/api\/ai-chat"/);
+  assert.match(assistantSubmit, /soul:\s*soulInput/);
+  assert.match(assistantSubmit, /allowedTopics:\s*topicsInput/);
+  assert.match(assistantSubmit, /roleTone:\s*roleInput/);
+  assert.equal(publicOnboardingSource.includes('fetch("/api/ai-chat"'), false);
+});
+
+await bai("P0-BEHAVIOR", "Step 8 draft causes zero config write; reload stays original until explicit Save", async () => {
+  const owner = "lane-a-write-authority";
+  await db.saveAiChatConfig(owner, {
+    soul: "Soul nguyên bản",
+    roleTone: "Giọng nguyên bản",
+    allowedTopics: "Chủ đề nguyên bản",
+    opencodeModel: "openai/gpt-4.1",
+  });
+  await db.saveAccountConfig(owner, {
+    setupStep: 9,
+    setupCompleted: true,
+    setupData: {
+      firstSetupInviteSeen: true,
+      guidanceCompleted: true,
+      transcript: [{ role: "user", content: "stale" }],
+      draft: { soul: "stale" },
+    },
+  });
+  const restarted = await onboardingDb.xuLyHanhDongOnboarding(owner, "start");
+  assert.equal(restarted.completed, false);
+  assert.equal(Number(restarted.step), 4);
+  assert.equal(restarted.data.firstSetupInviteSeen, true);
+  assert.equal(restarted.data.guidanceCompleted, true);
+  assert.deepEqual(restarted.data.transcript, []);
+  assert.deepEqual(restarted.data.draft, { soul: "", roleTone: "", allowedTopics: "" });
+
+  await db.saveAccountConfig(owner, {
+    setupStep: 7,
+    setupCompleted: false,
+    setupData: {
+      firstSetupInviteSeen: true,
+      guidanceCompleted: true,
+      phase: "final_review",
+      draft: { soul: "Soul mới", roleTone: "Giọng mới", allowedTopics: "Chủ đề mới" },
+    },
+  });
+  const selectConfigRow = () => sqlDb.prepare(
+    "SELECT allowed_topics, role_tone, soul, updated_at FROM ai_chat_config WHERE owner_uid = ?"
+  ).get(owner);
+  const before = selectConfigRow();
+  const step8 = await onboardingDb.traLoiOnboarding(owner, "OK");
+  const afterDraft = selectConfigRow();
+  assert.equal(Number(step8.step), 8);
+  assert.deepEqual(afterDraft, before);
+  const reloaded = await db.getAiChatConfig(owner);
+  assert.equal(reloaded.soul, "Soul nguyên bản");
+  assert.equal(reloaded.roleTone, "Giọng nguyên bản");
+  assert.equal(reloaded.allowedTopics, "Chủ đề nguyên bản");
+
+  await db.saveAiChatConfig(owner, {
+    soul: step8.data.draft.soul,
+    roleTone: step8.data.draft.roleTone,
+    allowedTopics: step8.data.draft.allowedTopics,
+  });
+  const afterSave = await db.getAiChatConfig(owner);
+  assert.equal(afterSave.soul, "Soul mới");
+  assert.equal(afterSave.roleTone, "Giọng mới");
+  assert.equal(afterSave.allowedTopics, "Chủ đề mới");
 });
 
 await bai("T9", "No fake session-history or Soul-history UI exists", async () => {
@@ -464,7 +957,7 @@ await bai("T10", "Real desktop Training rule has the approved Config track witho
   const trainingLayoutCss = layCssBlock(css, ".training-layout");
   assert.match(
     trainingLayoutCss,
-    /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(460px,\s*0\.9fr\)/
+    /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+clamp\(480px,\s*36vw,\s*520px\)/
   );
   const mobileStart = css.indexOf("@media (max-width: 980px)");
   const mobileEnd = css.indexOf("@media (max-width: 600px)", mobileStart);
@@ -540,40 +1033,79 @@ await bai("T12", "Block 1 preserves verified links and keeps unverified provider
 });
 
 await bai("T13", "Block 2 keeps the canonical customer-facing layout", async () => {
+  await publicTraining.napHuanLuyen();
+  await choDen(
+    () => ui.document.querySelector("#training-key-provider")?.options.length > 1,
+    "Training owner credential catalog did not load"
+  );
   const block = ui.document.querySelector('[data-canonical-slot="api-key"]');
   assert.ok(block.querySelector("#training-key-provider"));
   assert.ok(block.querySelector("#training-key-value"));
-  for (const label of ["Lưu key", "Thử key", "Gỡ toàn bộ key"]) {
+  for (const label of ["Lưu key", "Thử key", "Gỡ key hãng này", "Gỡ tất cả key của tôi"]) {
     assert.ok([...block.querySelectorAll("button")].some((button) => button.textContent.trim() === label));
   }
   assert.ok(block.querySelector("#training-connected-providers"));
   assert.equal(block.textContent.includes("Mở Cấu hình"), false);
 });
 
-await bai("T14", "All Part 1 Training credential controls are disabled", async () => {
-  for (const selector of [
-    "#training-key-provider",
-    "#training-key-value",
-    "#btn-training-key-save",
-    "#btn-training-key-test",
-    "#btn-training-key-clear",
-  ]) assert.equal(ui.document.querySelector(selector).disabled, true, selector);
-});
-
-await bai("T15", "Training Block 2 produces zero global credential mutations", async () => {
-  const before = ui.mutationCalls;
-  for (const selector of ["#btn-training-key-save", "#btn-training-key-test", "#btn-training-key-clear"]) {
-    const button = ui.document.querySelector(selector);
-    button.dispatchEvent(new ui.window.MouseEvent("click", { bubbles: true }));
-    button.dispatchEvent(new ui.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-  }
+await bai("T14", "Block 2 controls follow saved-owner state", async () => {
+  const provider = ui.document.querySelector("#training-key-provider");
   const input = ui.document.querySelector("#training-key-value");
-  input.dispatchEvent(new ui.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-  await choTick(20);
-  assert.equal(ui.mutationCalls - before, 0);
+  assert.equal(provider.disabled, false);
+  assert.equal(input.disabled, false);
+  assert.equal(ui.document.querySelector("#btn-training-key-save").disabled, true);
+  assert.equal(ui.document.querySelector("#btn-training-key-test").disabled, true);
+  assert.equal(ui.document.querySelector("#btn-training-key-delete").disabled, true);
+  assert.equal(ui.document.querySelector("#btn-training-key-clear").disabled, true);
+  provider.value = "openai";
+  provider.dispatchEvent(new ui.window.Event("change", { bubbles: true }));
+  input.value = "fixture-owner-key";
+  input.dispatchEvent(new ui.window.Event("input", { bubbles: true }));
+  assert.equal(ui.document.querySelector("#btn-training-key-save").disabled, false);
 });
 
-await bai("T16", "The live global key form is never portaled into Training", async () => {
+await bai("T15", "Training Block 2 performs only owner-scoped credential actions", async () => {
+  const before = ui.mutationCalls;
+  ui.document.querySelector("#btn-training-key-save")
+    .dispatchEvent(new ui.window.MouseEvent("click", { bubbles: true }));
+  await choDen(() => ui.mutationCalls === before + 1, "Training save did not use owner route");
+  await choDen(() => !ui.document.querySelector("#btn-training-key-test").disabled, "Saved-key controls not enabled");
+
+  ui.document.querySelector("#btn-training-key-test")
+    .dispatchEvent(new ui.window.MouseEvent("click", { bubbles: true }));
+  await choTick(20);
+  assert.equal(ui.mutationCalls, before + 1, "Test must not mutate credential sidecar");
+
+  ui.document.querySelector("#btn-training-key-delete")
+    .dispatchEvent(new ui.window.MouseEvent("click", { bubbles: true }));
+  await choDen(() => ui.mutationCalls === before + 2, "Selected delete did not use owner route");
+  await choDen(
+    () => !ui.document.querySelector("#training-key-provider").disabled,
+    "Selected delete did not release credential controls"
+  );
+
+  const provider = ui.document.querySelector("#training-key-provider");
+  const input = ui.document.querySelector("#training-key-value");
+  provider.value = "openai";
+  provider.dispatchEvent(new ui.window.Event("change", { bubbles: true }));
+  input.value = "fixture-owner-key-again";
+  input.dispatchEvent(new ui.window.Event("input", { bubbles: true }));
+  await choDen(() => !ui.document.querySelector("#btn-training-key-save").disabled, "Second save was not enabled");
+  ui.document.querySelector("#btn-training-key-save")
+    .dispatchEvent(new ui.window.MouseEvent("click", { bubbles: true }));
+  await choDen(() => ui.mutationCalls === before + 3, "Second owner save did not complete");
+  await choDen(() => !ui.document.querySelector("#btn-training-key-clear").disabled, "Owner delete-all not enabled");
+  ui.document.querySelector("#btn-training-key-clear")
+    .dispatchEvent(new ui.window.MouseEvent("click", { bubbles: true }));
+  await choDen(() => ui.mutationCalls === before + 4, "Owner delete-all did not complete");
+  await choDen(
+    () => ui.document.querySelector("#training-connected-providers")?.textContent.includes("Chưa có kết nối."),
+    "Owner empty status did not render"
+  );
+  assert.equal(publicConfigSource.includes("/api/ai-chat/provider-key"), false);
+});
+
+await bai("T16", "The Settings credential form is never portaled into Training", async () => {
   assert.equal(html.includes('id="onboarding-slot-api-key"'), false);
   assert.equal(publicOnboardingSource.includes('"#ai-key-provider", ".key-block"'), false);
   const liveGlobalKey = ui.document.querySelector("#ai-key-provider");
@@ -584,7 +1116,7 @@ await bai("T16", "The live global key form is never portaled into Training", asy
 await bai("T17", "Block 2 renders neither secrets nor fake connected-provider state", async () => {
   const block = ui.document.querySelector('[data-canonical-slot="api-key"]');
   assert.equal(/(?:sk-|gsk_|AIza)[A-Za-z0-9_-]{8,}/.test(block.textContent), false);
-  assert.equal(block.textContent.includes("2 hãng đã kết nối"), false);
+  assert.equal(block.textContent.includes("fixture-owner-key"), false);
   assert.equal(block.textContent.includes("Groq — Đã kết nối"), false);
   assert.equal(block.textContent.includes("Anthropic — Đã kết nối"), false);
   assert.match(block.textContent, /Chưa có kết nối\./);
@@ -724,7 +1256,7 @@ await bai("V1", "Chat and Config share real 90% density while mobile controls re
   const mobileTrainingCss = css.slice(mobileStart, mobileEnd);
   assert.match(layCssBlock(mobileTrainingCss, ".training-mobile-segments button"), /min-height:\s*44px/);
   assert.match(mobileTrainingCss, /#module-training \.canonical-config-section button,[^}]*min-height:\s*44px/);
-  assert.match(layCssBlock(css, ".training-layout"), /minmax\(460px,\s*0\.9fr\)/);
+  assert.match(layCssBlock(css, ".training-layout"), /clamp\(480px,\s*36vw,\s*520px\)/);
   assert.match(layCssBlock(css, ".ai-model-grid"), /minmax\(0,\s*0\.8fr\)\s+minmax\(0,\s*1\.2fr\)/);
 });
 
@@ -774,6 +1306,154 @@ await bai("U7", "Settings preserves all shared semantic labels and assistant-sav
   assert.equal(aiPanel.querySelector("#btn-ai-assistant-save").textContent.trim(), "Lưu cấu hình trợ lý");
   assert.match(publicOnboardingSource, /bấm Lưu cấu hình trợ lý/);
   assert.equal(publicOnboardingSource.includes("bấm Ghi nhớ"), false);
+});
+
+await bai("UI01", "Desktop composer exposes Image, File, compact input and Send with one canonical file input", async () => {
+  const rawDocument = new JSDOM(html).window.document;
+  const form = rawDocument.querySelector("#training-form");
+  assert.ok(form.querySelector(".training-tool-row #btn-training-attach"));
+  assert.equal(form.querySelector("#btn-training-attach").textContent.trim(), "Ảnh");
+  assert.equal(form.querySelector("#btn-training-attach-file").textContent.trim(), "Tệp");
+  assert.equal(form.querySelectorAll('input[type="file"]').length, 1);
+  assert.equal(rawDocument.querySelectorAll("#training-file-input").length, 1);
+  assert.equal(form.querySelector("#training-text").getAttribute("rows"), "1");
+  assert.equal(form.querySelector('button[type="submit"]').textContent.trim(), "Gửi");
+  assert.equal(form.querySelector('button[type="submit"]').getAttribute("aria-label"), "Gửi tin nhắn");
+});
+
+await bai("UI02", "Normal header keeps Setup primary and renders the remaining actions as secondary", async () => {
+  await publicOnboarding.datManHinhHuanLuyen(false);
+  ui.states.set("ui-normal-header", {
+    step: 0, started: false, completed: false, prompt: "", data: { firstSetupInviteSeen: true },
+  });
+  await becomeOwner("ui-normal-header");
+  await publicOnboarding.datManHinhHuanLuyen(true);
+  const setup = ui.document.querySelector("#btn-training-setup");
+  assert.equal(ui.document.querySelector("#module-training").dataset.trainingMode, "normal");
+  assert.equal(setup.classList.contains("primary-button"), true);
+  assert.equal(setup.classList.contains("hidden"), false);
+  for (const id of ["btn-training-synth", "btn-training-reset", "btn-training-config-toggle"]) {
+    const button = ui.document.getElementById(id);
+    assert.equal(button.classList.contains("secondary-button"), true, id);
+    assert.equal(button.classList.contains("hidden"), false, id);
+  }
+  assert.match(layCssBlock(css, ".training-actions .secondary-button"), /background:\s*transparent/);
+});
+
+await bai("UI03", "Explicit setup header follows real state, shows progress, and hides normal actions", async () => {
+  await publicOnboarding.datManHinhHuanLuyen(false);
+  ui.states.set("ui-explicit-header", {
+    step: 6,
+    started: true,
+    completed: false,
+    prompt: "Đang duyệt nguyên tắc",
+    data: { firstSetupInviteSeen: true, guidanceCompleted: false },
+  });
+  await becomeOwner("ui-explicit-header");
+  await publicOnboarding.datManHinhHuanLuyen(true, { explicitSetup: true });
+  const progress = ui.document.querySelector("#onboarding-progress");
+  assert.equal(ui.document.querySelector("#module-training").dataset.trainingMode, "explicit");
+  assert.equal(ui.document.querySelector("#training-title").textContent, "Thiết lập trợ lý");
+  assert.equal(progress.classList.contains("hidden"), false);
+  assert.equal(ui.document.querySelector("#onboarding-progress-text").textContent, "Bước 6 trên 9");
+  assert.equal(progress.getAttribute("aria-valuenow"), "6");
+  assert.equal(ui.document.querySelector("#btn-training-exit-setup").classList.contains("hidden"), false);
+  for (const id of ["btn-training-setup", "btn-training-synth", "btn-training-reset"]) {
+    assert.equal(ui.document.getElementById(id).classList.contains("hidden"), true, id);
+  }
+});
+
+await bai("UI04", "Config header is quiet and contains no noncanonical generic copy", async () => {
+  const rawDocument = new JSDOM(html).window.document;
+  const header = rawDocument.querySelector(".training-config-header");
+  assert.equal(header.querySelector(".training-config-kicker").textContent.trim(), "Cấu hình bot");
+  assert.equal(header.textContent.includes("Dùng đúng cấu hình đang có"), false);
+  assert.equal(header.querySelector("h3"), null);
+});
+
+await bai("UI05", "Eligible first invite renders the approved modal copy and actions", async () => {
+  ui.states.set("ui-invite-eligible", { step: 0, started: false, completed: false, prompt: "", data: {} });
+  await becomeOwner("ui-invite-eligible");
+  const modal = ui.document.querySelector("#first-run-modal");
+  assert.equal(modal.classList.contains("hidden"), false);
+  assert.equal(modal.getAttribute("role"), "dialog");
+  assert.equal(modal.getAttribute("aria-modal"), "true");
+  assert.equal(modal.querySelector("#first-run-title").textContent.trim(), "Bắt đầu cài đặt trợ lý AI hỗ trợ bạn");
+  assert.equal(modal.querySelector(".onboarding-first-run-copy").textContent.trim(), "Em sẽ hướng dẫn từng bước ngay trên những ô cấu hình sẵn có. Chị có thể dừng và tiếp tục vào lần sau.");
+  assert.deepEqual(
+    [...modal.querySelectorAll(".onboarding-first-run-actions button")].map((button) => button.textContent.trim()),
+    ["Để sau", "Bắt đầu"]
+  );
+  assert.match(modal.querySelector(".onboarding-first-run-note").textContent, /chỉ hiện đúng một lần/);
+  assert.equal(ui.document.activeElement, modal.querySelector("#btn-onboarding-start"));
+  assert.match(css, /\.modal-content\.onboarding-first-run-card\s*\{[^}]*width:\s*min\(400px,[^}]*max-width:\s*400px/s);
+});
+
+await bai("UI06", "Already-seen invite remains hidden for its owner", async () => {
+  ui.states.set("ui-invite-seen", {
+    step: 0, started: false, completed: false, prompt: "", data: { firstSetupInviteSeen: true },
+  });
+  await becomeOwner("ui-invite-seen");
+  assert.equal(ui.document.querySelector("#first-run-modal").classList.contains("hidden"), true);
+});
+
+await bai("UI07", "Popup actions reuse invite_seen, start and existing navigation handlers only", async () => {
+  const beforeLater = ui.actionCalls.length;
+  ui.states.set("ui-invite-later", { step: 0, started: false, completed: false, prompt: "", data: {} });
+  await becomeOwner("ui-invite-later");
+  await choDen(() => ui.stateFor("ui-invite-later").data.firstSetupInviteSeen === true, "invite_seen missing");
+  ui.document.querySelector("#btn-onboarding-later").click();
+  await choDen(() => ui.document.querySelector("#first-run-modal").classList.contains("hidden"), "Later did not close");
+  assert.deepEqual(ui.actionCalls.slice(beforeLater).map((entry) => entry.action), ["invite_seen"]);
+
+  const beforeStart = ui.actionCalls.length;
+  ui.routes.length = 0;
+  ui.states.set("ui-invite-start", { step: 0, started: false, completed: false, prompt: "", data: {} });
+  await becomeOwner("ui-invite-start");
+  await choDen(() => ui.stateFor("ui-invite-start").data.firstSetupInviteSeen === true, "start invite_seen missing");
+  ui.document.querySelector("#btn-onboarding-start").click();
+  await choDen(() => ui.routes.some((entry) => entry.target === "training"), "Start did not use Training route");
+  assert.deepEqual(ui.actionCalls.slice(beforeStart).map((entry) => entry.action), ["invite_seen", "start"]);
+  assert.equal(ui.routes.find((entry) => entry.target === "training")?.options.explicitSetup, true);
+});
+
+await bai("UI08", "Desktop config width is bounded to 480–520px and mobile removes the desktop grid", async () => {
+  assert.match(
+    layCssBlock(css, ".training-layout"),
+    /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+clamp\(480px,\s*36vw,\s*520px\)/
+  );
+  const mobileStart = css.indexOf("@media (max-width: 980px)");
+  const mobileEnd = css.indexOf("@media (max-width: 600px)", mobileStart);
+  const mobileCss = css.slice(mobileStart, mobileEnd);
+  assert.match(mobileCss, /\.training-layout,\s*\.training-layout\.training-config-collapsed\s*\{[^}]*display:\s*block/);
+  assert.equal(mobileCss.includes("clamp(480px"), false);
+});
+
+await bai("UI09", "Mobile composer keeps 44px touch targets and safe-area padding", async () => {
+  const mobileStart = css.indexOf("@media (max-width: 600px)");
+  const mobileEnd = css.indexOf(".module-placeholder", mobileStart);
+  const mobileCss = css.slice(mobileStart, mobileEnd);
+  assert.match(mobileCss, /\.training-form\s*\{[^}]*env\(safe-area-inset-bottom\)/s);
+  assert.match(mobileCss, /\.training-tool-action,\s*\.training-send-button\s*\{[^}]*min-height:\s*44px/s);
+  assert.match(css, /\.training-mobile-segments button\s*\{[^}]*min-height:\s*44px/s);
+});
+
+await bai("UI10", "Both attachment actions reuse the canonical input without changing paste or send behavior", async () => {
+  await publicOnboarding.datManHinhHuanLuyen(false);
+  const fileInput = ui.document.querySelector("#training-file-input");
+  const accepts = [];
+  fileInput.addEventListener("click", () => accepts.push(fileInput.getAttribute("accept")));
+  ui.document.querySelector("#btn-training-attach").click();
+  ui.document.querySelector("#btn-training-attach-file").click();
+  assert.equal(fileInput === ui.document.querySelector("#training-file-input"), true);
+  assert.deepEqual(accepts, [
+    "image/png,image/jpeg,image/webp,image/gif",
+    "application/pdf,text/plain,text/markdown,text/csv",
+  ]);
+  assert.match(publicTrainingSource, /els\.text\.addEventListener\("paste"/);
+  assert.match(publicTrainingSource, /event\.key !== "Enter" \|\| event\.shiftKey \|\| dangSoanIme/);
+  assert.match(publicTrainingSource, /els\.form\.querySelector\("button\[type=submit\]"\)\.disabled = khoaLai/);
+  assert.match(publicTrainingSource, /body\.append\("files", entry\.file \|\| entry\)/);
 });
 
 await bai("T18", "Primary-only model save accepts an explicit empty fallback", async () => {

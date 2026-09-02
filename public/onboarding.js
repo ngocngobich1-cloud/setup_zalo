@@ -14,6 +14,8 @@ const els = {
   bubbleActions: document.querySelector("#onboarding-bubble-actions"),
   dismiss: document.querySelector("#onboarding-dismiss"),
   progress: document.querySelector("#onboarding-progress"),
+  progressText: document.querySelector("#onboarding-progress-text"),
+  progressBar: document.querySelector("#onboarding-progress-bar"),
   keyLinks: document.querySelector("#onboarding-key-links"),
   trainingPanel: document.querySelector("#module-training"),
   trainingTitle: document.querySelector("#training-title"),
@@ -102,6 +104,10 @@ let reviewReadyToSave = false;
 let explicitSetupMode = false;
 let coachDismissedThisSetup = false;
 let inviteSeenRequest = null;
+let onboardingHydrationRequest = null;
+let queuedExplicitSetupIntent = false;
+let explicitSetupEntryInFlight = null;
+let explicitPassGeneration = 0;
 
 async function jsonFetch(url, options) {
   const res = await fetch(url, options);
@@ -128,9 +134,19 @@ function capNhatState(next) {
 
 async function napTrangThai() {
   const owner = chupOnboardingOwner();
-  const next = await jsonFetch("/api/onboarding");
-  if (!onboardingOwnerConHieuLuc(owner)) return null;
-  return capNhatState(next);
+  if (!owner.ownerUid) return null;
+  if (onboardingHydrationRequest) return onboardingHydrationRequest;
+  const request = (async () => {
+    const next = await jsonFetch("/api/onboarding");
+    if (!onboardingOwnerConHieuLuc(owner)) return null;
+    return capNhatState(next);
+  })();
+  onboardingHydrationRequest = request;
+  try {
+    return await request;
+  } finally {
+    if (onboardingHydrationRequest === request) onboardingHydrationRequest = null;
+  }
 }
 
 async function hanhDong(action, payload = {}) {
@@ -176,24 +192,54 @@ export function traControlCanonical() {
   }
 }
 
+function explicitAnswerReady() {
+  const step = Number(state?.step) || 0;
+  return !state?.completed && step >= 4 && step <= 7;
+}
+
+async function phucHoiTrangThaiExplicit(owner) {
+  if (!onboardingOwnerConHieuLuc(owner)) throw new Error("Tài khoản Zalo đã thay đổi.");
+  if (!await napTrangThai()) throw new Error("Chưa tải được tiến trình thiết lập trợ lý.");
+  if (!onboardingOwnerConHieuLuc(owner)) throw new Error("Tài khoản Zalo đã thay đổi.");
+  if (state.completed || Number(state.step) === 0) {
+    throw new Error("Lượt thiết lập hiện tại đã kết thúc. Hãy bấm Thiết lập trợ lý để bắt đầu lượt mới.");
+  }
+  if (!explicitAnswerReady()) {
+    throw new Error("Tiến trình thiết lập hiện không ở bước nhận câu trả lời. Hãy làm theo hướng dẫn đang hiển thị.");
+  }
+}
+
 function datTrainingController() {
   const step = Number(state?.step) || 0;
-  const active = trainingActive
-    && explicitSetupMode
-    && state?.data?.guidanceCompleted !== true
-    && step >= 4
-    && step <= 7;
+  const active = trainingActive && explicitSetupMode;
+  const answerReady = active && explicitAnswerReady();
   datDieuPhoiOnboarding({
     active,
-    spotlightComposer: active,
+    spotlightComposer: answerReady,
     showStarter: active && step === 4,
     submit: async (text) => {
       const owner = chupOnboardingOwner();
-      const next = await jsonFetch("/api/onboarding/answer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
+      let recoveryAttempted = false;
+      if (!answerReady) {
+        recoveryAttempted = true;
+        await phucHoiTrangThaiExplicit(owner);
+      }
+      let next;
+      try {
+        next = await jsonFetch("/api/onboarding/answer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+      } catch (error) {
+        if (!recoveryAttempted) {
+          try { await phucHoiTrangThaiExplicit(owner); }
+          catch (recoveryError) {
+            throw new Error(`${error.message} ${recoveryError.message}`.trim());
+          }
+        }
+        throw error;
+      }
       if (!onboardingOwnerConHieuLuc(owner)) return;
       capNhatState(next);
       await render(owner);
@@ -276,6 +322,28 @@ function khoiTaoAccordion() {
       datTrangThaiAccordion(toggle, toggle.getAttribute("aria-expanded") !== "true");
     });
   });
+}
+
+function thongBaoNoiDungSeThay() {
+  const fields = [
+    ["#ai-soul", "Soul"],
+    ["#ai-role", "Giọng điệu và vai trò"],
+    ["#ai-topics", "Chủ đề được phép trả lời"],
+  ];
+  const labels = fields
+    .filter(([selector]) => document.querySelector(selector)?.value?.trim())
+    .map(([, label]) => `- ${label}`);
+  if (!labels.length) return "";
+  return `Bản thiết lập mới sẽ thay nội dung hiện đang có trong editor ở:\n${labels.join("\n")}`;
+}
+
+function onboardingMessageKey(variant = "state") {
+  const transcriptLength = Array.isArray(state?.data?.transcript) ? state.data.transcript.length : 0;
+  return [ownerGeneration, explicitPassGeneration, String(state?.step || 0), transcriptLength, variant].join(":");
+}
+
+function hienTinOnboardingState(content, variant = "state") {
+  return hienTinOnboarding(content, onboardingMessageKey(variant));
 }
 
 function moAccordionChoTargets(targets) {
@@ -411,18 +479,19 @@ function hienCoach(step, { completion = false } = {}) {
 async function render(owner = chupOnboardingOwner()) {
   if (!state || !onboardingOwnerConHieuLuc(owner)) return;
   const step = Number(state.step) || 0;
-  const guidanceCompleted = state.data?.guidanceCompleted === true;
   datCheDoSetupUI();
   if (explicitSetupMode) {
     const segment = step >= 4 && step <= 7 ? "chat" : "config";
     window.dispatchEvent(new CustomEvent("zalo:training-segment", { detail: { segment } }));
   }
-  els.progress.classList.toggle(
-    "hidden",
-    !explicitSetupMode || guidanceCompleted || state.completed || !state.started
-  );
-  if (explicitSetupMode && !guidanceCompleted && !state.completed && state.started) {
-    els.progress.textContent = `Bước ${step} trên 9`;
+  const showProgress = explicitSetupMode && !state.completed && state.started;
+  els.progress.classList.toggle("hidden", !showProgress);
+  els.progress.setAttribute("aria-hidden", String(!showProgress));
+  if (showProgress) {
+    const currentStep = Math.max(1, Math.min(9, step));
+    els.progressText.textContent = `Bước ${currentStep} trên 9`;
+    els.progress.setAttribute("aria-valuenow", String(currentStep));
+    els.progressBar.style.width = `${(currentStep / 9) * 100}%`;
   }
 
   if (trainingActive) {
@@ -432,29 +501,33 @@ async function render(owner = chupOnboardingOwner()) {
   }
   datTrainingController();
 
-  if (!explicitSetupMode || guidanceCompleted) {
-    hienTinOnboarding("");
+  if (!explicitSetupMode) {
+    hienTinOnboardingState("");
   } else if (step === 4) {
-    hienTinOnboarding(
+    hienTinOnboardingState(
       state.prompt
       || "Bot Chỉ huy đã sẵn sàng. Chị chọn gợi ý bên dưới hoặc tự gõ điều chị muốn tạo nhé."
     );
-  } else if (step >= 5 && step <= 7) hienTinOnboarding(state.prompt);
+  } else if (step >= 5 && step <= 6) hienTinOnboardingState(state.prompt);
+  else if (step === 7) {
+    const disclosure = thongBaoNoiDungSeThay();
+    hienTinOnboardingState([state.prompt, disclosure].filter(Boolean).join("\n\n"));
+  }
   else if (step === 8) {
-    hienTinOnboarding(reviewReadyToSave
+    hienTinOnboardingState(reviewReadyToSave
       ? "Nếu cấu hình đã ổn, chị bấm Lưu cấu hình trợ lý giúp em nhé."
       : "Em đã điền cấu hình được chị duyệt. Chị đọc lại toàn bộ Soul, Giọng điệu và Chủ đề được phép trả lời giúp em.");
     dienBanTongHop();
   } else if (step === 9) {
-    hienTinOnboarding("Cấu hình AI đã được lưu. Chị chọn nick Zalo được phép ra lệnh cho bot để hoàn tất nhé.");
+    hienTinOnboardingState("Cấu hình AI đã được lưu. Chị chọn nick Zalo được phép ra lệnh cho bot để hoàn tất nhé.");
   } else if (state.completed && completionJustReached) {
-    hienTinOnboarding("Trợ lý AI của chị đã được thiết lập xong và sẵn sàng hoạt động.");
+    hienTinOnboardingState("Trợ lý AI của chị đã được thiết lập xong và sẵn sàng hoạt động.", "completion");
   } else {
-    hienTinOnboarding("");
+    hienTinOnboardingState("");
   }
 
-  if (state.completed || guidanceCompleted) {
-    if (completionJustReached && explicitSetupMode && !guidanceCompleted && !coachDismissedThisSetup) {
+  if (state.completed) {
+    if (completionJustReached && explicitSetupMode && !coachDismissedThisSetup) {
       hienCoach(9, { completion: true });
       completionJustReached = false;
     } else anCoach();
@@ -497,6 +570,13 @@ export async function datManHinhHuanLuyen(active, { explicitSetup = false } = {}
     catch { return; }
   }
   if (!state) return;
+  if (queuedExplicitSetupIntent) {
+    try { await replayExplicitSetupIntent(); }
+    catch (error) {
+      if (trainingActive) hienTinOnboarding("Lỗi: " + error.message);
+    }
+    if (!trainingActive || !state) return;
+  }
   await render(chupOnboardingOwner());
 }
 
@@ -523,15 +603,54 @@ async function ghiNhanDaThayLoiMoi() {
   }
 }
 
-async function vaoThietLapTroLy() {
-  explicitSetupMode = true;
-  coachDismissedThisSetup = false;
-  datCheDoSetupUI();
-  if (state && !state.completed && Number(state.step) === 0) {
-    await hanhDong("start");
+function canAutoOfferFirstSetup() {
+  return Boolean(lastOwnerUid && state && state.data?.firstSetupInviteSeen !== true);
+}
+
+function canManuallyEnterSetup() {
+  return Boolean(lastOwnerUid);
+}
+
+async function replayExplicitSetupIntent() {
+  if (!queuedExplicitSetupIntent || !canManuallyEnterSetup()) return null;
+  if (explicitSetupEntryInFlight) return explicitSetupEntryInFlight;
+  const owner = chupOnboardingOwner();
+  const request = (async () => {
+    try {
+      if (!state && !await napTrangThai()) throw new Error("Chưa tải được tiến trình thiết lập trợ lý.");
+      if (!onboardingOwnerConHieuLuc(owner)) throw new Error("Tài khoản Zalo đã thay đổi.");
+      if (state.completed || Number(state.step) === 0) {
+        if (!await hanhDong("start")) throw new Error("Không bắt đầu được lượt thiết lập trợ lý.");
+        explicitPassGeneration += 1;
+      }
+      if (!state || state.completed) throw new Error("Không mở được lượt thiết lập trợ lý.");
+      explicitSetupMode = true;
+      coachDismissedThisSetup = false;
+      queuedExplicitSetupIntent = false;
+      datCheDoSetupUI();
+      callbacks?.selectModule("training", { explicitSetup: true });
+      await render(owner);
+      return state;
+    } catch (error) {
+      if (onboardingOwnerConHieuLuc(owner)) {
+        queuedExplicitSetupIntent = false;
+        explicitSetupMode = false;
+        datCheDoSetupUI();
+      }
+      throw error;
+    }
+  })();
+  explicitSetupEntryInFlight = request;
+  try {
+    return await request;
+  } finally {
+    if (explicitSetupEntryInFlight === request) explicitSetupEntryInFlight = null;
   }
-  callbacks?.selectModule("training", { explicitSetup: true });
-  if (state) await render(chupOnboardingOwner());
+}
+
+async function vaoThietLapTroLy() {
+  queuedExplicitSetupIntent = true;
+  return replayExplicitSetupIntent();
 }
 
 async function thoatThietLapTroLy() {
@@ -547,6 +666,7 @@ async function thoatThietLapTroLy() {
 export async function dongBoTrangThaiZalo({ loggedIn, justLoggedIn, ownerUid }) {
   const nextOwnerUid = loggedIn && ownerUid ? String(ownerUid) : null;
   const ownerChanged = lastOwnerUid !== nextOwnerUid;
+  const resolvingInitialOwner = ownerChanged && lastOwnerUid === null && nextOwnerUid !== null;
   if (ownerChanged) {
     ownerGeneration += 1;
     state = null;
@@ -555,12 +675,18 @@ export async function dongBoTrangThaiZalo({ loggedIn, justLoggedIn, ownerUid }) 
     explicitSetupMode = false;
     coachDismissedThisSetup = false;
     inviteSeenRequest = null;
+    onboardingHydrationRequest = null;
+    explicitSetupEntryInFlight = null;
+    explicitPassGeneration = 0;
+    if (!resolvingInitialOwner) queuedExplicitSetupIntent = false;
     els.firstRun.classList.add("hidden");
     els.progress.classList.add("hidden");
+    els.progress.setAttribute("aria-hidden", "true");
     anCoach();
     datCheDoSetupUI();
   }
   if (!loggedIn || !ownerUid) {
+    if (!loggedIn) queuedExplicitSetupIntent = false;
     lastOwnerUid = null;
     return;
   }
@@ -573,8 +699,22 @@ export async function dongBoTrangThaiZalo({ loggedIn, justLoggedIn, ownerUid }) 
   catch { return; }
 
   if (!onboardingOwnerConHieuLuc(owner)) return;
-  if (state.data?.firstSetupInviteSeen !== true) {
+  if (queuedExplicitSetupIntent) {
+    try {
+      const replayed = await replayExplicitSetupIntent();
+      if (replayed && state?.data?.firstSetupInviteSeen !== true) {
+        await ghiNhanDaThayLoiMoi();
+      }
+    }
+    catch (error) {
+      els.firstRun.querySelector(".onboarding-first-run-copy").textContent = error.message;
+      if (trainingActive && explicitSetupMode) hienTinOnboarding("Lỗi: " + error.message);
+    }
+    if (explicitSetupMode) return;
+  }
+  if (canAutoOfferFirstSetup()) {
     els.firstRun.classList.remove("hidden");
+    requestAnimationFrame(() => els.btnStart.focus());
     // Persist ngay khi loi moi da xuat hien. Neu request hong, modal van o do va
     // hai nut se thu lai; khong co client-only canonical state.
     void ghiNhanDaThayLoiMoi().catch(() => {});
@@ -596,7 +736,7 @@ export function khoiTaoOnboarding(options) {
       els.firstRun.classList.add("hidden");
       await vaoThietLapTroLy();
     } catch (error) {
-      els.firstRun.querySelector("p").textContent = error.message;
+      els.firstRun.querySelector(".onboarding-first-run-copy").textContent = error.message;
     } finally {
       els.btnStart.disabled = false;
       els.btnLater.disabled = false;
@@ -610,7 +750,7 @@ export function khoiTaoOnboarding(options) {
       els.firstRun.classList.add("hidden");
       callbacks?.selectModule("zalo");
     } catch (error) {
-      els.firstRun.querySelector("p").textContent = error.message;
+      els.firstRun.querySelector(".onboarding-first-run-copy").textContent = error.message;
     } finally {
       els.btnStart.disabled = false;
       els.btnLater.disabled = false;

@@ -362,7 +362,11 @@ await bai("T05", "already sending chặn duplicate", () => {
 });
 
 await bai("T06", "nút Send vẫn submit form canonical", () => {
-  assert.match(HTML, /id="training-form"[\s\S]*?<button type="submit" class="primary-button">Gửi<\/button>/);
+  const formStart = HTML.indexOf('id="training-form"');
+  const formEnd = HTML.indexOf("</form>", formStart);
+  assert.ok(formStart >= 0 && formEnd > formStart, "Không tách được training form");
+  const form = HTML.slice(formStart, formEnd);
+  assert.match(form, /<button\s+type="submit"[^>]*class="[^"]*\bprimary-button\b[^"]*"[^>]*>\s*Gửi\s*<\/button>/);
 });
 
 await bai("T07", "Training picker nhận ảnh và file canonical hiện có", () => {
