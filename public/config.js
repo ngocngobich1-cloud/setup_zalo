@@ -312,11 +312,11 @@ export const CONFIG_TABS = [
                 <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
                   <button type="button" id="btn-key-save" class="secondary-button" style="padding:5px 12px; font-size:12px;">Lưu key</button>
                   <button type="button" id="btn-key-test" class="secondary-button" style="padding:5px 12px; font-size:12px;">Thử key</button>
-                  <button type="button" id="btn-key-clear" class="secondary-button" style="padding:5px 12px; font-size:12px;">Gỡ toàn bộ key</button>
+                  <button type="button" id="btn-key-delete" class="secondary-button" style="padding:5px 12px; font-size:12px;">Gỡ key hãng này</button>
+                  <button type="button" id="btn-key-clear" class="secondary-button" style="padding:5px 12px; font-size:12px;">Gỡ tất cả key của tôi</button>
                 </div>
                 <p class="field-hint" style="color: var(--muted); font-size: 12px; margin: 6px 0 0;">
-                  Mỗi API key chỉ kết nối đúng hãng tương ứng; key Google hoặc Anthropic không cấp quyền cho model của OpenCode Zen.
-                  Key đi thẳng sang OpenCode, <strong>app không giữ bản sao</strong> nên không hiển thị lại được.
+                  Các key này chỉ thuộc tài khoản Zalo đang kết nối. Mỗi API key chỉ dùng cho đúng hãng tương ứng.
                 </p>
               </div>
             </details>
@@ -536,12 +536,9 @@ export const CONFIG_TABS = [
       }
 
       function modelHieuLucTheoOwner() {
-        // Khi catalog dang loi, khong du evidence de ket luan model da luu vo hieu.
-        // Khi catalog da nap duoc, model owner chi thang neu no con ton tai.
-        if (modelDaLuuTheoOwner && (!napDuocDanhSach || modelCoTrongDanhSach(modelDaLuuTheoOwner))) {
-          return modelDaLuuTheoOwner;
-        }
-        return modelMacDinhHeThong;
+        // Model owner da luu luon duoc giu tren UI, ke ca key vua bi go. Khong
+        // am tham nhay sang model khac va cung khong ghi de persistence.
+        return modelDaLuuTheoOwner || modelMacDinhHeThong;
       }
 
       function fallbackModelHieuLucTheoOwner() {
@@ -647,6 +644,8 @@ export const CONFIG_TABS = [
       }
 
       // Doi hang thi model ben duoi nap lai theo hang do.
+      // Đổi Hãng AI hoặc Model chỉ thay lựa chọn đang chờ; chỉ nút Lưu mới
+      // được phép ghi lựa chọn canonical của owner hiện tại.
       ocProvider.addEventListener("change", () => veOModel(ocProvider.value, ""));
       ocFallbackProvider.addEventListener("change", () => {
         veOModel(ocFallbackProvider.value, "", ocFallbackModel, { optional: true });
@@ -657,24 +656,60 @@ export const CONFIG_TABS = [
       const keyProvider = panel.querySelector("#ai-key-provider");
       const keyValue = panel.querySelector("#ai-key-value");
       const keyStatus = panel.querySelector("#ai-key-status");
+      const btnKeySave = panel.querySelector("#btn-key-save");
+      const btnKeyTest = panel.querySelector("#btn-key-test");
+      const btnKeyDelete = panel.querySelector("#btn-key-delete");
+      const btnKeyClear = panel.querySelector("#btn-key-clear");
       const PHO_BIEN = ["anthropic", "openai", "google", "groq", "deepseek", "xai", "mistral", "opencode"];
+      let ownerKeyStatus = new Map();
+      let keyBusy = false;
 
       function baoKey(text, mau) {
         keyStatus.style.color = mau || "var(--muted)";
         keyStatus.textContent = text;
       }
 
+      function setKeyButton(button, enabled) {
+        button.disabled = !enabled;
+        button.setAttribute("aria-disabled", String(!enabled));
+      }
+
+      function updateKeyButtons() {
+        const providerId = keyProvider.value;
+        const saved = ownerKeyStatus.has(providerId);
+        keyProvider.disabled = keyBusy;
+        keyValue.disabled = keyBusy;
+        setKeyButton(btnKeySave, !keyBusy && Boolean(providerId && keyValue.value.trim()));
+        setKeyButton(btnKeyTest, !keyBusy && saved);
+        setKeyButton(btnKeyDelete, !keyBusy && saved);
+        setKeyButton(btnKeyClear, !keyBusy && ownerKeyStatus.size > 0);
+      }
+
       async function napDanhSachHangChoKey() {
         const dangChon = keyProvider.value;
         try {
-          const res = await fetch("/api/ai-chat/providers");
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Không tải được danh sách hãng");
+          const [catalogResponse, statusResponse] = await Promise.all([
+            fetch("/api/ai-chat/providers"),
+            fetch("/api/ai-chat/owner-credentials"),
+          ]);
+          const [catalogData, statusData] = await Promise.all([
+            catalogResponse.json(),
+            statusResponse.json(),
+          ]);
+          if (!catalogResponse.ok) throw new Error(catalogData.error || "Không tải được danh sách hãng");
+          if (!statusResponse.ok) throw new Error(statusData.error || "Không tải được kết nối AI");
 
-          const all = data.providers || [];
-          const daCoKey = all.filter((p) => p.connected);
-          const phoBien = all.filter((p) => !p.connected && PHO_BIEN.includes(p.id));
-          const conLai = all.filter((p) => !p.connected && !PHO_BIEN.includes(p.id));
+          ownerKeyStatus = new Map((statusData.providers || []).map((item) => [item.providerId, item]));
+          const all = [...(catalogData.providers || [])];
+          const known = new Set(all.map((provider) => provider.id));
+          for (const status of ownerKeyStatus.values()) {
+            if (!known.has(status.providerId)) {
+              all.push({ id: status.providerId, name: status.providerName || status.providerId });
+            }
+          }
+          const daCoKey = all.filter((p) => ownerKeyStatus.has(p.id));
+          const phoBien = all.filter((p) => !ownerKeyStatus.has(p.id) && PHO_BIEN.includes(p.id));
+          const conLai = all.filter((p) => !ownerKeyStatus.has(p.id) && !PHO_BIEN.includes(p.id));
 
           keyProvider.innerHTML = "";
           const nhom = (nhan, list, hauTo) => {
@@ -688,12 +723,15 @@ export const CONFIG_TABS = [
           nhom("Phổ biến", phoBien);
           nhom("Tất cả hãng khác", conLai);
 
-          if (dangChon) keyProvider.value = dangChon;
-          baoKey(`${daCoKey.length} hãng đã có key · ${all.length} hãng dùng được`);
+          if (dangChon && all.some((provider) => provider.id === dangChon)) keyProvider.value = dangChon;
+          baoKey(daCoKey.length ? `${daCoKey.length} hãng đã kết nối` : "Chưa có kết nối.");
         } catch (e) {
+          ownerKeyStatus = new Map();
           keyProvider.innerHTML = "";
           keyProvider.append(new Option("— Không kết nối được OpenCode —", ""));
           baoKey(e.message, "var(--danger)");
+        } finally {
+          updateKeyButtons();
         }
       }
 
@@ -704,17 +742,24 @@ export const CONFIG_TABS = [
         ]);
       }
 
-      panel.querySelector("#btn-key-save").addEventListener("click", async () => {
+      keyProvider.addEventListener("change", updateKeyButtons);
+      keyValue.addEventListener("input", updateKeyButtons);
+      updateKeyButtons();
+
+      btnKeySave.addEventListener("click", async () => {
         if (!keyProvider.value) return baoKey("Chọn hãng trước đã.", "var(--danger)");
         if (!keyValue.value.trim()) {
-          return baoKey("Chưa nhập key. Để trống sẽ làm hỏng hãng này chứ không phải xoá key.", "var(--danger)");
+          return baoKey("API key không được để trống.", "var(--danger)");
         }
+        const providerId = keyProvider.value;
+        keyBusy = true;
+        updateKeyButtons();
         baoKey("Đang lưu key...");
         try {
-          const res = await fetch("/api/ai-chat/provider-key", {
+          const res = await fetch("/api/ai-chat/owner-credentials", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ providerId: keyProvider.value, apiKey: keyValue.value.trim() }),
+            body: JSON.stringify({ providerId, apiKey: keyValue.value.trim() }),
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "Lưu thất bại");
@@ -726,35 +771,50 @@ export const CONFIG_TABS = [
           );
           baoKey("Đã lưu key. Bấm Thử key để chắc chắn key còn dùng được.", "var(--ok)");
           window.dispatchEvent(new CustomEvent("zalo:canonical-save", {
-            detail: { section: "api-key", providerId: keyProvider.value },
+            detail: { section: "api-key", providerId },
           }));
         } catch (e) {
           baoKey(e.message, "var(--danger)");
+        } finally {
+          keyBusy = false;
+          updateKeyButtons();
         }
       });
 
-      panel.querySelector("#btn-key-test").addEventListener("click", async () => {
+      btnKeyTest.addEventListener("click", async () => {
         if (!keyProvider.value) return baoKey("Chọn hãng trước đã.", "var(--danger)");
+        if (!ownerKeyStatus.has(keyProvider.value)) return baoKey("Hãy lưu key hãng này trước.", "var(--danger)");
+        keyBusy = true;
+        updateKeyButtons();
         baoKey("Đang gọi thử một câu...");
         try {
-          const res = await fetch("/api/ai-chat/provider-key/test", {
+          const res = await fetch("/api/ai-chat/owner-credentials/test", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ providerId: keyProvider.value }),
           });
           const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Không gọi được");
+          if (!res.ok) throw new Error(data.message || data.error || "Không gọi được");
           baoKey(`Key còn dùng được · ${data.model} trả lời: ${String(data.reply).slice(0, 40)}`, "var(--ok)");
         } catch (e) {
           baoKey("Key không dùng được: " + e.message, "var(--danger)");
+        } finally {
+          keyBusy = false;
+          updateKeyButtons();
         }
       });
 
-      panel.querySelector("#btn-key-clear").addEventListener("click", async () => {
-        if (!confirm("OpenCode chỉ gỡ được toàn bộ key của MỌI hãng, không gỡ riêng một hãng.\n\nGỡ hết?")) return;
+      btnKeyDelete.addEventListener("click", async () => {
+        const providerId = keyProvider.value;
+        if (!ownerKeyStatus.has(providerId)) return;
+        if (!confirm("Chỉ API key hãng đang chọn của tài khoản Zalo hiện tại sẽ bị gỡ.\n\nGỡ key hãng này?")) return;
+        keyBusy = true;
+        updateKeyButtons();
         baoKey("Đang gỡ...");
         try {
-          const res = await fetch("/api/ai-chat/provider-key", { method: "DELETE" });
+          const res = await fetch(`/api/ai-chat/owner-credentials/${encodeURIComponent(providerId)}`, {
+            method: "DELETE",
+          });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "Gỡ thất bại");
           await napDanhSachHangChoKey();
@@ -762,10 +822,56 @@ export const CONFIG_TABS = [
             ocProvider.value ? ocModel.value : "",
             ocFallbackProvider.value ? ocFallbackModel.value : ""
           );
-          baoKey("Đã gỡ toàn bộ key.", "var(--ok)");
+          baoKey("Đã gỡ key hãng này.", "var(--ok)");
+          window.dispatchEvent(new CustomEvent("zalo:credential-change", {
+            detail: { action: "delete-selected", providerId },
+          }));
         } catch (e) {
           baoKey(e.message, "var(--danger)");
+        } finally {
+          keyBusy = false;
+          updateKeyButtons();
         }
+      });
+
+      btnKeyClear.addEventListener("click", async () => {
+        if (!confirm("Chỉ các API key AI đã lưu của tài khoản Zalo hiện tại sẽ bị gỡ.\n\nGỡ tất cả key của tôi?")) return;
+        keyBusy = true;
+        updateKeyButtons();
+        baoKey("Đang gỡ...");
+        try {
+          const res = await fetch("/api/ai-chat/owner-credentials", { method: "DELETE" });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Gỡ thất bại");
+          await napDanhSachHangChoKey();
+          await napAgentVaModel(
+            ocProvider.value ? ocModel.value : "",
+            ocFallbackProvider.value ? ocFallbackModel.value : ""
+          );
+          baoKey("Đã gỡ tất cả key của tôi.", "var(--ok)");
+          window.dispatchEvent(new CustomEvent("zalo:credential-change", {
+            detail: { action: "delete-all" },
+          }));
+        } catch (e) {
+          baoKey(e.message, "var(--danger)");
+        } finally {
+          keyBusy = false;
+          updateKeyButtons();
+        }
+      });
+
+      const refreshAfterCredentialChange = async () => {
+        await Promise.allSettled([
+          napDanhSachHangChoKey(),
+          napAgentVaModel(
+            ocProvider.value ? ocModel.value : "",
+            ocFallbackProvider.value ? ocFallbackModel.value : ""
+          ),
+        ]);
+      };
+      window.addEventListener("zalo:credential-change", () => void refreshAfterCredentialChange());
+      window.addEventListener("zalo:canonical-save", (event) => {
+        if (event.detail?.section === "api-key") void refreshAfterCredentialChange();
       });
 
       panel.querySelector("#btn-oc-test").addEventListener("click", async () => {
@@ -1077,8 +1183,13 @@ export const CONFIG_TABS = [
         currentMembers = [];
         modelDaLuuTheoOwner = "";
         fallbackModelDaLuuTheoOwner = "";
-        // Model la lua chon owner; cac option provider/model va API key la global.
-        // Chi bo selection, tuyet doi khong xoa/dung lai option node khi doi UID.
+        ownerKeyStatus = new Map();
+        keyProvider.innerHTML = '<option value="">Chọn hãng</option>';
+        keyProvider.value = "";
+        keyValue.value = "";
+        baoKey("Đang tải kết nối AI của tài khoản Zalo hiện tại…");
+        updateKeyButtons();
+        // Model va API key deu la lua chon owner; request cu bi generation guard bo qua.
         ocProvider.value = "";
         ocModel.value = "";
         ocFallbackProvider.value = "";
@@ -1088,8 +1199,11 @@ export const CONFIG_TABS = [
 
       // Giu lai promise cua luot nap dau tien de ham refresh o tren cho no.
       // Model/Soul/Tone/Topics va nhom/nick deu theo owner, phai nap lai ca form.
-      aiConfigRefreshSink = loadConfig;
-      dangKyLamMoi("AI Chat", loadConfig);
+      aiConfigRefreshSink = async () => {
+        const [ownerResult] = await Promise.allSettled([loadConfig(), loadGlobalAiCatalogs()]);
+        return ownerResult.status === "fulfilled" ? ownerResult.value : false;
+      };
+      dangKyLamMoi("AI Chat", aiConfigRefreshSink);
       const napGlobalBanDau = loadGlobalAiCatalogs();
       const napOwnerBanDau = loadConfig();
       napBanDau = Promise.allSettled([napGlobalBanDau, napOwnerBanDau]);

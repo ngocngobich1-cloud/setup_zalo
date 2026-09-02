@@ -225,6 +225,11 @@ async function createHarness() {
         return control.aiReply(...args);
       },
     },
+    ownerCredentials: {
+      configureCurrentOwnerResolver: () => undefined,
+      projectOwnerCredentials: async () => undefined,
+      withCurrentOwnerCredentialRead: async (_ownerUid, _config, operation) => operation(),
+    },
   };
 
   const dependencyNames = Object.keys(deps);

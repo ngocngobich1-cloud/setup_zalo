@@ -121,6 +121,9 @@ async function taoFrontendHydrationFixture(html) {
       });
     }
     if (url === "/api/ai-chat/providers") return response(200, { providers });
+    if (url === "/api/ai-chat/owner-credentials" && method === "GET") {
+      return response(200, { providers: [] });
+    }
     if (url === "/api/ai-chat" && method === "GET") {
       if (!currentOwner) {
         initialUnauthenticatedAiGets += 1;
@@ -238,7 +241,8 @@ async function main() {
   await db.initDb();
   let metadataRequests = 0;
   const fakeRuntime = http.createServer((req, res) => {
-    if (req.method === "GET" && req.url === "/config/providers") {
+    const pathname = new URL(req.url, "http://fixture.local").pathname;
+    if (req.method === "GET" && pathname === "/config/providers") {
       metadataRequests += 1;
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
@@ -272,6 +276,12 @@ async function main() {
     opencodeAgent: "general",
     opencodeModel: "",
   });
+  const opencode = await import(pathToFileURL(path.join(REPO, "lib", "opencode.js")).href);
+  opencode.markCredentialPlaneReady(
+    AI_OWNER,
+    ["opencode"],
+    "/tmp/test-onboarding-credential-context"
+  );
   const architect = await import(pathToFileURL(path.join(REPO, "lib", "onboarding-architect.js")).href);
   const onboarding = await import(pathToFileURL(path.join(REPO, "lib", "onboarding.js")).href);
   const admin = await import(pathToFileURL(path.join(REPO, "lib", "admin-command.js")).href);

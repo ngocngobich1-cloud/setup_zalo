@@ -49,11 +49,12 @@ const mayGia = http.createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
+    const pathname = new URL(req.url, "http://fixture.local").pathname;
     res.setHeader("Content-Type", "application/json");
-    if (req.method === "POST" && req.url === "/session") {
+    if (req.method === "POST" && pathname === "/session") {
       return res.end(JSON.stringify({ id: "phien-gia" }));
     }
-    if (req.method === "POST" && req.url.endsWith("/message")) {
+    if (req.method === "POST" && pathname.endsWith("/message")) {
       soLanGoiPhanTich++;
       return res.end(JSON.stringify({ parts: [{ type: "text", text: JSON.stringify(phanTichTiepTheo) }] }));
     }
@@ -112,6 +113,8 @@ async function main() {
 
   const db = await napLib("db.js");
   await db.initDb();
+  const opencode = await napLib("opencode.js");
+  opencode.markCredentialPlaneReady(CHU_A, [], "/tmp/test-day-po-credential-context");
 
   const adminCmd = await napLib("admin-command.js");
   const customerMemory = await napLib("customer-memory.js");

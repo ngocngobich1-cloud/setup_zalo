@@ -28,34 +28,54 @@ function handlerBetween(start, end) {
   return config.slice(from, to);
 }
 
-test("T1", "Lưu key là button độc lập và giữ canonical credential route", () => {
+test("T1", "Lưu key là owner-scoped action độc lập", () => {
   assert.ok(config.includes('<button type="button" id="btn-key-save"'));
   const handler = handlerBetween(
-    'panel.querySelector("#btn-key-save").addEventListener("click"',
-    'panel.querySelector("#btn-key-test").addEventListener("click"'
+    'btnKeySave.addEventListener("click"',
+    'btnKeyTest.addEventListener("click"'
   );
-  assert.ok(handler.includes('fetch("/api/ai-chat/provider-key", {'));
+  assert.ok(handler.includes('fetch("/api/ai-chat/owner-credentials", {'));
+  assert.ok(handler.includes("providerId"));
+  assert.ok(handler.includes("apiKey:"));
+  assert.ok(!handler.includes("opencodeModel"));
+  assert.ok(!handler.includes("soulInput"));
   assert.ok(!handler.includes("requestSubmit"));
 });
 
-test("T2", "Thử key là button độc lập và giữ canonical test route", () => {
+test("T2", "Thử key chỉ dùng credential đã lưu", () => {
   assert.ok(config.includes('<button type="button" id="btn-key-test"'));
   const handler = handlerBetween(
-    'panel.querySelector("#btn-key-test").addEventListener("click"',
-    'panel.querySelector("#btn-key-clear").addEventListener("click"'
+    'btnKeyTest.addEventListener("click"',
+    'btnKeyDelete.addEventListener("click"'
   );
-  assert.ok(handler.includes('fetch("/api/ai-chat/provider-key/test", {'));
+  assert.ok(handler.includes('fetch("/api/ai-chat/owner-credentials/test", {'));
+  assert.ok(handler.includes("ownerKeyStatus.has"));
+  assert.ok(!handler.includes("apiKey:"));
   assert.ok(!handler.includes("requestSubmit"));
 });
 
-test("T3", "Gỡ key là button độc lập và giữ canonical delete route", () => {
+test("T3", "Delete selected và delete-all tách owner-scoped", () => {
+  assert.ok(config.includes('<button type="button" id="btn-key-delete"'));
   assert.ok(config.includes('<button type="button" id="btn-key-clear"'));
-  const handler = handlerBetween(
-    'panel.querySelector("#btn-key-clear").addEventListener("click"',
-    'panel.querySelector("#btn-oc-test").addEventListener("click"'
+  const selected = handlerBetween(
+    'btnKeyDelete.addEventListener("click"',
+    'btnKeyClear.addEventListener("click"'
   );
-  assert.ok(handler.includes('fetch("/api/ai-chat/provider-key", { method: "DELETE" })'));
-  assert.ok(!handler.includes("requestSubmit"));
+  const all = handlerBetween(
+    'btnKeyClear.addEventListener("click"',
+    "const refreshAfterCredentialChange"
+  );
+  assert.ok(selected.includes("/api/ai-chat/owner-credentials/${encodeURIComponent(providerId)}"));
+  assert.ok(selected.includes('method: "DELETE"'));
+  assert.ok(all.includes('fetch("/api/ai-chat/owner-credentials", { method: "DELETE" })'));
+  assert.ok(!selected.includes("requestSubmit"));
+  assert.ok(!all.includes("requestSubmit"));
+  const credentialStart = server.indexOf('app.get("/api/ai-chat/owner-credentials"');
+  const credentialEnd = server.indexOf("/* --- ZOHO MAIL --- */", credentialStart);
+  const serverCredentialRoutes = server.slice(credentialStart, credentialEnd);
+  assert.ok(server.includes('app.delete("/api/ai-chat/owner-credentials/:providerId"'));
+  assert.ok(server.includes('app.delete("/api/ai-chat/owner-credentials"'));
+  assert.ok(!serverCredentialRoutes.includes("saveAiChatConfig"));
 });
 
 test("T4", "Lưu provider/model có handler riêng trên canonical POST", () => {
@@ -74,9 +94,11 @@ test("T4", "Lưu provider/model có handler riêng trên canonical POST", () => 
   const soulValidation = server.indexOf('if (!soul) return res.status(400)', scopedBranch);
   assert.ok(scopedBranch >= 0 && soulValidation > scopedBranch);
   const branch = server.slice(scopedBranch, soulValidation);
-  assert.ok(branch.includes("getAiChatConfig"));
   assert.ok(branch.includes("saveAiChatConfig"));
-  assert.ok(branch.includes("...(current || {})"));
+  assert.ok(branch.includes("opencodeModel"));
+  assert.ok(branch.includes("opencodeFallbackModel"));
+  assert.ok(!branch.includes("saveCurrentOwnerCredential"));
+  assert.ok(!branch.includes("deleteCurrentOwnerCredential"));
 });
 
 test("T5", "Assistant validation và submit riêng vẫn còn", () => {

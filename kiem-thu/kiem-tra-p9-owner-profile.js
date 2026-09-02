@@ -181,7 +181,8 @@ async function main() {
     assert.ok(app.includes("invalidateSettingsOwnerState()"));
     assert.ok(app.includes("invalidateTrainingOwnerState()"));
     assert.ok(config.includes("settingsOwnerGeneration += 1"));
-    assert.ok(config.includes('dangKyLamMoi("AI Chat", loadConfig)'));
+    assert.ok(config.includes('dangKyLamMoi("AI Chat", aiConfigRefreshSink)'));
+    assert.ok(config.includes("Promise.allSettled([loadConfig(), loadGlobalAiCatalogs()])"));
     assert.ok(training.includes("ownerGeneration += 1"));
     assert.ok(training.includes("daNap = false"));
   });

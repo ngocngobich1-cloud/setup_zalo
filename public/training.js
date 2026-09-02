@@ -12,13 +12,26 @@ const els = {
   fileInput: document.querySelector("#training-file-input"),
   fileList: document.querySelector("#training-files"),
   btnAttach: document.querySelector("#btn-training-attach"),
+  btnAttachFile: document.querySelector("#btn-training-attach-file"),
   btnSynth: document.querySelector("#btn-training-synth"),
   btnReset: document.querySelector("#btn-training-reset"),
   layout: document.querySelector("#training-layout"),
   configPanel: document.querySelector("#training-config-panel"),
   btnConfigToggle: document.querySelector("#btn-training-config-toggle"),
   segmentButtons: [...document.querySelectorAll("[data-training-segment]")],
+  keyProvider: document.querySelector("#training-key-provider"),
+  keyValue: document.querySelector("#training-key-value"),
+  btnKeySave: document.querySelector("#btn-training-key-save"),
+  btnKeyTest: document.querySelector("#btn-training-key-test"),
+  btnKeyDelete: document.querySelector("#btn-training-key-delete"),
+  btnKeyClear: document.querySelector("#btn-training-key-clear"),
+  connectedProviders: document.querySelector("#training-connected-providers"),
 };
+
+const IMAGE_ATTACHMENT_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
+const FILE_ATTACHMENT_ACCEPT = "application/pdf,text/plain,text/markdown,text/csv";
+const CANONICAL_ATTACHMENT_ACCEPT = els.fileInput?.getAttribute("accept") ||
+  `${IMAGE_ATTACHMENT_ACCEPT},${FILE_ATTACHMENT_ACCEPT}`;
 
 let dinhKem = [];
 let docDuocAnh = false;
@@ -27,6 +40,9 @@ let daNap = false;
 let ownerGeneration = 0;
 let onboardingController = null;
 let starterConsumed = false;
+let credentialCatalog = [];
+let credentialStatus = new Map();
+let credentialBusy = false;
 // Backend canonical luon doc duoc PDF/text/Markdown/CSV; docDuocAnh chi la
 // capability rieng cua model, khong duoc dung de khoa tat ca cac loai tep.
 const docDuocTepKhac = true;
@@ -36,6 +52,10 @@ export function invalidateTrainingOwnerState() {
   ownerGeneration += 1;
   daNap = false;
   docDuocAnh = false;
+  starterConsumed = false;
+  onboardingController = null;
+  els.starters.classList.add("hidden");
+  els.form.classList.remove("training-form-onboarding", "training-form-composer-spotlight");
   for (const entry of dinhKem) {
     if (entry?.previewUrl) URL.revokeObjectURL(entry.previewUrl);
   }
@@ -45,6 +65,12 @@ export function invalidateTrainingOwnerState() {
   els.meta.textContent = "Đang tải hồ sơ Zalo hiện tại…";
   if (els.mobileMeta) els.mobileMeta.textContent = els.meta.textContent;
   els.meta.classList.remove("training-warn");
+  credentialCatalog = [];
+  credentialStatus = new Map();
+  els.keyProvider.innerHTML = '<option value="">Chọn hãng</option>';
+  els.keyValue.value = "";
+  renderCredentialStatus();
+  updateCredentialControls();
 }
 
 function datMobileSegment(segment) {
@@ -68,9 +94,12 @@ window.addEventListener("zalo:training-segment", (event) => {
 
 els.btnConfigToggle?.addEventListener("click", () => {
   const collapsed = els.layout.classList.toggle("training-config-collapsed");
+  const label = collapsed ? "Mở cấu hình" : "Thu gọn cấu hình";
   els.btnConfigToggle.setAttribute("aria-expanded", String(!collapsed));
-  els.btnConfigToggle.textContent = collapsed ? "Mở cấu hình" : "Thu gọn cấu hình";
-  els.btnConfigToggle.title = collapsed ? "Mở cấu hình" : "Thu gọn cấu hình";
+  els.btnConfigToggle.setAttribute("aria-label", label);
+  els.btnConfigToggle.title = label;
+  const srLabel = els.btnConfigToggle.querySelector(".sr-only");
+  if (srLabel) srLabel.textContent = label;
 });
 
 export function datDieuPhoiOnboarding(controller) {
@@ -82,6 +111,7 @@ export function datDieuPhoiOnboarding(controller) {
   els.form.classList.toggle("training-form-composer-spotlight", composerSpotlight);
   els.starters.classList.toggle("hidden", !showStarter);
   els.btnAttach.disabled = dangGui || (dangOnboarding ? false : !docDuocAnh && !docDuocTepKhac);
+  els.btnAttachFile.disabled = dangGui || (dangOnboarding ? false : !docDuocTepKhac);
   els.btnSynth.disabled = dangOnboarding || dangGui;
   els.btnReset.disabled = dangOnboarding || dangGui;
   els.text.placeholder = dangOnboarding
@@ -89,11 +119,22 @@ export function datDieuPhoiOnboarding(controller) {
     : "Dán ảnh chat mẫu bằng Ctrl+V, hoặc gõ lời dặn về giọng điệu…";
 }
 
-export function hienTinOnboarding(content) {
-  els.log.querySelectorAll("[data-onboarding-message]").forEach((node) => node.remove());
-  if (!content) return;
+export function hienTinOnboarding(content, turnKey = "") {
+  if (!content) return null;
+  const canonicalKey = String(turnKey || "");
+  const existing = canonicalKey
+    ? [...els.log.querySelectorAll("[data-onboarding-message]")]
+      .find((node) => node.dataset.onboardingTurnKey === canonicalKey)
+    : null;
+  if (existing) {
+    const body = existing.querySelector(".training-msg-body");
+    if (body && body.textContent !== content) body.textContent = content;
+    return existing;
+  }
   const row = themDong({ role: "assistant", content });
   row.dataset.onboardingMessage = "true";
+  if (canonicalKey) row.dataset.onboardingTurnKey = canonicalKey;
+  return row;
 }
 
 function veDanhSachTep() {
@@ -229,6 +270,7 @@ function khoa(khoaLai) {
   dangGui = khoaLai;
   els.form.querySelector("button[type=submit]").disabled = khoaLai;
   els.btnAttach.disabled = khoaLai;
+  els.btnAttachFile.disabled = khoaLai;
   els.btnSynth.disabled = khoaLai;
   els.btnReset.disabled = khoaLai;
 }
@@ -242,8 +284,10 @@ function apDungMetaHuanLuyen(data) {
   els.meta.classList.toggle("training-warn", !docDuocAnh);
   els.btnAttach.disabled = dangGui;
   els.btnAttach.title = docDuocAnh
-    ? "Đính ảnh hoặc tệp"
-    : "Đính tệp; model hiện tại không đọc được ảnh";
+    ? "Đính kèm ảnh"
+    : "Đính kèm ảnh; model hiện tại không đọc được ảnh";
+  els.btnAttachFile.disabled = dangGui;
+  els.btnAttachFile.title = "Đính kèm tệp";
 }
 
 async function napMetaHuanLuyen() {
@@ -256,10 +300,110 @@ async function napMetaHuanLuyen() {
   return data;
 }
 
+function setCredentialButton(button, enabled) {
+  button.disabled = !enabled;
+  button.setAttribute("aria-disabled", String(!enabled));
+}
+
+function updateCredentialControls() {
+  const providerId = els.keyProvider.value;
+  const saved = credentialStatus.has(providerId);
+  els.keyProvider.disabled = credentialBusy;
+  els.keyValue.disabled = credentialBusy;
+  setCredentialButton(els.btnKeySave, !credentialBusy && Boolean(providerId && els.keyValue.value.trim()));
+  setCredentialButton(els.btnKeyTest, !credentialBusy && saved);
+  setCredentialButton(els.btnKeyDelete, !credentialBusy && saved);
+  setCredentialButton(els.btnKeyClear, !credentialBusy && credentialStatus.size > 0);
+}
+
+function providerName(providerId) {
+  return credentialCatalog.find((provider) => provider.id === providerId)?.name || providerId;
+}
+
+function renderCredentialStatus() {
+  els.connectedProviders.innerHTML = "";
+  const title = document.createElement("span");
+  title.textContent = "Hãng đã kết nối";
+  els.connectedProviders.append(title);
+  if (credentialStatus.size === 0) {
+    const empty = document.createElement("p");
+    empty.textContent = "Chưa có kết nối.";
+    const helper = document.createElement("p");
+    helper.textContent = "Bot cần ít nhất một API key đã kết nối để sử dụng AI.";
+    els.connectedProviders.append(empty, helper);
+    return;
+  }
+  for (const status of credentialStatus.values()) {
+    const row = document.createElement("p");
+    const updated = Number(status.updatedAt)
+      ? ` · ${new Date(Number(status.updatedAt)).toLocaleString("vi-VN")}`
+      : "";
+    row.textContent = `${status.providerName || providerName(status.providerId)} · Đã kết nối${updated}`;
+    els.connectedProviders.append(row);
+  }
+}
+
+function renderCredentialProviders(selected = "") {
+  const ids = new Set(credentialCatalog.map((provider) => provider.id));
+  for (const status of credentialStatus.values()) {
+    if (!ids.has(status.providerId)) {
+      credentialCatalog.push({ id: status.providerId, name: status.providerName || status.providerId });
+    }
+  }
+  credentialCatalog.sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  els.keyProvider.innerHTML = "";
+  els.keyProvider.append(new Option("Chọn hãng", ""));
+  for (const provider of credentialCatalog) {
+    const suffix = credentialStatus.has(provider.id) ? " · Đã kết nối" : "";
+    els.keyProvider.append(new Option(provider.name + suffix, provider.id));
+  }
+  if (selected && credentialCatalog.some((provider) => provider.id === selected)) {
+    els.keyProvider.value = selected;
+  }
+}
+
+async function napOwnerCredentials() {
+  const generation = ownerGeneration;
+  const selected = els.keyProvider.value;
+  credentialBusy = true;
+  updateCredentialControls();
+  try {
+    const [catalogResponse, statusResponse] = await Promise.all([
+      fetch("/api/ai-chat/providers"),
+      fetch("/api/ai-chat/owner-credentials"),
+    ]);
+    const [catalogData, statusData] = await Promise.all([catalogResponse.json(), statusResponse.json()]);
+    if (generation !== ownerGeneration) return;
+    if (!catalogResponse.ok) throw new Error(catalogData.error || "Không tải được danh sách hãng AI.");
+    if (!statusResponse.ok) throw new Error(statusData.error || "Không tải được kết nối AI.");
+    credentialCatalog = (catalogData.providers || []).map((provider) => ({
+      id: provider.id,
+      name: provider.name || provider.id,
+    }));
+    credentialStatus = new Map((statusData.providers || []).map((status) => [status.providerId, status]));
+    renderCredentialProviders(selected);
+    renderCredentialStatus();
+  } catch (error) {
+    if (generation !== ownerGeneration) return;
+    els.connectedProviders.innerHTML = "";
+    const title = document.createElement("span");
+    title.textContent = "Hãng đã kết nối";
+    const row = document.createElement("p");
+    row.textContent = error.message;
+    els.connectedProviders.append(title, row);
+  } finally {
+    if (generation === ownerGeneration) {
+      credentialBusy = false;
+      updateCredentialControls();
+    }
+  }
+}
+
 export async function napHuanLuyen() {
   if (daNap) return;
   daNap = true;
   const generation = ownerGeneration;
+  void napOwnerCredentials();
   try {
     const res = await fetch("/api/training");
     const data = await res.json();
@@ -289,12 +433,135 @@ export async function napHuanLuyen() {
 }
 
 window.addEventListener("zalo:canonical-save", (event) => {
-  if (!["ai-model", "ai-config"].includes(event.detail?.section)) return;
+  if (event.detail?.section === "api-key") void napOwnerCredentials();
+  if (!["ai-model", "ai-config", "api-key"].includes(event.detail?.section)) return;
   void napMetaHuanLuyen().catch((error) => {
     els.meta.textContent = error.message;
     if (els.mobileMeta) els.mobileMeta.textContent = els.meta.textContent;
     els.meta.classList.add("training-warn");
   });
+});
+
+window.addEventListener("zalo:credential-change", () => {
+  void napOwnerCredentials();
+  void napMetaHuanLuyen().catch(() => {});
+});
+
+els.keyProvider.addEventListener("change", updateCredentialControls);
+els.keyValue.addEventListener("input", updateCredentialControls);
+
+els.btnKeySave.addEventListener("click", async () => {
+  const providerId = els.keyProvider.value;
+  const apiKey = els.keyValue.value.trim();
+  if (!providerId || !apiKey || credentialBusy) return;
+  const generation = ownerGeneration;
+  credentialBusy = true;
+  updateCredentialControls();
+  try {
+    const response = await fetch("/api/ai-chat/owner-credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providerId, apiKey }),
+    });
+    const data = await response.json();
+    if (generation !== ownerGeneration) return;
+    if (!response.ok) throw new Error(data.error || "Không lưu được API key.");
+    els.keyValue.value = "";
+    await napOwnerCredentials();
+    window.dispatchEvent(new CustomEvent("zalo:canonical-save", {
+      detail: { section: "api-key", providerId },
+    }));
+  } catch (error) {
+    if (generation !== ownerGeneration) return;
+    alert(error.message);
+  } finally {
+    if (generation === ownerGeneration) {
+      credentialBusy = false;
+      updateCredentialControls();
+    }
+  }
+});
+
+els.btnKeyTest.addEventListener("click", async () => {
+  const providerId = els.keyProvider.value;
+  if (!credentialStatus.has(providerId) || credentialBusy) return;
+  const generation = ownerGeneration;
+  credentialBusy = true;
+  updateCredentialControls();
+  try {
+    const response = await fetch("/api/ai-chat/owner-credentials/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providerId }),
+    });
+    const data = await response.json();
+    if (generation !== ownerGeneration) return;
+    if (!response.ok) throw new Error(data.message || data.error || "Không kiểm tra được API key.");
+    alert(`API key dùng được · ${data.model}`);
+  } catch (error) {
+    if (generation !== ownerGeneration) return;
+    alert(error.message);
+  } finally {
+    if (generation === ownerGeneration) {
+      credentialBusy = false;
+      updateCredentialControls();
+    }
+  }
+});
+
+els.btnKeyDelete.addEventListener("click", async () => {
+  const providerId = els.keyProvider.value;
+  if (!credentialStatus.has(providerId) || credentialBusy) return;
+  if (!confirm(`Gỡ API key ${providerName(providerId)} của tài khoản Zalo hiện tại?`)) return;
+  const generation = ownerGeneration;
+  credentialBusy = true;
+  updateCredentialControls();
+  try {
+    const response = await fetch(`/api/ai-chat/owner-credentials/${encodeURIComponent(providerId)}`, {
+      method: "DELETE",
+    });
+    const data = await response.json();
+    if (generation !== ownerGeneration) return;
+    if (!response.ok) throw new Error(data.error || "Không gỡ được API key.");
+    await napOwnerCredentials();
+    window.dispatchEvent(new CustomEvent("zalo:credential-change", {
+      detail: { action: "delete-selected", providerId },
+    }));
+  } catch (error) {
+    if (generation !== ownerGeneration) return;
+    alert(error.message);
+  } finally {
+    if (generation === ownerGeneration) {
+      credentialBusy = false;
+      updateCredentialControls();
+    }
+  }
+});
+
+els.btnKeyClear.addEventListener("click", async () => {
+  if (credentialStatus.size === 0 || credentialBusy) return;
+  if (!confirm("Chỉ các API key AI đã lưu của tài khoản Zalo hiện tại sẽ bị gỡ.\n\nGỡ tất cả key của tôi?")) return;
+  const generation = ownerGeneration;
+  credentialBusy = true;
+  updateCredentialControls();
+  try {
+    const response = await fetch("/api/ai-chat/owner-credentials", { method: "DELETE" });
+    const data = await response.json();
+    if (generation !== ownerGeneration) return;
+    if (!response.ok) throw new Error(data.error || "Không gỡ được các API key.");
+    await napOwnerCredentials();
+    window.dispatchEvent(new CustomEvent("zalo:credential-change", {
+      detail: { action: "delete-all" },
+    }));
+  } catch (error) {
+    if (generation !== ownerGeneration) return;
+    alert(error.message);
+  } finally {
+    if (generation === ownerGeneration) {
+      credentialBusy = false;
+      updateCredentialControls();
+    }
+  }
 });
 
 async function gui(text, files) {
@@ -410,11 +677,18 @@ els.btnReset.addEventListener("click", async () => {
   await napHuanLuyen();
 });
 
-els.btnAttach.addEventListener("click", () => els.fileInput.click());
+function moHopChonTep(accept) {
+  els.fileInput.setAttribute("accept", accept);
+  els.fileInput.click();
+}
+
+els.btnAttach.addEventListener("click", () => moHopChonTep(IMAGE_ATTACHMENT_ACCEPT));
+els.btnAttachFile.addEventListener("click", () => moHopChonTep(FILE_ATTACHMENT_ACCEPT));
 
 els.fileInput.addEventListener("change", () => {
   themTepDaChon(Array.from(els.fileInput.files || []));
   els.fileInput.value = "";
+  els.fileInput.setAttribute("accept", CANONICAL_ATTACHMENT_ACCEPT);
 });
 
 // Dan anh truc tiep bang Ctrl+V - cach nhanh nhat de dua anh chup man hinh vao.
