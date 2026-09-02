@@ -2521,12 +2521,11 @@ input {
 
 @media (max-width: 980px) {
   body:has(#module-training:not(.hidden)) {
-    min-height: var(--mobile-vv-height, 100dvh);
     overflow: hidden;
   }
 
   #module-training:not(.hidden) {
-    height: var(--mobile-vv-height, 100dvh);
+    height: 100dvh;
   }
 
   #module-training {
@@ -4217,7 +4216,7 @@ textarea {
    bao gio co tac dung. */
 @media (max-width: 760px) {
   body {
-    min-height: var(--mobile-vv-height, 100dvh);
+    min-height: 100dvh;
   }
 
   body:has(.chat-app.mobile-chat-open) {
@@ -4225,7 +4224,7 @@ textarea {
   }
 
   .app-shell {
-    height: var(--mobile-vv-height, 100dvh);
+    height: 100dvh;
     grid-template-columns: minmax(0, 1fr);
   }
 

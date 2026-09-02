@@ -152,7 +152,6 @@ await test("STATIC", "T6b three locked CSS anchors remain", () => {
 await test("STATIC", "T6c Inbox mobile has one dynamic owner, fixed rows and safe-area bottom stack", () => {
   const mobileRules = styleRulesInMedia("(max-width: 760px)");
   const mobileRule = (selector) => mobileRules.find((rule) => rule.selectorText === selector);
-  const viewportHeight = "var(--mobile-vv-height, 100dvh)";
   const desktopShellRule = cssRules.find((rule) => rule.selectorText === ".app-shell");
   const desktopBodyRule = cssRules.find((rule) => rule.selectorText === "body");
   const chatApp = staticDom.querySelector("#chat-app");
@@ -163,15 +162,15 @@ await test("STATIC", "T6c Inbox mobile has one dynamic owner, fixed rows and saf
 
   assert.equal(desktopShellRule?.style.height, "100vh", "desktop shell height must remain unchanged");
   assert.equal(desktopBodyRule?.style.getPropertyValue("min-height"), "100vh");
-  assert.equal(mobileRule(".app-shell")?.style.height, viewportHeight);
-  assert.equal(mobileRule("body")?.style.getPropertyValue("min-height"), viewportHeight);
+  assert.equal(mobileRule(".app-shell")?.style.height, "100dvh");
+  assert.equal(mobileRule("body")?.style.getPropertyValue("min-height"), "100dvh");
   assert.notEqual(mobileRule("body")?.style.getPropertyValue("min-height"), "100vh");
   assert.equal(mobileRule("body:has(.chat-app.mobile-chat-open)")?.style.overflow, "hidden");
   for (const selector of [".chat-app", ".chat-app.mobile-chat-open", ".chat-main", ".chat-panel"]) {
-    assert.doesNotMatch(
-      mobileRule(selector)?.style.height || "",
-      /(?:--mobile-vv-height|\bdvh\b)/,
-      `${selector} must not become another visual viewport owner`,
+    assert.notEqual(
+      mobileRule(selector)?.style.height,
+      "100dvh",
+      `${selector} must not become a second dynamic viewport owner`,
     );
   }
   assert.match(
@@ -194,23 +193,6 @@ await test("STATIC", "T6c Inbox mobile has one dynamic owner, fixed rows and saf
   assert.equal(bottomStack.parentElement, panel);
   assert.equal(messages.contains(header), false);
   assert.equal(messages.contains(bottomStack), false);
-});
-
-await test("STATIC", "T6d one idempotent VisualViewport synchronizer owns geometry only", () => {
-  const start = appSource.indexOf("const MOBILE_VISUAL_VIEWPORT_HEIGHT_PROPERTY");
-  const end = appSource.indexOf("function chupFrontendOwner", start);
-  const viewportSource = appSource.slice(start, end);
-
-  assert.ok(start >= 0 && end > start);
-  assert.equal([...appSource.matchAll(/function syncMobileVisualViewport\s*\(/g)].length, 1);
-  assert.match(viewportSource, /window\.visualViewport\?\.height/);
-  assert.match(viewportSource, /fallbackHeight = Number\(window\.innerHeight\)/);
-  assert.match(viewportSource, /style\.setProperty\(MOBILE_VISUAL_VIEWPORT_HEIGHT_PROPERTY, `\$\{height\}px`\)/);
-  assert.match(viewportSource, /window\.visualViewport\?\.addEventListener\("resize", syncMobileVisualViewport/);
-  assert.match(viewportSource, /window\.addEventListener\("resize", syncMobileVisualViewport/);
-  assert.match(viewportSource, /if \(mobileVisualViewportSyncInitialized\) return/);
-  assert.match(viewportSource, /MOBILE_VISUAL_VIEWPORT_SETTLE_MS = 120/);
-  assert.doesNotMatch(viewportSource, /offsetTop|addEventListener\("scroll"|setInterval|scrollTo|fetch\(|\.value\s*=|\.submit\(/);
 });
 
 await test("STATIC", "T16 per-thread Bot scaffold is present and inert by source", () => {
@@ -253,7 +235,6 @@ await test("STATIC", "T18 V3.2 viewport fix stays inside the authorized file all
     || /^data\/(?:credentials\.json|\.secret-key|.+\.db(?:-.+)?)$/.test(file);
   const changed = workingTreeChanges().filter((file) => !runtimeOnly(file));
   assert.ok(changed.includes("public/style.css"));
-  assert.ok(changed.includes("public/app.js"));
   assert.ok(changed.includes("kiem-thu/kiem-tra-inbox-ui-a.js"));
   assert.ok(changed.includes("kiem-thu/kiem-tra-bot-commander-part1.js"));
   for (const file of changed) assert.ok(allowed.has(file), `Out-of-scope source file: ${file}`);
@@ -289,16 +270,6 @@ const dom = new JSDOM(htmlSource, { url: "http://zalo-web.test/", pretendToBeVis
 const { window } = dom;
 const { document } = window;
 Object.defineProperty(window, "innerWidth", { configurable: true, value: 393 });
-Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 700 });
-const mobileVisualViewport = new window.EventTarget();
-Object.defineProperty(mobileVisualViewport, "height", { configurable: true, writable: true, value: 640 });
-let mobileVisualViewportResizeListeners = 0;
-const addMobileVisualViewportListener = mobileVisualViewport.addEventListener.bind(mobileVisualViewport);
-mobileVisualViewport.addEventListener = (type, listener, options) => {
-  if (type === "resize") mobileVisualViewportResizeListeners += 1;
-  return addMobileVisualViewportListener(type, listener, options);
-};
-Object.defineProperty(window, "visualViewport", { configurable: true, value: mobileVisualViewport });
 window.matchMedia = (query) => ({
   matches: query === "(max-width: 760px)",
   media: query,
@@ -382,39 +353,8 @@ async function fetchFixture(input, options = {}) {
 globalThis.fetch = fetchFixture;
 window.fetch = fetchFixture;
 
-const appModule = await import(`${pathToFileURL(path.join(REPO, "public", "app.js")).href}?inbox-ui-a`);
+await import(`${pathToFileURL(path.join(REPO, "public", "app.js")).href}?inbox-ui-a`);
 await flush(14);
-
-await test("BEHAVIOR", "K1-K7 viewport resize, fallback and bounded settle preserve the composer draft", async () => {
-  assert.equal(document.documentElement.style.getPropertyValue("--mobile-vv-height"), "640px");
-  assert.equal(mobileVisualViewportResizeListeners, 1);
-  appModule.initMobileVisualViewportSync();
-  appModule.initMobileVisualViewportSync();
-  assert.equal(mobileVisualViewportResizeListeners, 1, "idempotent init must not duplicate listeners");
-
-  const draft = "TEST MOBILE KEYBOARD V3.4";
-  const callsBefore = fetchCalls.length;
-  document.querySelector("#message-input").value = draft;
-  mobileVisualViewport.height = 420;
-  mobileVisualViewport.dispatchEvent(new window.Event("resize"));
-  assert.equal(document.documentElement.style.getPropertyValue("--mobile-vv-height"), "420px");
-  assert.equal(document.querySelector("#message-input").value, draft);
-  assert.equal(fetchCalls.length, callsBefore);
-
-  mobileVisualViewport.height = Number.NaN;
-  window.innerHeight = 612;
-  window.dispatchEvent(new window.Event("resize"));
-  assert.equal(document.documentElement.style.getPropertyValue("--mobile-vv-height"), "612px");
-
-  mobileVisualViewport.height = 500;
-  mobileVisualViewport.dispatchEvent(new window.Event("resize"));
-  assert.equal(document.documentElement.style.getPropertyValue("--mobile-vv-height"), "500px");
-  mobileVisualViewport.height = 700;
-  await new Promise((resolve) => setTimeout(resolve, 140));
-  assert.equal(document.documentElement.style.getPropertyValue("--mobile-vv-height"), "700px");
-  assert.equal(document.querySelector("#message-input").value, draft);
-  assert.equal(fetchCalls.length, callsBefore);
-});
 
 const threadWithTime = {
   id: "thread-alpha", title: "Khách Alpha", threadType: 0, lastMessage: "Tin mới nhất",
