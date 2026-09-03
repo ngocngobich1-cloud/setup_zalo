@@ -31,6 +31,7 @@ services:
       # Namespace directory vat ly dung rieng cho moi credential projection.
       # Phai cung absolute path voi OpenCode de session inference realpath duoc.
       OPENCODE_CONTEXT_ROOT: "/opencode-context"
+      AI_CAPABILITY_ROUTING_V1_ENABLED: "${AI_CAPABILITY_ROUTING_V1_ENABLED:-false}"
     ports:
       # Chi mo tren may noi bo. Tren VPS thi bo han dong nay: chi Caddy duoc
       # tiep xuc voi internet.
