@@ -196,14 +196,15 @@
                 <form id="send-form" class="send-form">
                   <div id="chat-attachment-preview" class="chat-attachment-preview hidden"></div>
                   <div class="composer-toolbar">
-                    <div id="thread-bot-status" class="thread-bot-status" data-ui-only="true">
+                    <div id="thread-bot-status" class="thread-bot-status">
                       <span class="thread-bot-dot" aria-hidden="true"></span>
                       <span class="thread-bot-copy">
                         <span class="thread-bot-desktop-label">Bot cho hội thoại này</span>
                         <span class="thread-bot-mobile-label">Bot</span>
+                        <span class="thread-bot-global-hint hidden">Bot tổng đang tắt.</span>
                       </span>
                       <button id="btn-thread-bot-toggle" class="thread-bot-toggle" type="button" disabled
-                        aria-disabled="true" data-ui-only="true" title="Chưa kích hoạt">
+                        aria-disabled="true" aria-pressed="true" title="Chọn một hội thoại">
                         <span class="thread-bot-desktop-label">Tắt bot ở đây</span>
                         <span class="thread-bot-mobile-label">Tắt</span>
                       </button>

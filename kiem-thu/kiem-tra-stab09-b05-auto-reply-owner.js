@@ -148,6 +148,19 @@ async function runRuntime({ ownerUid, content, rulesByOwner, sendError = null })
     },
     sendResolvedPrivateMessage: async () => undefined,
     aiChat: { getConfig: () => ({ botEnabled: true }) },
+    botEligibilityEpoch: 0,
+    botEligibilityConHieuLuc: (epoch) => epoch === 0,
+    khoaThreadEligibility: (owner, threadId) => `${owner}\u0000${threadId}`,
+    threadEligibilityEpochHienTai: () => 0,
+    threadEligibilityConHieuLuc: (_key, epoch) => epoch === 0,
+    automaticWorkConHieuLuc: (work) => work.capturedBotEligibilityEpoch === 0
+      && work.capturedThreadEligibilityEpoch === 0,
+    tuyChonGuiTuDong: (work) => ({
+      botEligibilityEpoch: work.capturedBotEligibilityEpoch,
+      threadEligibilityKey: work.threadEligibilityKey,
+      threadEligibilityEpoch: work.capturedThreadEligibilityEpoch,
+    }),
+    getThread: async () => ({ botEnabled: true }),
     getAutoReplyRules: async (owner) => {
       observed.queriedOwners.push(owner);
       return structuredClone(rulesByOwner[owner] || []);

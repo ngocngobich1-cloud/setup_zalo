@@ -348,6 +348,17 @@ function createIncomingHarness({ botEnabled, persist, botEpoch = 0, rules = [] }
     aiChat: { getConfig: () => ({ botEnabled }) },
     botEligibilityEpoch: botEpoch,
     botEligibilityConHieuLuc: (epoch) => epoch === botEpoch,
+    khoaThreadEligibility: (ownerUid, threadId) => `${ownerUid}\u0000${threadId}`,
+    threadEligibilityEpochHienTai: () => 0,
+    threadEligibilityConHieuLuc: (_key, epoch) => epoch === 0,
+    automaticWorkConHieuLuc: (work) => work.capturedBotEligibilityEpoch === botEpoch
+      && work.capturedThreadEligibilityEpoch === 0,
+    tuyChonGuiTuDong: (work) => ({
+      botEligibilityEpoch: work.capturedBotEligibilityEpoch,
+      threadEligibilityKey: work.threadEligibilityKey,
+      threadEligibilityEpoch: work.capturedThreadEligibilityEpoch,
+    }),
+    getThread: async () => ({ botEnabled: true }),
     getAutoReplyRules: async () => rules,
     normalizeString: (value) => String(value),
     ThreadType: { User: 0, Group: 1 },
@@ -365,9 +376,16 @@ function createIncomingHarness({ botEnabled, persist, botEpoch = 0, rules = [] }
 }
 
 function createAggregateHarness({ botEpoch = 0 } = {}) {
-  const counters = { ai: 0, outbound: 0 };
+  const counters = { ai: 0, outbound: 0, credentialReads: 0 };
   const run = compileFunction(ZALO, "async function traLoiCumTin", {
     botEligibilityConHieuLuc: (epoch) => epoch === botEpoch,
+    automaticWorkConHieuLuc: (work) => !work
+      || (work.capturedBotEligibilityEpoch === botEpoch && work.capturedThreadEligibilityEpoch === 0),
+    tuyChonGuiTuDong: (work) => work ? {
+      botEligibilityEpoch: work.capturedBotEligibilityEpoch,
+      threadEligibilityKey: work.threadEligibilityKey,
+      threadEligibilityEpoch: work.capturedThreadEligibilityEpoch,
+    } : undefined,
     originConHieuLuc: () => true,
     gopThanhMotTin,
     api: { sendSeenEvent: async () => undefined },
@@ -376,7 +394,17 @@ function createAggregateHarness({ botEpoch = 0 } = {}) {
     guiDaXemChoTins: () => undefined,
     thuThaCamXuc: async () => false,
     batDauGoPhim: () => () => undefined,
-    aiChat: { tryReply: async () => { counters.ai += 1; return "AI reply"; } },
+    aiChat: {
+      getConfig: () => ({}),
+      tryReply: async () => { counters.ai += 1; return "AI reply"; },
+    },
+    ownerCredentials: {
+      withCurrentOwnerCredentialRead: async (_owner, _config, work) => {
+        counters.credentialReads += 1;
+        return work();
+      },
+    },
+    chuHienTai: () => "owner-A",
     ThreadType: { User: 0, Group: 1 },
     dungTrichDan: () => null,
     splitIntoBubbles: () => ["AI reply"],
@@ -587,7 +615,9 @@ function createProductionContinuityHarness({
         return replyImplementation(...args);
       },
     },
+    ownerCredentials: { withCurrentOwnerCredentialRead: async (_owner, _config, work) => work() },
     getAutoReplyRules: async () => [],
+    getThread: async () => ({ botEnabled: true }),
     normalizeString: (value) => String(value),
     ThreadType: { User: 0, Group: 1 },
     botDuocGoi: () => true,
@@ -611,6 +641,11 @@ function createProductionContinuityHarness({
   };
 
   const eligibilitySource = extractFunction(ZALO, "function botEligibilityConHieuLuc");
+  const threadKeySource = extractFunction(ZALO, "function khoaThreadEligibility");
+  const threadEpochSource = extractFunction(ZALO, "function threadEligibilityEpochHienTai");
+  const threadEligibilitySource = extractFunction(ZALO, "function threadEligibilityConHieuLuc");
+  const automaticEligibilitySource = extractFunction(ZALO, "function automaticWorkConHieuLuc");
+  const sendOptionsSource = extractFunction(ZALO, "function tuyChonGuiTuDong");
   const transitionSource = extractFunction(ZALO, "export function applyBotEligibilityTransition")
     .replace(/^export\s+/, "");
   const aggregateSource = extractFunction(ZALO, "async function traLoiCumTin");
@@ -620,7 +655,13 @@ function createProductionContinuityHarness({
     "use strict";
     let runtimeGeneration = 77;
     let botEligibilityEpoch = ${Number(initialEpoch)};
+    const threadEligibilityEpochs = new Map();
     ${eligibilitySource}
+    ${threadKeySource}
+    ${threadEpochSource}
+    ${threadEligibilitySource}
+    ${automaticEligibilitySource}
+    ${sendOptionsSource}
     ${transitionSource}
     ${aggregateSource}
     ${incomingSource}
@@ -669,7 +710,7 @@ await test("T1", "Normal ON van tao dung mot AI cycle va mot automatic outbound"
   assert.equal(incoming.aggregations.length, 1);
   const aggregate = createAggregateHarness({ botEpoch: 5 });
   await aggregate.run([message], incoming.aggregations[0].work);
-  assert.deepEqual(aggregate.counters, { ai: 1, outbound: 1 });
+  assert.deepEqual(aggregate.counters, { ai: 1, outbound: 1, credentialReads: 1 });
   system.db.close();
 });
 

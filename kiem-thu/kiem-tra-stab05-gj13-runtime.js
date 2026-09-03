@@ -204,9 +204,17 @@ function buildSendFailureHarness() {
   const run = compileFunction(source.zalo, "async function traLoiCumTin", {
     gopThanhMotTin: (messages) => messages[0],
     api: { sendSeenEvent: async () => undefined },
+    automaticWorkConHieuLuc: () => true,
+    tuyChonGuiTuDong: () => undefined,
+    guiDaXemChoTins: () => undefined,
     thuThaCamXuc: async () => false,
     batDauGoPhim: () => () => undefined,
-    aiChat: { tryReply: async () => "AI reply" },
+    aiChat: {
+      getConfig: () => ({}),
+      tryReply: async () => "AI reply",
+    },
+    ownerCredentials: { withCurrentOwnerCredentialRead: async (_owner, _config, work) => work() },
+    chuHienTai: () => "GJ13_OWNER",
     ThreadType: { User: 0, Group: 1 },
     dungTrichDan: () => null,
     splitIntoBubbles: () => ["AI reply"],

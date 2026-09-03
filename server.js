@@ -22,7 +22,9 @@ import {
 } from "./lib/db.js";
 import {
   initDb,
+  getThread,
   listThreads,
+  setThreadBotEnabled,
   getAutoReplyRules,
   getAiRuntimeConfig,
   insertAutoReplyRule,
@@ -55,6 +57,7 @@ import {
   dangXuatZalo,
   kiemTraKetNoiKhiMoApp,
   applyBotEligibilityTransition,
+  applyThreadBotEligibilityTransition,
   listAppStickers,
   appReactToMessage,
   appSendSticker,
@@ -578,6 +581,43 @@ app.post("/api/threads/refresh", async (_req, res) => {
     res.json({ ok: true, threads: await refreshThreads() });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/api/threads/:threadId/bot/toggle", async (req, res) => {
+  try {
+    if (typeof req.body?.enabled !== "boolean") {
+      return res.status(400).json({ ok: false, error: "enabled phải là boolean." });
+    }
+    const ownerUid = chuHienTai();
+    if (!ownerUid) {
+      return res.status(400).json({ ok: false, error: "Chưa đăng nhập Zalo." });
+    }
+
+    const threadId = String(req.params.threadId || "");
+    const mutation = await setThreadBotEnabled(ownerUid, threadId, req.body.enabled);
+    if (!mutation) {
+      return res.status(404).json({ ok: false, error: "Không tìm thấy hội thoại." });
+    }
+
+    // Transition phai dong bo va xay ra ngay sau DB mutation. No-op khong tang
+    // epoch, khong huy aggregation, khong clear PDF pending.
+    if (mutation.changed) {
+      applyThreadBotEligibilityTransition(
+        ownerUid,
+        threadId,
+        mutation.previousEnabled,
+        mutation.enabled
+      );
+    }
+    const thread = mutation.thread || await getThread(ownerUid, threadId);
+    if (!thread) {
+      return res.status(404).json({ ok: false, error: "Không tìm thấy hội thoại." });
+    }
+    if (mutation.changed) io.emit("thread-refresh", thread);
+    return res.json({ ok: true, enabled: thread.botEnabled, thread });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
   }
 });
 

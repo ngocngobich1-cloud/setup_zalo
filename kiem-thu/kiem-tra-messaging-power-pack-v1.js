@@ -21,7 +21,7 @@ import { DatabaseSync } from "node:sqlite";
 import { JSDOM } from "jsdom";
 
 /** Commit goc da duyet cho goi tin nay. Moc so sanh cho cac bai "khong doi". */
-const BASE_SHA = "9b9326e426fb3d12ed67873e5fbf3ec4a67380e7";
+const BASE_SHA = "695eb7570c13d7858749858ab3873964f404d61d";
 
 const REPO = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const ZALO_SRC = fs.readFileSync(path.join(REPO, "lib", "zalo-service.js"), "utf8");
@@ -37,10 +37,7 @@ const STICKER_SRC = fs.readFileSync(path.join(REPO, "lib", "sticker-zalo.js"), "
 const CAM_XUC_THAT = await import(pathToFileURL(path.join(REPO, "lib", "cam-xuc.js")).href);
 const MESSAGE_UTILS_THAT = await import(pathToFileURL(path.join(REPO, "lib", "message-utils.js")).href);
 
-/**
- * Doc mot tep tai DUNG commit goc cua goi tin nay, khong qua git CLI: doc thang
- * kho doi tuong de bai kiem tu no la moc so sanh, khong phu thuoc moi truong.
- */
+/** Doc mot tep tai DUNG commit goc da duyet de cac guard khong dua vao hardcode. */
 function docTepTaiBase(duongDan) {
   const ketQua = spawnSync("git", ["show", `${BASE_SHA}:${duongDan}`], {
     cwd: REPO, encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
@@ -1811,13 +1808,13 @@ await bai("M14.1", "bang messages giu dung 10 cot va dung khoa danh tinh", async
   ]);
   assert.deepEqual(luocDo.threads, [
     "local_id", "owner_uid", "remote_thread_id", "thread_type", "title", "avatar",
-    "last_message", "last_message_at", "updated_at",
+    "bot_enabled", "last_message", "last_message_at", "updated_at",
   ]);
   const khoi = DB_SRC.slice(DB_SRC.indexOf("CREATE TABLE IF NOT EXISTS messages"));
   assert.match(khoi.slice(0, 900), /PRIMARY KEY \(thread_id, id\)/, "khoa danh tinh giu nguyen");
 });
 
-await bai("M14.2", "luoc do THAT y het ban goc: khong bang moi, khong cot moi", async () => {
+await bai("M14.2", "luoc do THAT chi them threads.bot_enabled, khong bang/cot nao khac", async () => {
   const nguonGoc = docTepTaiBase("lib/db.js");
   const luocDoGoc = await luocDoThucTe(nguonGoc, "goc");
   const { thuMuc } = await moCsdlTam();
@@ -1828,10 +1825,21 @@ await bai("M14.2", "luoc do THAT y het ban goc: khong bang moi, khong cot moi", 
     "khong duoc them hay bot bang nao"
   );
   for (const bang of Object.keys(luocDoGoc)) {
+    if (bang === "threads") {
+      assert.equal(
+        luocDoNay.threads.filter((cot) => cot === "bot_enabled").length,
+        1,
+        "threads phai them dung mot cot bot_enabled"
+      );
+      assert.deepEqual(
+        luocDoNay.threads.filter((cot) => cot !== "bot_enabled"),
+        luocDoGoc.threads,
+        "ngoai bot_enabled, threads phai y nguyen base"
+      );
+      continue;
+    }
     assert.deepEqual(luocDoNay[bang], luocDoGoc[bang], `bang ${bang} bi doi cot`);
   }
-  // So voi ban goc chu khong voi mot con so chep tay: moc so sanh phai la commit
-  // da duyet, khong phai tri nho cua nguoi viet bai kiem.
   const migrationGoc = spawnSync("git", ["ls-tree", "--name-only", BASE_SHA, "lib/migrations/"], {
     cwd: REPO, encoding: "utf8",
   }).stdout.split(String.fromCharCode(10)).map((d) => d.trim()).filter(Boolean).map((d) => path.basename(d)).sort();
@@ -2406,7 +2414,7 @@ await bai("T8", "cascade composer mobile cung specificity, dung source order va 
 
 group("T9");
 
-await bai("T9", "copy bot per-thread khong con khai dang tra loi va app.js van inert", () => {
+await bai("T9", "copy bot per-thread khong khai dang tra loi va app.js da noi toggle scoped", () => {
   const dom = new JSDOM(HTML_SRC).window.document;
   const desktopLabels = [...dom.querySelectorAll(".thread-bot-desktop-label")];
   const mobileLabels = [...dom.querySelectorAll(".thread-bot-mobile-label")];
@@ -2414,7 +2422,9 @@ await bai("T9", "copy bot per-thread khong con khai dang tra loi va app.js van i
   for (const node of [...desktopLabels, ...mobileLabels]) {
     assert.doesNotMatch(node.textContent, /đang trả lời/);
   }
-  assert.doesNotMatch(APP_SRC, /thread-bot-status|btn-thread-bot-toggle|botPerThread/);
+  assert.match(APP_SRC, /threadBotStatus: document\.querySelector\("#thread-bot-status"\)/);
+  assert.match(APP_SRC, /btnThreadBotToggle: document\.querySelector\("#btn-thread-bot-toggle"\)/);
+  assert.match(APP_SRC, /\/api\/threads\/\$\{encodeURIComponent\(thread\.id\)\}\/bot\/toggle/);
 });
 
 /* ===================================================================== */

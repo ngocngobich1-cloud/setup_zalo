@@ -137,6 +137,19 @@ function buildAutoReplyHarness({ sendChatMessage, addLog }) {
     sendChatMessage,
     sendResolvedPrivateMessage: async () => undefined,
     aiChat: { getConfig: () => ({ botEnabled: true }) },
+    botEligibilityEpoch: 0,
+    botEligibilityConHieuLuc: (epoch) => epoch === 0,
+    khoaThreadEligibility: (ownerUid, threadId) => `${ownerUid}\u0000${threadId}`,
+    threadEligibilityEpochHienTai: () => 0,
+    threadEligibilityConHieuLuc: (_key, epoch) => epoch === 0,
+    automaticWorkConHieuLuc: (work) => work.capturedBotEligibilityEpoch === 0
+      && work.capturedThreadEligibilityEpoch === 0,
+    tuyChonGuiTuDong: (work) => ({
+      botEligibilityEpoch: work.capturedBotEligibilityEpoch,
+      threadEligibilityKey: work.threadEligibilityKey,
+      threadEligibilityEpoch: work.capturedThreadEligibilityEpoch,
+    }),
+    getThread: async () => ({ botEnabled: true }),
     getAutoReplyRules: async () => [{
       command: "hello",
       reply_text: "Xin chao",
@@ -155,12 +168,21 @@ function buildAutoReplyHarness({ sendChatMessage, addLog }) {
 function buildBubbleHarness({ bubbles, sendAt }) {
   const logs = [];
   const sends = [];
+  let seenCalls = 0;
   const run = compileFunction(source.zalo, "async function traLoiCumTin", {
     gopThanhMotTin: (messages) => messages[0],
     api: { sendSeenEvent: async () => undefined },
+    automaticWorkConHieuLuc: () => true,
+    tuyChonGuiTuDong: () => undefined,
+    guiDaXemChoTins: () => { seenCalls += 1; },
     thuThaCamXuc: async () => false,
     batDauGoPhim: () => () => undefined,
-    aiChat: { tryReply: async () => "AI reply" },
+    aiChat: {
+      getConfig: () => ({}),
+      tryReply: async () => "AI reply",
+    },
+    ownerCredentials: { withCurrentOwnerCredentialRead: async (_owner, _config, work) => work() },
+    chuHienTai: () => "STAB05_OWNER",
     ThreadType: { User: 0, Group: 1 },
     dungTrichDan: () => null,
     splitIntoBubbles: () => [...bubbles],
@@ -184,7 +206,12 @@ function buildBubbleHarness({ bubbles, sendAt }) {
     threadType: 0,
     senderId: "customer-bubbles",
   };
-  return { logs, sends, execute: () => run([message]) };
+  return {
+    logs,
+    sends,
+    get seenCalls() { return seenCalls; },
+    execute: () => run([message]),
+  };
 }
 
 function buildFetchLogs(fetchImpl) {
@@ -271,6 +298,7 @@ test("T3", "multi-bubble full success preserves success behavior", async () => {
   assert.equal(harness.logs[0].event, "send_ok");
   assert.equal(harness.logs[0].detail.sentBubbleCount, 2);
   assert.equal(harness.logs.some((entry) => entry.level === "error"), false);
+  assert.equal(harness.seenCalls, 1, "duong guiDaXemChoTins phai duoc exercise");
 });
 
 test("T4", "first bubble failure reports complete failure with 0/N sent", async () => {
@@ -286,6 +314,7 @@ test("T4", "first bubble failure reports complete failure with 0/N sent", async 
   assert.equal(failure.detail.failedBubbleIndex, 1);
   assert.match(failure.summary, /KHÔNG gửi được qua Zalo/);
   assert.doesNotMatch(failure.summary, /Đã gửi \d+\/\d+ phần trả lời/);
+  assert.equal(harness.seenCalls, 1, "duong guiDaXemChoTins phai duoc exercise");
 });
 
 test("T5", "later bubble failure reports canonical partial count", async () => {
@@ -304,6 +333,7 @@ test("T5", "later bubble failure reports canonical partial count", async () => {
   assert.equal(failure.summary, "Đã gửi 1/3 phần trả lời; lỗi khi gửi phần 2/3.");
   assert.doesNotMatch(failure.summary, /KHÔNG gửi được/);
   assert.equal(harness.sends.length, 2, "Khong duoc resend bubble da thanh cong");
+  assert.equal(harness.seenCalls, 1, "duong guiDaXemChoTins phai duoc exercise");
 });
 
 test("T6", "activity DB read failure propagates instead of becoming []", async () => {

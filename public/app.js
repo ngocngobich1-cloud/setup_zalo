@@ -35,6 +35,7 @@ const state = {
   // "threadId|messageId" -> [{ ten, count, mine }]. Trinh duyet chi giu de VE;
   // nguon su that nam o may chu va den qua socket.
   reactionsByMessage: new Map(),
+  globalBotEnabled: false,
 };
 
 const els = {
@@ -74,6 +75,8 @@ const els = {
   botToggle: document.querySelector("#bot-toggle"),
   botState: document.querySelector("#bot-state"),
   botHint: document.querySelector("#bot-hint"),
+  threadBotStatus: document.querySelector("#thread-bot-status"),
+  btnThreadBotToggle: document.querySelector("#btn-thread-bot-toggle"),
   appShell: document.querySelector("#app-shell"),
   appResizer: document.querySelector("#app-resizer"),
   moduleNav: document.querySelector("#module-nav"),
@@ -182,13 +185,20 @@ window.addEventListener("popstate", () => {
 socket.on("state", applyState);
 socket.on("threads", (threads) => {
   state.threads = threads || [];
+  if (state.selectedThread) {
+    const current = state.threads.find((thread) => thread.id === state.selectedThread.id);
+    if (current) state.selectedThread = current;
+  }
   renderThreads();
+  veCongTacThread();
 });
 socket.on("thread-refresh", (thread) => {
   const index = state.threads.findIndex((item) => item.id === thread.id);
   if (index >= 0) state.threads[index] = thread;
   else state.threads.unshift(thread);
+  if (state.selectedThread?.id === thread.id) state.selectedThread = thread;
   renderThreads();
+  veCongTacThread();
 });
 socket.on("new-message", (message) => {
   const list = state.messagesByThread.get(message.threadId) || [];
@@ -261,6 +271,7 @@ els.btnRefreshThreads?.addEventListener("click", async () => {
         state.selectedThread = moi;
         els.chatTitle.textContent = moi.title || moi.id;
         setAvatar(els.chatAvatar, moi.avatar, moi.title || moi.id);
+        veCongTacThread();
       }
     }
     renderThreads();
@@ -275,6 +286,7 @@ els.btnRefreshThreads?.addEventListener("click", async () => {
 // --- Cong tac bot ---
 
 function veCongTac({ enabled, ready }) {
+  state.globalBotEnabled = Boolean(enabled);
   els.botToggle.setAttribute("aria-checked", String(Boolean(enabled)));
   els.botState.textContent = enabled ? "Bot đang BẬT" : "Bot đang TẮT";
   els.botHint.textContent = enabled
@@ -282,7 +294,56 @@ function veCongTac({ enabled, ready }) {
     : ready
       ? "không tự trả lời khách"
       : "chưa cấu hình xong";
+  veCongTacThread();
 }
+
+function veCongTacThread() {
+  const thread = state.selectedThread;
+  const enabled = thread?.botEnabled !== false;
+  const button = els.btnThreadBotToggle;
+  if (!button || !els.threadBotStatus) return;
+  button.disabled = !thread;
+  button.setAttribute("aria-disabled", String(!thread));
+  button.setAttribute("aria-pressed", String(enabled));
+  button.title = thread
+    ? (enabled ? "Tắt bot tự động ở hội thoại này" : "Bật bot tự động ở hội thoại này")
+    : "Chọn một hội thoại";
+  button.querySelector(".thread-bot-desktop-label").textContent = enabled
+    ? "Tắt bot ở đây"
+    : "Bật bot ở đây";
+  button.querySelector(".thread-bot-mobile-label").textContent = enabled ? "Tắt" : "Bật";
+  els.threadBotStatus.classList.toggle("is-off", !enabled);
+  els.threadBotStatus.classList.toggle("global-off", !state.globalBotEnabled);
+  els.threadBotStatus.querySelector(".thread-bot-global-hint")
+    ?.classList.toggle("hidden", state.globalBotEnabled);
+}
+
+els.btnThreadBotToggle?.addEventListener("click", async () => {
+  const thread = state.selectedThread;
+  if (!thread) return;
+  const owner = chupFrontendOwner();
+  const nextEnabled = thread.botEnabled === false;
+  els.btnThreadBotToggle.disabled = true;
+  try {
+    const res = await fetch(`/api/threads/${encodeURIComponent(thread.id)}/bot/toggle`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: nextEnabled }),
+    });
+    const data = await res.json();
+    if (!frontendOwnerConHieuLuc(owner)) return;
+    if (!res.ok) throw new Error(data.error || "Không đổi được Bot của hội thoại.");
+    const updated = data.thread || { ...thread, botEnabled: Boolean(data.enabled) };
+    const index = state.threads.findIndex((item) => item.id === thread.id);
+    if (index >= 0) state.threads[index] = updated;
+    if (state.selectedThread?.id === thread.id) state.selectedThread = updated;
+    renderThreads();
+  } catch (error) {
+    if (frontendOwnerConHieuLuc(owner)) alert(error.message);
+  } finally {
+    veCongTacThread();
+  }
+});
 
 async function napTrangThaiBot() {
   const owner = chupFrontendOwner();
@@ -368,6 +429,7 @@ function invalidateOwnerFrontendState(nextOwnerUid = null) {
   els.chatEmpty.classList.remove("hidden");
   boTepChat();
   veCongTac({ enabled: false, ready: false });
+  veCongTacThread();
   setSettingsOwnerUid(nextOwnerUid);
   invalidateSettingsOwnerState();
   invalidateTrainingOwnerState();
@@ -528,6 +590,7 @@ async function selectThread(thread) {
   datLaiNhipGoPhim();
   openMobileChat(thread);
   state.selectedThread = thread;
+  veCongTacThread();
   renderThreads();
   els.chatEmpty.classList.add("hidden");
   els.chatPanel.classList.remove("hidden");

@@ -195,14 +195,16 @@ await test("STATIC", "T6c Inbox mobile has one dynamic owner, fixed rows and saf
   assert.equal(messages.contains(bottomStack), false);
 });
 
-await test("STATIC", "T16 per-thread Bot scaffold is present and inert by source", () => {
+await test("STATIC", "T16 per-thread Bot scaffold is wired to the scoped toggle API", () => {
   const status = staticDom.querySelector("#thread-bot-status");
   const button = staticDom.querySelector("#btn-thread-bot-toggle");
-  assert.equal(status?.dataset.uiOnly, "true");
-  assert.equal(button?.dataset.uiOnly, "true");
+  assert.equal(status?.dataset.uiOnly, undefined);
+  assert.equal(button?.dataset.uiOnly, undefined);
   assert.equal(button?.disabled, true);
   assert.equal(button?.getAttribute("aria-disabled"), "true");
-  assert.doesNotMatch(appSource, /btn-thread-bot-toggle|thread-bot-status|botPerThread/);
+  assert.match(appSource, /btn-thread-bot-toggle/);
+  assert.match(appSource, /\/api\/threads\/\$\{encodeURIComponent\(thread\.id\)\}\/bot\/toggle/);
+  assert.match(appSource, /thread\?\.botEnabled !== false/);
 });
 
 await test("STATIC", "T16b mobile more scaffold is present and inert by source", () => {
@@ -218,13 +220,24 @@ await test("STATIC", "T17 no unread tracking or persistence was added", () => {
   assert.doesNotMatch(publicSources(), /unreadCount|markAsRead|lastReadAt/);
 });
 
-await test("STATIC", "T18 V3.2 viewport fix stays inside the authorized file allowlist", () => {
+await test("STATIC", "T18 per-thread Bot toggle stays inside the authoritative file allowlist", () => {
   const allowed = new Set([
+    "lib/db.js",
+    "server.js",
+    "lib/zalo-service.js",
+    "lib/gom-tin.js",
+    "lib/pdf-automation.js",
     "public/index.html",
     "public/app.js",
     "public/style.css",
     "kiem-thu/kiem-tra-inbox-ui-a.js",
-    "kiem-thu/kiem-tra-bot-commander-part1.js",
+    "kiem-thu/kiem-tra-human-bot-continuity.js",
+    "kiem-thu/kiem-tra-pdf-automation.js",
+    "kiem-thu/kiem-tra-messaging-power-pack-v1.js",
+    "kiem-thu/kiem-tra-per-thread-bot-toggle.js",
+    "kiem-thu/kiem-tra-stab05-gj13-runtime.js",
+    "kiem-thu/kiem-tra-stab05-truthful-activity.js",
+    "kiem-thu/kiem-tra-stab09-b05-auto-reply-owner.js",
   ]);
   const runtimeOnly = (file) => file === "data/.gitkeep"
     || file.startsWith("data.ui-a-fresh-backup-")
@@ -234,9 +247,9 @@ await test("STATIC", "T18 V3.2 viewport fix stays inside the authorized file all
     || file.startsWith("kiem-thu/evidence/")
     || /^data\/(?:credentials\.json|\.secret-key|.+\.db(?:-.+)?)$/.test(file);
   const changed = workingTreeChanges().filter((file) => !runtimeOnly(file));
-  assert.ok(changed.includes("public/style.css"));
+  assert.ok(changed.includes("lib/zalo-service.js"));
   assert.ok(changed.includes("kiem-thu/kiem-tra-inbox-ui-a.js"));
-  assert.ok(changed.includes("kiem-thu/kiem-tra-bot-commander-part1.js"));
+  assert.ok(changed.includes("kiem-thu/kiem-tra-per-thread-bot-toggle.js"));
   for (const file of changed) assert.ok(allowed.has(file), `Out-of-scope source file: ${file}`);
 
   const ids = [...htmlSource.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
@@ -643,12 +656,21 @@ await test("BEHAVIOR", "T15/T15b drawer overlays LIST and browser Back closes it
   assert.ok(document.body.contains(list));
 });
 
-await test("BEHAVIOR", "T16/T16b UI-only buttons have no network or runtime effect", () => {
+await test("BEHAVIOR", "T16 per-thread toggle updates the selected model while T16b stays inert", async () => {
   const beforeCalls = fetchCalls.length;
   const globalBotBefore = document.querySelector("#bot-toggle").getAttribute("aria-checked");
+  enqueue("/api/threads/thread-group/bot/toggle", Promise.resolve(jsonResponse({
+    ok: true,
+    enabled: false,
+    thread: { ...groupThread, botEnabled: false },
+  })), "POST");
   document.querySelector("#btn-thread-bot-toggle").dispatchEvent(new window.Event("click", { bubbles: true }));
+  await flush();
   document.querySelector("#btn-chat-more").dispatchEvent(new window.Event("click", { bubbles: true }));
-  assert.equal(fetchCalls.length, beforeCalls);
+  assert.equal(fetchCalls.length, beforeCalls + 1);
+  assert.deepEqual(fetchCalls.at(-1), { url: "/api/threads/thread-group/bot/toggle", method: "POST" });
+  assert.equal(document.querySelector("#btn-thread-bot-toggle").getAttribute("aria-pressed"), "false");
+  assert.equal(document.querySelector("#btn-thread-bot-toggle .thread-bot-mobile-label").textContent, "Bật");
   assert.equal(document.querySelector("#bot-toggle").getAttribute("aria-checked"), globalBotBefore);
   assert.equal(document.querySelector(".chat-more-menu"), null);
 });
