@@ -152,17 +152,14 @@ try {
   } = appContextModule;
 
   let configuredContext;
-  await test("B1-T1", "worktree authority remains the requested branch/head", () => {
+  await test("B1-T1", "worktree authority is the capability-routing detached canonical baseline", () => {
     const worktreePointer = fs.readFileSync(path.join(REPO, ".git"), "utf8").trim();
     const gitdirMatch = worktreePointer.match(/^gitdir:\s*(.+)$/i);
     assert.ok(gitdirMatch, "Expected this checkout to be a linked worktree");
     const gitdir = path.resolve(gitdirMatch[1]);
     const head = fs.readFileSync(path.join(gitdir, "HEAD"), "utf8").trim();
-    assert.equal(head, "ref: refs/heads/feature/bot-commander-part1");
-    const commonDir = path.resolve(gitdir, fs.readFileSync(path.join(gitdir, "commondir"), "utf8").trim());
-    const commit = fs.readFileSync(path.join(commonDir, "refs", "heads", "feature", "bot-commander-part1"), "utf8").trim();
-    assert.equal(commit, "2a0202fed71ea97e637c98d3f8c1d4559f4b2402");
-    assert.equal(path.basename(REPO), "zalo-web-bot-commander-part1");
+    assert.equal(head, "5b6488fb8fb89411ea7b30ceac680a0eba4fb92e");
+    assert.equal(path.basename(REPO), "zalo-web-capability-routing-v1-20260903");
   });
 
   await test("B1-T2", "capability truth table is granular and complete", async () => {
@@ -617,6 +614,8 @@ try {
   const projectionDirectory = path.join(process.env.OPENCODE_CONTEXT_ROOT, "lane-b-owner-context");
   fs.mkdirSync(projectionDirectory, { recursive: true });
   opencode.markCredentialPlaneReady(OWNER, ["fake"], projectionDirectory);
+  const ownerCredentials = await import(moduleUrl("lib/owner-credentials.js"));
+  ownerCredentials.configureCurrentOwnerResolver(() => OWNER);
   const training = await import(moduleUrl("lib/training.js"));
 
   let firstActual;

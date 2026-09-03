@@ -325,7 +325,7 @@ export const CONFIG_TABS = [
           <div class="form-group ai-model-config">
             <label class="portal-shared-label">Hãng AI và Model</label>
             <div class="ai-model-row">
-              <h3 class="ai-model-kind">CHÍNH</h3>
+              <h3 class="ai-model-kind">AI CHÍNH</h3>
               <div class="smtp-grid ai-model-grid">
                 <label class="ai-model-field">
                   <span>Hãng AI</span>
@@ -339,7 +339,7 @@ export const CONFIG_TABS = [
             </div>
             <div class="ai-model-row">
               <div class="ai-model-kind-row">
-                <h3 class="ai-model-kind">PHỤ</h3>
+                <h3 class="ai-model-kind">AI BỔ TRỢ</h3>
                 <span class="field-hint">Không bắt buộc</span>
               </div>
               <div class="smtp-grid ai-model-grid">
@@ -352,15 +352,34 @@ export const CONFIG_TABS = [
                   <select id="ai-oc-fallback-model" class="auth-input"></select>
                 </label>
               </div>
+              <div id="ai-routing-controls" class="ai-routing-controls">
+                <p class="field-hint" style="margin:10px 0 6px;">Dùng AI bổ trợ khi AI chính thiếu:</p>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="ai-fallback-image" /> Đọc hình ảnh
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="ai-fallback-file" /> Đọc tài liệu (PDF)
+                </label>
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                  <label class="checkbox-label" style="margin:0;">
+                    <input type="checkbox" id="ai-fallback-web" /> Tìm kiếm web — chỉ Bot Chỉ huy
+                  </label>
+                  <button type="button" id="btn-ai-web-probe" class="secondary-button" style="padding:4px 10px; font-size:12px;">Kiểm tra Web</button>
+                </div>
+                <label class="checkbox-label" style="margin-top:8px;">
+                  <input type="checkbox" id="ai-failover-enabled" /> Dùng AI bổ trợ khi AI chính tạm thời lỗi
+                </label>
+                <p id="ai-routing-status" class="field-hint" style="margin:6px 0 0; min-height:16px;"></p>
+              </div>
             </div>
             <div class="ai-model-save-row">
               <p class="field-hint">
-                Dùng khi API chính bị lỗi. Không bắt buộc.
+                Dùng khi AI chính thiếu capability đã chọn hoặc gặp lỗi tạm thời. Không bắt buộc.
               </p>
               <button type="button" id="btn-ai-model-save" class="primary-button ai-model-save">Lưu</button>
             </div>
             <p class="field-hint" style="color: var(--muted); font-size: 12px; margin: 6px 0 0;">
-              Chọn hãng và model muốn bot sử dụng, sau đó bấm <strong>Lưu</strong>. Model Phụ có thể để trống.
+              Chọn hãng và model muốn bot sử dụng, sau đó bấm <strong>Lưu</strong>. AI bổ trợ có thể để trống.
             </p>
           </div>
 
@@ -449,6 +468,12 @@ export const CONFIG_TABS = [
       const ocModel = panel.querySelector("#ai-oc-model");
       const ocFallbackProvider = panel.querySelector("#ai-oc-fallback-provider");
       const ocFallbackModel = panel.querySelector("#ai-oc-fallback-model");
+      const fallbackImage = panel.querySelector("#ai-fallback-image");
+      const fallbackFile = panel.querySelector("#ai-fallback-file");
+      const fallbackWeb = panel.querySelector("#ai-fallback-web");
+      const failoverEnabled = panel.querySelector("#ai-failover-enabled");
+      const routingStatus = panel.querySelector("#ai-routing-status");
+      const btnWebProbe = panel.querySelector("#btn-ai-web-probe");
       const soulInput = panel.querySelector("#ai-soul");
       const topicsInput = panel.querySelector("#ai-topics");
       const roleInput = panel.querySelector("#ai-role");
@@ -525,6 +550,9 @@ export const CONFIG_TABS = [
       let modelMacDinhHeThong = "";
       let modelDaLuuTheoOwner = "";
       let fallbackModelDaLuuTheoOwner = "";
+      let capabilityRoutingSystemEnabled = false;
+      let fallbackCapabilitiesDaLuuTheoOwner = [];
+      let failoverDaLuuTheoOwner = false;
       const ghiChuThieu = () =>
         napDuocDanhSach ? "không còn key" : "chưa kiểm tra được — OpenCode không phản hồi";
 
@@ -533,6 +561,50 @@ export const CONFIG_TABS = [
         const hangId = model.split("/")[0];
         return Boolean(danhSachHang.find((hang) => hang.id === hangId)?.models
           .some((item) => item.id === model));
+      }
+
+      function chiTietModel(model) {
+        if (!model) return null;
+        const hangId = model.split("/")[0];
+        return danhSachHang.find((hang) => hang.id === hangId)?.models
+          .find((item) => item.id === model) || null;
+      }
+
+      function capNhatRoutingControls() {
+        const secondaryModel = ocFallbackProvider.value ? ocFallbackModel.value : "";
+        const providerId = secondaryModel ? secondaryModel.split("/")[0] : "";
+        const model = chiTietModel(secondaryModel);
+        const coCredential = Boolean(providerId && ownerKeyStatus.has(providerId));
+        const systemReady = capabilityRoutingSystemEnabled === true;
+        const modelReady = Boolean(model && coCredential);
+
+        fallbackImage.disabled = !systemReady || !modelReady || model.capabilities?.image !== true;
+        fallbackFile.disabled = !systemReady || !modelReady || model.capabilities?.file !== true;
+        const webSupported = model?.capabilities?.toolcall === true
+          && model?.webProbeState === "SUPPORTED"
+          && model?.capabilities?.web === true;
+        fallbackWeb.disabled = !systemReady || !modelReady || !webSupported;
+        failoverEnabled.disabled = !systemReady || !modelReady;
+
+        const canProbe = systemReady && modelReady && model.capabilities?.toolcall === true && !webSupported;
+        btnWebProbe.hidden = !canProbe;
+        btnWebProbe.disabled = !canProbe;
+
+        if (!systemReady) {
+          routingStatus.textContent = "Capability routing đang tắt ở cấp hệ thống.";
+        } else if (!secondaryModel) {
+          routingStatus.textContent = "Chọn AI bổ trợ để bật các quyền routing.";
+        } else if (!coCredential) {
+          routingStatus.textContent = "AI bổ trợ chưa có API credential.";
+        } else if (!model) {
+          routingStatus.textContent = "Model AI bổ trợ đã lưu không còn khả dụng.";
+        } else if (model.capabilities?.toolcall !== true) {
+          routingStatus.textContent = "Model này không hỗ trợ tool call nên Web bị tắt.";
+        } else if (!webSupported) {
+          routingStatus.textContent = "Web chưa được chứng minh trong runtime. Hãy bấm Kiểm tra Web.";
+        } else {
+          routingStatus.textContent = "AI bổ trợ sẵn sàng theo các capability được model công bố.";
+        }
       }
 
       function modelHieuLucTheoOwner() {
@@ -553,7 +625,7 @@ export const CONFIG_TABS = [
         modelSelect.innerHTML = "";
 
         if (!hangId) {
-          modelSelect.append(new Option(optional ? "— Không dùng model phụ —" : "— Theo mặc định —", ""));
+          modelSelect.append(new Option(optional ? "— Không dùng AI bổ trợ —" : "— Theo mặc định —", ""));
           modelSelect.disabled = true;
           return;
         }
@@ -579,7 +651,7 @@ export const CONFIG_TABS = [
 
       function veOHang(modelDangChon, providerSelect = ocProvider, modelSelect = ocModel, { optional = false } = {}) {
         providerSelect.innerHTML = "";
-        providerSelect.append(new Option(optional ? "— Không dùng model phụ —" : "— Mặc định của OpenCode —", ""));
+        providerSelect.append(new Option(optional ? "— Không dùng AI bổ trợ —" : "— Mặc định của OpenCode —", ""));
         for (const hang of danhSachHang) providerSelect.append(new Option(hang.name, hang.id));
 
         const hangCuaModel = modelDangChon ? modelDangChon.split("/")[0] : "";
@@ -600,6 +672,7 @@ export const CONFIG_TABS = [
         const hangCuaModel = modelDangChon ? modelDangChon.split("/")[0] : "";
         ocFallbackProvider.value = hangCuaModel;
         veOModel(hangCuaModel, modelDangChon, ocFallbackModel, { optional: true });
+        capNhatRoutingControls();
       }
 
       async function napAgentVaModel(modelTamThoi = null, fallbackTamThoi = null) {
@@ -641,6 +714,7 @@ export const CONFIG_TABS = [
           ocFallbackModel,
           { optional: true }
         );
+        capNhatRoutingControls();
       }
 
       // Doi hang thi model ben duoi nap lai theo hang do.
@@ -649,6 +723,37 @@ export const CONFIG_TABS = [
       ocProvider.addEventListener("change", () => veOModel(ocProvider.value, ""));
       ocFallbackProvider.addEventListener("change", () => {
         veOModel(ocFallbackProvider.value, "", ocFallbackModel, { optional: true });
+        capNhatRoutingControls();
+      });
+      ocFallbackModel.addEventListener("change", capNhatRoutingControls);
+      for (const control of [fallbackImage, fallbackFile, fallbackWeb, failoverEnabled]) {
+        control.addEventListener("change", capNhatRoutingControls);
+      }
+
+      btnWebProbe.addEventListener("click", async () => {
+        const model = ocFallbackProvider.value ? ocFallbackModel.value : "";
+        if (!model) return;
+        btnWebProbe.disabled = true;
+        routingStatus.textContent = "Đang kiểm tra Web bằng một lượt tool-call…";
+        try {
+          const res = await fetch("/api/ai-chat/web-probe", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Không kiểm tra được Web");
+          if (data.state === "SUPPORTED") {
+            routingStatus.textContent = "Web đã được chứng minh bằng tool execution evidence.";
+          } else {
+            routingStatus.textContent = data.error || "Web chưa được chứng minh trong runtime.";
+          }
+          await napAgentVaModel(ocModel.value, model);
+        } catch (error) {
+          routingStatus.textContent = error.message || "Không kiểm tra được Web lúc này.";
+        } finally {
+          capNhatRoutingControls();
+        }
       });
 
       // --- Khoa API cua cac hang ---
@@ -725,6 +830,7 @@ export const CONFIG_TABS = [
 
           if (dangChon && all.some((provider) => provider.id === dangChon)) keyProvider.value = dangChon;
           baoKey(daCoKey.length ? `${daCoKey.length} hãng đã kết nối` : "Chưa có kết nối.");
+          capNhatRoutingControls();
         } catch (e) {
           ownerKeyStatus = new Map();
           keyProvider.innerHTML = "";
@@ -732,6 +838,7 @@ export const CONFIG_TABS = [
           baoKey(e.message, "var(--danger)");
         } finally {
           updateKeyButtons();
+          capNhatRoutingControls();
         }
       }
 
@@ -922,6 +1029,16 @@ export const CONFIG_TABS = [
           : ocFallbackModel.value;
         const hadSavedFallback = typeof fallbackModelDaLuuTheoOwner !== "undefined"
           && Boolean(fallbackModelDaLuuTheoOwner);
+        const fallbackCapabilitiesValue = typeof fallbackImage === "undefined"
+          ? []
+          : [
+              ...(fallbackImage.checked ? ["IMAGE_INPUT"] : []),
+              ...(fallbackFile.checked ? ["FILE_INPUT"] : []),
+              ...(fallbackWeb.checked ? ["WEB_SEARCH"] : []),
+            ];
+        const failoverEnabledValue = typeof failoverEnabled === "undefined"
+          ? false
+          : failoverEnabled.checked;
 
         try {
           statusText.textContent = "Đang lưu Hãng AI và Model...";
@@ -936,6 +1053,8 @@ export const CONFIG_TABS = [
               ...(hadSavedFallback || fallbackProviderValue
                 ? { opencodeFallbackModel: fallbackProviderValue ? fallbackModelValue : "" }
                 : {}),
+              opencodeFallbackCapabilities: fallbackCapabilitiesValue,
+              opencodeFailoverEnabled: failoverEnabledValue,
             }),
           });
           const data = await res.json();
@@ -946,6 +1065,16 @@ export const CONFIG_TABS = [
           }
           if (typeof fallbackModelDaLuuTheoOwner !== "undefined") {
             fallbackModelDaLuuTheoOwner = data.config?.opencodeFallbackModel || "";
+          }
+          if (typeof fallbackCapabilitiesDaLuuTheoOwner !== "undefined") {
+            fallbackCapabilitiesDaLuuTheoOwner = data.config?.opencodeFallbackCapabilities || [];
+            fallbackImage.checked = fallbackCapabilitiesDaLuuTheoOwner.includes("IMAGE_INPUT");
+            fallbackFile.checked = fallbackCapabilitiesDaLuuTheoOwner.includes("FILE_INPUT");
+            fallbackWeb.checked = fallbackCapabilitiesDaLuuTheoOwner.includes("WEB_SEARCH");
+            failoverDaLuuTheoOwner = data.config?.opencodeFailoverEnabled === true;
+            failoverEnabled.checked = failoverDaLuuTheoOwner;
+            capabilityRoutingSystemEnabled = data.config?.capabilityRoutingEnabled === true;
+            capNhatRoutingControls();
           }
           statusText.textContent = "Đã lưu Hãng AI và Model.";
           window.dispatchEvent(new CustomEvent("zalo:canonical-save", {
@@ -1055,6 +1184,15 @@ export const CONFIG_TABS = [
             ocAgent.value = agentDaLuu;
             modelDaLuuTheoOwner = data.config.opencodeModel || "";
             fallbackModelDaLuuTheoOwner = data.config.opencodeFallbackModel || "";
+            fallbackCapabilitiesDaLuuTheoOwner = Array.isArray(data.config.opencodeFallbackCapabilities)
+              ? data.config.opencodeFallbackCapabilities
+              : [];
+            failoverDaLuuTheoOwner = data.config.opencodeFailoverEnabled === true;
+            capabilityRoutingSystemEnabled = data.config.capabilityRoutingEnabled === true;
+            fallbackImage.checked = fallbackCapabilitiesDaLuuTheoOwner.includes("IMAGE_INPUT");
+            fallbackFile.checked = fallbackCapabilitiesDaLuuTheoOwner.includes("FILE_INPUT");
+            fallbackWeb.checked = fallbackCapabilitiesDaLuuTheoOwner.includes("WEB_SEARCH");
+            failoverEnabled.checked = failoverDaLuuTheoOwner;
             chonModelKhongDungLaiDanhSach(modelHieuLucTheoOwner());
             chonFallbackKhongDungLaiDanhSach(fallbackModelHieuLucTheoOwner());
             topicsInput.value = data.config.allowedTopics || "";
@@ -1183,6 +1321,13 @@ export const CONFIG_TABS = [
         currentMembers = [];
         modelDaLuuTheoOwner = "";
         fallbackModelDaLuuTheoOwner = "";
+        fallbackCapabilitiesDaLuuTheoOwner = [];
+        failoverDaLuuTheoOwner = false;
+        capabilityRoutingSystemEnabled = false;
+        fallbackImage.checked = false;
+        fallbackFile.checked = false;
+        fallbackWeb.checked = false;
+        failoverEnabled.checked = false;
         ownerKeyStatus = new Map();
         keyProvider.innerHTML = '<option value="">Chọn hãng</option>';
         keyProvider.value = "";
@@ -1195,6 +1340,7 @@ export const CONFIG_TABS = [
         ocFallbackProvider.value = "";
         ocFallbackModel.value = "";
         statusText.textContent = "Đang tải hồ sơ Zalo hiện tại…";
+        capNhatRoutingControls();
       };
 
       // Giu lai promise cua luot nap dau tien de ham refresh o tren cho no.

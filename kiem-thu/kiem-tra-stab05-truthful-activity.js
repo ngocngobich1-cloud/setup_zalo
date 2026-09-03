@@ -232,7 +232,7 @@ function buildFetchLogs(fetchImpl) {
 }
 
 function buildEnsureSession({ call, onEvent }) {
-  return compileFunction(source.opencode, "export async function ensureSession", {
+  return compileFunction(source.opencode, "async function ensureSessionUnlocked", {
     getOpencodeSessionInfo: async () => null,
     PHIEN_MAX_LUOT: 30,
     deleteSessions: async () => undefined,
@@ -468,6 +468,11 @@ test("T11", "sendPrompt failure has no ai_prompt success and preserves ai_error 
     layChuTaiKhoan: () => "owner-1",
     getConfig: () => null,
     isAiChatReady: () => true,
+    customerRequiredCapabilities: () => ["TEXT"],
+    createCallBudget: () => ({
+      consume: () => undefined,
+      snapshot: () => ({ callsUsed: 0, secondaryUsed: false }),
+    }),
     buildBootstrapContext: async () => ({
       hasKnowledge: false,
       soTinLichSu: 0,
@@ -491,6 +496,11 @@ test("T11", "sendPrompt failure has no ai_prompt success and preserves ai_error 
       return entry;
     },
     bumpSessionTurns: async () => undefined,
+    classifyProviderFailure: (error) => error.message,
+    routeModelRequest: () => ({ routeMode: "PRIMARY_ONLY" }),
+    SURFACES: { CUSTOMER: "CUSTOMER" },
+    ROUTE_MODES: { RUNTIME_FAILOVER: "RUNTIME_FAILOVER" },
+    ownerFacingFailureMessage: (reason) => reason,
     SKIP_TOKEN: "SKIP",
   });
   const config = {

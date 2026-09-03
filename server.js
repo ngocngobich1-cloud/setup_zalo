@@ -70,6 +70,12 @@ import {
 import * as aiChat from "./lib/ai-chat.js";
 import * as ownerCredentials from "./lib/owner-credentials.js";
 import {
+  WEB_PROBE_STATES,
+  capabilityRoutingEnabled,
+  validateRoutingConfig,
+} from "./lib/ai-model-router.js";
+import { classifyProviderFailure } from "./lib/provider-failure.js";
+import {
   clearPendingPdfConfirmationsForRule,
   parsePdfEnabled,
   preparePdfKeyword,
@@ -892,6 +898,7 @@ app.post("/api/ai-chat", async (req, res) => {
     const {
       allowedTopics, roleTone, allowedGroupId, allowedSenderIds, useKnowledge, knowledgeFileIds,
       soul, opencodeBaseUrl, opencodeAgent, opencodeModel, opencodeFallbackModel,
+      opencodeFallbackCapabilities, opencodeFailoverEnabled,
     } = req.body;
 
     // Lưu kết nối AI là một action boundary riêng: vẫn dùng canonical endpoint
@@ -908,12 +915,52 @@ app.post("/api/ai-chat", async (req, res) => {
         return res.status(400).json({ error: "Model Phụ không hợp lệ" });
       }
 
-      const { saveAiChatConfig } = await import("./lib/db.js");
+      const { getAiChatConfig, saveAiChatConfig } = await import("./lib/db.js");
+      const current = await getAiChatConfig(ownerUid);
+      const fallbackCapabilities = opencodeFallbackCapabilities === undefined
+        ? current.opencodeFallbackCapabilities
+        : opencodeFallbackCapabilities;
+      const failoverEnabled = opencodeFailoverEnabled === undefined
+        ? current.opencodeFailoverEnabled
+        : opencodeFailoverEnabled;
+      const proposedPrimary = String(opencodeModel).trim();
+      const proposedSecondary = fallbackProvided
+        ? fallbackModel
+        : current.opencodeFallbackModel;
+      const normalizedInput = validateRoutingConfig({
+        primaryModel: proposedPrimary,
+        secondaryModel: proposedSecondary,
+        fallbackCapabilities,
+        failoverEnabled,
+      });
+      const routingActive = normalizedInput.fallbackCapabilities.length > 0
+        || normalizedInput.failoverEnabled;
+      let catalog = null;
+      if (routingActive) {
+        const opencode = await import("./lib/opencode.js");
+        catalog = await ownerCredentials.withCurrentOwnerPlaneRead(
+          ownerUid,
+          () => opencode.loadChatProviders({
+            ...current,
+            opencodeBaseUrl: String(opencodeBaseUrl).trim(),
+            opencodeAgent: String(opencodeAgent || "general").trim() || "general",
+          })
+        );
+      }
+      const normalizedRouting = validateRoutingConfig({
+        primaryModel: proposedPrimary,
+        secondaryModel: proposedSecondary,
+        fallbackCapabilities: normalizedInput.fallbackCapabilities,
+        failoverEnabled: normalizedInput.failoverEnabled,
+        catalogCapabilities: catalog,
+      });
       await saveAiChatConfig(ownerUid, {
         opencodeBaseUrl: String(opencodeBaseUrl).trim(),
         opencodeAgent: String(opencodeAgent || "general").trim() || "general",
-        opencodeModel: String(opencodeModel).trim(),
+        opencodeModel: proposedPrimary,
         ...(fallbackProvided ? { opencodeFallbackModel: fallbackModel } : {}),
+        opencodeFallbackCapabilities: normalizedRouting.fallbackCapabilities,
+        opencodeFailoverEnabled: normalizedRouting.failoverEnabled,
       });
       await aiChat.refreshConfig();
       const config = aiChat.getConfig(ownerUid);
@@ -1020,7 +1067,7 @@ app.post("/api/ai-chat", async (req, res) => {
         && ownerCredentials.ownerCredentialReadyForConfig(ownerUid, config),
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(error instanceof TypeError ? 400 : 500).json({ error: error.message });
   }
 });
 
@@ -1056,6 +1103,57 @@ app.post("/api/ai-chat/opencode-test", async (req, res) => {
   } catch (error) {
     const safe = ownerCredentials.ownerCredentialHttpError(error);
     res.status(safe.status).json({ error: safe.message, code: safe.code });
+  }
+});
+
+app.post("/api/ai-chat/web-probe", async (req, res) => {
+  try {
+    if (!capabilityRoutingEnabled()) {
+      return res.status(503).json({
+        supported: false,
+        state: WEB_PROBE_STATES.UNKNOWN,
+        code: "CAPABILITY_ROUTING_DISABLED",
+        error: "Capability routing đang tắt ở cấp hệ thống.",
+      });
+    }
+    const ownerUid = chuHienTai();
+    if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
+    const model = String(req.body?.model || "").trim();
+    const opencode = await import("./lib/opencode.js");
+    const selected = opencode.splitModel(model);
+    if (!selected) return res.status(400).json({ error: "Model kiểm tra Web không hợp lệ." });
+    const config = aiChat.getConfig(ownerUid) || await (await import("./lib/db.js")).getAiChatConfig(ownerUid);
+    const result = await ownerCredentials.withCurrentOwnerPlaneRead(ownerUid, async () => {
+      const providers = await opencode.loadChatProviders(config);
+      const found = providers.flatMap((provider) => provider.models || []).find((item) => item.id === model);
+      if (!found) {
+        const error = new Error("Model không còn trong catalog hoặc chưa có API credential.");
+        error.code = "UNKNOWN_PROVIDER";
+        throw error;
+      }
+      if (found.capabilities?.toolcall !== true) {
+        return {
+          supported: false,
+          state: WEB_PROBE_STATES.UNSUPPORTED,
+          error: "Model catalog không hỗ trợ tool call.",
+        };
+      }
+      return ownerCredentials.withOwnerCredentialReadSet(
+        ownerUid,
+        [selected.providerID],
+        () => opencode.probeWebSupport(config, model)
+      );
+    });
+    return res.json(result);
+  } catch (error) {
+    const ownerSafe = ownerCredentials.ownerCredentialHttpError(error);
+    const classified = classifyProviderFailure(error);
+    return res.status(ownerSafe.status || 503).json({
+      supported: false,
+      state: WEB_PROBE_STATES.UNKNOWN,
+      code: ownerSafe.code || classified,
+      error: ownerSafe.message || "Không kiểm tra được Web lúc này.",
+    });
   }
 });
 
@@ -1770,11 +1868,8 @@ app.post("/api/training/message", (req, res) => {
       const ownerUid = chuHienTai();
       if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
       const training = await import("./lib/training.js");
-      const { getAiChatConfig } = await import("./lib/db.js");
-      const config = aiChat.getConfig(ownerUid) || await getAiChatConfig(ownerUid);
-      const reply = await ownerCredentials.withCurrentOwnerCredentialRead(
+      const reply = await ownerCredentials.withCurrentOwnerPlaneRead(
         ownerUid,
-        config,
         () => training.guiTinHuanLuyen(ownerUid, req.body?.text || "", req.files || [])
       );
       res.json({ ok: true, reply });
@@ -1789,13 +1884,10 @@ app.post("/api/training/synthesize", async (_req, res) => {
     const ownerUid = chuHienTai();
     if (!ownerUid) return res.status(400).json({ error: "Chưa đăng nhập Zalo." });
     const training = await import("./lib/training.js");
-    const { getAiChatConfig } = await import("./lib/db.js");
-    const config = aiChat.getConfig(ownerUid) || await getAiChatConfig(ownerUid);
     res.json({
       ok: true,
-      reply: await ownerCredentials.withCurrentOwnerCredentialRead(
+      reply: await ownerCredentials.withCurrentOwnerPlaneRead(
         ownerUid,
-        config,
         () => training.tongHopSoul(ownerUid)
       ),
     });

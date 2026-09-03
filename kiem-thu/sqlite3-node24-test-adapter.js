@@ -6,6 +6,8 @@
  */
 import { DatabaseSync } from "node:sqlite";
 
+const openConnections = new Set();
+
 function invoke(callback, context, error, value) {
   if (typeof callback === "function") callback.call(context, error, value);
 }
@@ -21,8 +23,16 @@ function plainRow(row) {
 }
 
 export class Database {
-  constructor(file) {
-    this.connection = new DatabaseSync(file);
+  constructor(file, mode, callback) {
+    const onOpen = typeof mode === "function" ? mode : callback;
+    try {
+      this.connection = new DatabaseSync(file);
+      openConnections.add(this.connection);
+      queueMicrotask(() => invoke(onOpen, this, null));
+    } catch (error) {
+      queueMicrotask(() => invoke(onOpen, this, error));
+      if (typeof onOpen !== "function") throw error;
+    }
   }
 
   run(sql, params = [], callback) {
@@ -69,6 +79,7 @@ export class Database {
   close(callback) {
     try {
       this.connection.close();
+      openConnections.delete(this.connection);
       invoke(callback, this, null);
     } catch (error) {
       invoke(callback, this, error);
@@ -76,4 +87,14 @@ export class Database {
   }
 }
 
-export default { Database };
+export function closeAllTestDatabases() {
+  for (const connection of [...openConnections]) {
+    try {
+      connection.close();
+    } finally {
+      openConnections.delete(connection);
+    }
+  }
+}
+
+export default { Database, closeAllTestDatabases };

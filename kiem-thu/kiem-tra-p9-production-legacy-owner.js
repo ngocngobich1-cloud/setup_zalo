@@ -15,6 +15,30 @@ import { migrateP9ZaloUidProfile } from "../lib/migrations/p9-zalo-uid-profile.j
 const REPO = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const THIS_FILE = fileURLToPath(import.meta.url);
 const CLI = path.join(REPO, "lib", "migrations", "chuyen-doi-p9-legacy-owner.js");
+
+// Child co the doi cwd sang fixture tam. Bien cac --import test adapter thanh
+// file URL tuyet doi de Node 24 van nap dung adapter trong moi worker.
+function inheritedNodeArgs() {
+  const absoluteImport = (value) => {
+    if (/^file:/i.test(value)) return value;
+    return pathToFileURL(path.isAbsolute(value) ? value : path.resolve(REPO, value)).href;
+  };
+  const result = [];
+  for (let index = 0; index < process.execArgv.length; index += 1) {
+    const arg = process.execArgv[index];
+    if (arg === "--import" && process.execArgv[index + 1]) {
+      result.push(arg, absoluteImport(process.execArgv[index + 1]));
+      index += 1;
+    } else if (arg.startsWith("--import=")) {
+      result.push(`--import=${absoluteImport(arg.slice("--import=".length))}`);
+    } else {
+      result.push(arg);
+    }
+  }
+  return result;
+}
+
+const CHILD_NODE_ARGS = inheritedNodeArgs();
 const SYNTHETIC_OWNER = "900000000000000123";
 const EXPECTED_STOP = "P9_STOP: legacy Training khong rong; khong duoc tu suy owner.";
 const LEGACY_AI = Object.freeze({
@@ -187,7 +211,8 @@ async function migratedSnapshot(db) {
 }
 
 function runCli(root, args) {
-  return spawnSync(process.execPath, [CLI, ...args], {
+  const invoke = `const module = await import(${JSON.stringify(pathToFileURL(CLI).href)}); await module.main(process.argv.slice(1));`;
+  return spawnSync(process.execPath, [...CHILD_NODE_ARGS, "--input-type=module", "--eval", invoke, "--", ...args], {
     cwd: root,
     encoding: "utf8",
     env: { ...process.env },
@@ -351,7 +376,7 @@ async function main() {
     await dbBefore.close();
     assert.equal(before.runtime.groq_api_key, LEGACY_AI.groq_api_key);
 
-    const worker = spawnSync(process.execPath, [THIS_FILE, "--mapped-startup-worker", mappedRoot], {
+    const worker = spawnSync(process.execPath, [...CHILD_NODE_ARGS, THIS_FILE, "--mapped-startup-worker", mappedRoot], {
       cwd: REPO,
       encoding: "utf8",
       env: { ...process.env },
@@ -368,6 +393,20 @@ async function main() {
       { ...after, runtime: { ...after.runtime, groq_api_key: before.runtime.groq_api_key } },
       before
     );
+  });
+
+  await test("T10A", "legacy-owner boot adds routing columns after P9 with safe defaults", async () => {
+    const db = moDb(path.join(mappedRoot, "data", "zalo.db"), sqlite3.OPEN_READONLY);
+    const columns = (await db.all("PRAGMA table_info(ai_chat_config)")).map((column) => column.name);
+    assert.ok(columns.includes("opencode_fallback_capabilities"));
+    assert.ok(columns.includes("opencode_failover_enabled"));
+    const row = await db.get(`SELECT opencode_fallback_capabilities, opencode_failover_enabled
+      FROM ai_chat_config WHERE owner_uid = ?`, [SYNTHETIC_OWNER]);
+    assert.deepEqual(row, {
+      opencode_fallback_capabilities: "[]",
+      opencode_failover_enabled: 0,
+    });
+    await db.close();
   });
 
   await test("T11", "missing, empty and malformed owner are rejected before database mutation", async () => {
@@ -430,7 +469,7 @@ async function main() {
     const db = await createProductionShapedLegacy(root);
     const before = await legacySnapshot(db);
     await db.close();
-    const worker = spawnSync(process.execPath, [THIS_FILE, "--normal-startup-worker", root], {
+    const worker = spawnSync(process.execPath, [...CHILD_NODE_ARGS, THIS_FILE, "--normal-startup-worker", root], {
       cwd: REPO,
       encoding: "utf8",
       env: { ...process.env },

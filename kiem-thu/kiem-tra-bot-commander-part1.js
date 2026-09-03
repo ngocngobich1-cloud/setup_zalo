@@ -1276,7 +1276,7 @@ await bai("U5", "Block 2 and rendered Training copy are customer-facing with no 
   assert.equal(rawDocument.querySelector("#training-key-part1-note"), null);
   assert.match(block.textContent, /Hãng đã kết nối/);
   assert.match(block.textContent, /Chưa có kết nối\./);
-  assert.match(publicConfigSource, /Dùng khi API chính bị lỗi\. Không bắt buộc\./);
+  assert.match(publicConfigSource, /Dùng khi AI chính thiếu capability đã chọn hoặc gặp lỗi tạm thời\. Không bắt buộc\./);
   const intendedTrainingCopy = `${rawDocument.querySelector("#module-training").textContent}\n${publicConfigSource.slice(
     publicConfigSource.indexOf('<div class="form-group ai-model-config">'),
     publicConfigSource.indexOf('<details class="form-group ai-opencode-advanced">')
@@ -1652,12 +1652,18 @@ await bai("T23", "Model and assistant save scopes preserve every unrelated field
   assert.equal(saved.opencodeFallbackModel, "");
 });
 
-await bai("T24", "Fallback remains persistence-only with zero runtime failover path", async () => {
+await bai("T24", "Authorized fallback runtime uses the shared bounded router behind the default-off kill switch", async () => {
   const aiChatRuntime = fs.readFileSync(path.join(REPO, "lib", "ai-chat.js"), "utf8");
   const opencodeRuntime = fs.readFileSync(path.join(REPO, "lib", "opencode.js"), "utf8");
-  assert.equal(aiChatRuntime.includes("opencodeFallbackModel"), false);
+  const trainingRuntime = fs.readFileSync(path.join(REPO, "lib", "training.js"), "utf8");
+  const routerRuntime = fs.readFileSync(path.join(REPO, "lib", "ai-model-router.js"), "utf8");
+  assert.equal(aiChatRuntime.includes("opencodeFallbackModel"), true);
+  assert.equal(trainingRuntime.includes("opencodeFallbackModel"), true);
+  assert.equal(aiChatRuntime.includes("routeModelRequest"), true);
+  assert.equal(trainingRuntime.includes("routeModelRequest"), true);
+  assert.equal(routerRuntime.includes("MAX_AI_CALLS_PER_TURN = 2"), true);
+  assert.equal(routerRuntime.includes("AI_CAPABILITY_ROUTING_V1_ENABLED"), true);
   assert.equal(opencodeRuntime.includes("opencodeFallbackModel"), false);
-  assert.equal(serverSource.includes("primary fails"), false);
   assert.equal(dbSource.includes("opencode_fallback_model"), true);
 });
 

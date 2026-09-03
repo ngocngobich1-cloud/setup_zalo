@@ -220,7 +220,7 @@ await test("STATIC", "T17 no unread tracking or persistence was added", () => {
   assert.doesNotMatch(publicSources(), /unreadCount|markAsRead|lastReadAt/);
 });
 
-await test("STATIC", "T18 per-thread Bot toggle stays inside the authoritative file allowlist", () => {
+await test("STATIC", "T18 Inbox remains unchanged while capability-routing edits stay in their authorized allowlist", () => {
   const allowed = new Set([
     "lib/db.js",
     "server.js",
@@ -238,6 +238,23 @@ await test("STATIC", "T18 per-thread Bot toggle stays inside the authoritative f
     "kiem-thu/kiem-tra-stab05-gj13-runtime.js",
     "kiem-thu/kiem-tra-stab05-truthful-activity.js",
     "kiem-thu/kiem-tra-stab09-b05-auto-reply-owner.js",
+    "lib/admin-command.js",
+    "lib/ai-chat.js",
+    "lib/doc-tep.js",
+    "lib/opencode.js",
+    "lib/owner-credentials.js",
+    "lib/training.js",
+    "lib/ai-model-router.js",
+    "lib/provider-failure.js",
+    "public/config.js",
+    "kiem-thu/kiem-tra-capability-model-routing.js",
+    "kiem-thu/kiem-tra-capability-routing-db.js",
+    "kiem-thu/kiem-tra-customer-image-capability-assist.js",
+    "kiem-thu/kiem-tra-bot-commander-part1.js",
+    "kiem-thu/kiem-tra-bot-commander-lane-b-app-aware.js",
+    "kiem-thu/kiem-tra-owner-credentials.js",
+    "kiem-thu/kiem-tra-p9-production-legacy-owner.js",
+    "kiem-thu/sqlite3-node24-test-adapter.js",
   ]);
   const runtimeOnly = (file) => file === "data/.gitkeep"
     || file.startsWith("data.ui-a-fresh-backup-")
@@ -247,9 +264,9 @@ await test("STATIC", "T18 per-thread Bot toggle stays inside the authoritative f
     || file.startsWith("kiem-thu/evidence/")
     || /^data\/(?:credentials\.json|\.secret-key|.+\.db(?:-.+)?)$/.test(file);
   const changed = workingTreeChanges().filter((file) => !runtimeOnly(file));
-  assert.ok(changed.includes("lib/zalo-service.js"));
-  assert.ok(changed.includes("kiem-thu/kiem-tra-inbox-ui-a.js"));
-  assert.ok(changed.includes("kiem-thu/kiem-tra-per-thread-bot-toggle.js"));
+  assert.ok(changed.includes("lib/ai-model-router.js"));
+  assert.ok(changed.includes("lib/provider-failure.js"));
+  assert.ok(changed.includes("public/config.js"));
   for (const file of changed) assert.ok(allowed.has(file), `Out-of-scope source file: ${file}`);
 
   const ids = [...htmlSource.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);

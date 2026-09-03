@@ -1814,7 +1814,7 @@ await bai("M14.1", "bang messages giu dung 10 cot va dung khoa danh tinh", async
   assert.match(khoi.slice(0, 900), /PRIMARY KEY \(thread_id, id\)/, "khoa danh tinh giu nguyen");
 });
 
-await bai("M14.2", "luoc do THAT chi them threads.bot_enabled, khong bang/cot nao khac", async () => {
+await bai("M14.2", "luoc do THAT chi them bot_enabled va hai cot routing V1 da duoc authorize", async () => {
   const nguonGoc = docTepTaiBase("lib/db.js");
   const luocDoGoc = await luocDoThucTe(nguonGoc, "goc");
   const { thuMuc } = await moCsdlTam();
@@ -1836,6 +1836,18 @@ await bai("M14.2", "luoc do THAT chi them threads.bot_enabled, khong bang/cot na
         luocDoGoc.threads,
         "ngoai bot_enabled, threads phai y nguyen base"
       );
+      continue;
+    }
+    if (bang === "ai_chat_config") {
+      const additiveRoutingColumns = ["opencode_fallback_capabilities", "opencode_failover_enabled"];
+      assert.deepEqual(
+        luocDoNay.ai_chat_config.filter((cot) => !additiveRoutingColumns.includes(cot)),
+        luocDoGoc.ai_chat_config,
+        "ngoai hai cot routing V1, ai_chat_config phai y nguyen base"
+      );
+      for (const cot of additiveRoutingColumns) {
+        assert.equal(luocDoNay.ai_chat_config.filter((item) => item === cot).length, 1, `${cot} phai co dung mot lan`);
+      }
       continue;
     }
     assert.deepEqual(luocDoNay[bang], luocDoGoc[bang], `bang ${bang} bi doi cot`);
