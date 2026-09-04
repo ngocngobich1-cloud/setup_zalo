@@ -158,13 +158,24 @@ try {
     assert.ok(gitdirMatch, "Expected this checkout to be a linked worktree");
     const gitdir = path.resolve(gitdirMatch[1]);
     const head = fs.readFileSync(path.join(gitdir, "HEAD"), "utf8").trim();
-    assert.equal(head, "5b6488fb8fb89411ea7b30ceac680a0eba4fb92e");
+    assert.equal(head, "d22ad869393a58d3f4ebb6c881ff1328217338d8");
     assert.equal(path.basename(REPO), "zalo-web-capability-routing-v1-20260903");
   });
 
   await test("B1-T2", "capability truth table is granular and complete", async () => {
     configuredContext = await buildAppContext(OWNER);
     const expected = {
+      "AI.primary": AVAILABILITY.AVAILABLE,
+      "AI.secondary": AVAILABILITY.AVAILABLE,
+      "AI.secondaryCapabilities": AVAILABILITY.AVAILABLE,
+      "AI.capabilityRouting": AVAILABILITY.AVAILABLE,
+      "AI.runtimeFailover": AVAILABILITY.AVAILABLE,
+      "Zalo.runtime": AVAILABILITY.AVAILABLE,
+      "Bot.accountEnabled": AVAILABILITY.AVAILABLE,
+      "Knowledge.configuration": AVAILABILITY.AVAILABLE,
+      "AutoReply.rules": AVAILABILITY.AVAILABLE,
+      "PdfAutomation.enabledRules": AVAILABILITY.AVAILABLE,
+      "Scheduling.pendingMessages": AVAILABILITY.AVAILABLE,
       "Zoom.createOneTimeMeeting": AVAILABILITY.AVAILABLE,
       "Zoom.createRecurringMeeting": AVAILABILITY.NOT_AVAILABLE,
       "Zoom.listMeetings": AVAILABILITY.AVAILABLE,
@@ -379,7 +390,7 @@ try {
   });
 
   await test("P1-T1", "Zoom one-time capabilities expose truthful multi-path navigation", () => {
-    assert.equal(configuredContext.schemaVersion, 2);
+    assert.equal(configuredContext.schemaVersion, 3);
     const create = byId(configuredContext, "Zoom.createOneTimeMeeting");
     const manage = byId(configuredContext, "Zoom.editOrDeleteOneTimeMeeting");
     const list = byId(configuredContext, "Zoom.listMeetings");
