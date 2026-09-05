@@ -1269,6 +1269,110 @@ await test("T66", "Failed mkdir candidate never becomes active", async () => {
   assert.notEqual(result.failedCandidate, opencode.credentialPlaneState().credentialDirectory);
 });
 
+await test("T67", "Save reuses before snapshot: two provider-state calls and zero inference", async () => {
+  await activate("B");
+  const otherBefore = row("B", "provider-y")?.secret_enc;
+  const start = fake.calls.length;
+  await ownerCredentials.saveCurrentOwnerCredential(
+    "B",
+    "provider-x",
+    "fixture-b-two-provider-state-calls",
+    { config: CONFIG }
+  );
+  const calls = fake.calls.slice(start);
+  const providerStateCalls = calls.filter(
+    (call) => call.method === "GET" && call.pathname === "/provider"
+  );
+  assert.equal(providerStateCalls.length, 2);
+  assert.ok(calls.indexOf(providerStateCalls[0]) < calls.findIndex((call) => call.pathname.startsWith("/auth/")));
+  assert.ok(calls.indexOf(providerStateCalls[1]) > calls.findIndex((call) => call.pathname.startsWith("/auth/")));
+  assert.equal(calls.some((call) => /\/session(?:\/|$)/.test(call.pathname)), false);
+  assert.equal(calls.some((call) => call.pathname === "/config/providers"), false);
+  assert.equal(row("B", "provider-y")?.secret_enc, otherBefore);
+});
+
+await test("T68", "Test key attempts exactly one selected or deterministic provider model", async () => {
+  await activate("B");
+  const providerY = providers.find((provider) => provider.id === "provider-y");
+  const modelFixture = providerY.models["chat-model"];
+  providerY.models = {
+    "zeta-chat": modelFixture,
+    "chat-model": modelFixture,
+    "alpha-chat": modelFixture,
+  };
+
+  let start = fake.calls.length;
+  const selected = await ownerCredentials.testCurrentOwnerCredential("B", "provider-x", { config: CONFIG });
+  let messages = fake.calls.slice(start).filter(
+    (call) => call.method === "POST" && /\/session\/[^/]+\/message$/.test(call.pathname)
+  );
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body.model.providerID, "provider-x");
+  assert.equal(messages[0].body.model.modelID, "chat-model");
+  assert.equal(selected.daThu, 1);
+
+  start = fake.calls.length;
+  const deterministic = await ownerCredentials.testCurrentOwnerCredential("B", "provider-y", { config: CONFIG });
+  messages = fake.calls.slice(start).filter(
+    (call) => call.method === "POST" && /\/session\/[^/]+\/message$/.test(call.pathname)
+  );
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body.model.providerID, "provider-y");
+  assert.equal(messages[0].body.model.modelID, "alpha-chat");
+  assert.equal(deterministic.daThu, 1);
+  assert.equal(deterministic.model, "provider-y/alpha-chat");
+  assert.match(source.opencode, /const TEST_MAX_MODELS = 1/);
+  const testSource = source.opencode.slice(
+    source.opencode.indexOf("export async function testProviderKey"),
+    source.opencode.indexOf("export async function sendPrompt")
+  );
+  assert.doesNotMatch(testSource, /opencodeFallbackModel/);
+});
+
+await test("T69", "Test-key failure taxonomy remains distinct", () => {
+  assert.equal(opencode.classifyProviderTestFailure({ status: 401, message: "invalid api key" }), "INVALID_KEY");
+  assert.equal(opencode.classifyProviderTestFailure({ status: 402, message: "payment required" }), "NO_QUOTA");
+  assert.equal(opencode.classifyProviderTestFailure({ code: "TIMEOUT", message: "timeout" }), "TIMEOUT");
+  assert.equal(opencode.classifyProviderTestFailure({ status: 503, message: "service unavailable" }), "PROVIDER_UNAVAILABLE");
+  assert.equal(opencode.classifyProviderTestFailure({ code: "OPENCODE_RUNTIME_ERROR" }), "OPENCODE_RUNTIME_ERROR");
+});
+
+await test("T70", "Frontend Save/Test boundaries are scoped, immediate and secret-safe", () => {
+  const saveStart = source.config.indexOf('btnKeySave.addEventListener("click"');
+  const testStart = source.config.indexOf('btnKeyTest.addEventListener("click"');
+  const deleteStart = source.config.indexOf('btnKeyDelete.addEventListener("click"');
+  const saveSource = source.config.slice(saveStart, testStart);
+  const testSource = source.config.slice(testStart, deleteStart);
+  const successIndex = saveSource.indexOf("Đã lưu API key ${providerName} thành công");
+  const refreshProviderIndex = saveSource.indexOf("await napDanhSachHangChoKey");
+  const refreshModelIndex = saveSource.indexOf("await napAgentVaModel");
+
+  assert.equal([...saveSource.matchAll(/fetch\("\/api\/ai-chat\/owner-credentials"/g)].length, 1);
+  assert.match(saveSource, /method: "POST"/);
+  assert.match(saveSource, /body: JSON\.stringify\(\{ providerId, apiKey: keyValue\.value\.trim\(\) \}\)/);
+  assert.match(saveSource, /baoKey\("Đang lưu\.\.\."\)/);
+  assert.ok(successIndex >= 0 && successIndex < refreshProviderIndex && successIndex < refreshModelIndex);
+  assert.match(saveSource, /try\s*\{\s*await napDanhSachHangChoKey\(\{ preserveStatus: true \}\);\s*\} catch/);
+  assert.match(saveSource, /try\s*\{\s*await napAgentVaModel[\s\S]*?\} catch/);
+
+  assert.match(testSource, /body: JSON\.stringify\(\{ providerId \}\)/);
+  assert.doesNotMatch(testSource, /apiKey|keyValue|opencodeFallbackModel/);
+  assert.match(testSource, /THONG_BAO_THU_KEY\[String\(data\.error \|\| ""\)\]/);
+  assert.match(testSource, /API key \$\{providerName\} hoạt động bình thường\./);
+  assert.doesNotMatch(testSource, /Key không dùng được/);
+  for (const message of [
+    "API key không hợp lệ.",
+    "API key hợp lệ nhưng tài khoản đã hết hạn mức hoặc cần thanh toán.",
+    "Nhà cung cấp AI phản hồi quá lâu. Vui lòng thử lại.",
+    "Nhà cung cấp AI đang tạm thời không khả dụng.",
+  ]) assert.ok(source.config.includes(message));
+
+  assert.match(
+    source.server,
+    /saveCurrentOwnerCredential\([\s\S]*?await aiChat\.refreshConfig\(\);\s*res\.json\(\{ ok: true, providerId: saved\.providerId/
+  );
+});
+
 const failed = results.filter((result) => !result.pass);
 for (const result of results) {
   console.log(`${result.code} = ${result.skipped ? "SKIP" : result.pass ? "PASS" : "FAIL"}  ${result.description}`);

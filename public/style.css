@@ -444,6 +444,7 @@ input {
 }
 
 .chat-panel {
+  --bot-typing-composer-height: 94px;
   position: relative;
   height: 100%;
   display: grid;
@@ -488,6 +489,24 @@ input {
   background: var(--chat-bg);
   scrollbar-width: thin;
   scrollbar-color: #bcc6d2 transparent;
+}
+
+.chat-panel.bot-is-typing .messages { padding-bottom: 38px; }
+
+.bot-typing-indicator {
+  position: absolute;
+  z-index: 6;
+  left: 26px;
+  bottom: calc(var(--bot-typing-composer-height) + 8px);
+  max-width: calc(100% - 52px);
+  padding: 4px 10px;
+  border: 1px solid #d7e2ef;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+  pointer-events: none;
 }
 
 .bubble-row {
@@ -1040,7 +1059,10 @@ input {
   }
 
   .chat-empty { display: none; }
-  .chat-panel { grid-template-rows: 56px minmax(0, 1fr) auto; }
+  .chat-panel {
+    --bot-typing-composer-height: 112px;
+    grid-template-rows: 56px minmax(0, 1fr) auto;
+  }
 
   .chat-header {
     height: 56px;
@@ -1062,6 +1084,11 @@ input {
   .messages {
     min-height: 0;
     padding: 12px 12px 8px;
+  }
+  .chat-panel.bot-is-typing .messages { padding-bottom: 36px; }
+  .bot-typing-indicator {
+    left: 12px;
+    max-width: calc(100% - 24px);
   }
   .bubble-row { gap: 8px; }
   .bubble-row.cluster-end { margin-bottom: 10px; }

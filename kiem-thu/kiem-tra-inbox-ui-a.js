@@ -13,6 +13,7 @@ const REPO = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const htmlSource = fs.readFileSync(path.join(REPO, "public", "index.html"), "utf8");
 const appSource = fs.readFileSync(path.join(REPO, "public", "app.js"), "utf8");
 const cssSource = fs.readFileSync(path.join(REPO, "public", "style.css"), "utf8");
+const zaloSource = fs.readFileSync(path.join(REPO, "lib", "zalo-service.js"), "utf8");
 const results = [];
 
 async function test(group, name, fn) {
@@ -195,6 +196,57 @@ await test("STATIC", "T6c Inbox mobile has one dynamic owner, fixed rows and saf
   assert.equal(messages.contains(bottomStack), false);
 });
 
+await test("STATIC", "WT1 typing indicator is an absolute chat-panel child outside messages and the grid", () => {
+  const panel = staticDom.querySelector("#chat-panel");
+  const messages = staticDom.querySelector("#messages");
+  const form = staticDom.querySelector("#send-form");
+  const indicator = staticDom.querySelector("#bot-typing-indicator");
+  const indicatorRule = cssRules.find((rule) => rule.selectorText === ".bot-typing-indicator");
+  assert.equal(indicator?.parentElement, panel);
+  assert.equal(indicator?.getAttribute("role"), "status");
+  assert.equal(messages?.contains(indicator), false);
+  assert.equal(form?.contains(indicator), false);
+  assert.equal(indicatorRule?.style.position, "absolute");
+  assert.match(
+    cssRules.find((rule) => rule.selectorText === ".chat-panel")?.style.getPropertyValue("grid-template-rows") || "",
+    /^60px minmax\(0, 1fr\) auto$/,
+  );
+});
+
+await test("STATIC", "WT2 backend typing binds once to the outer AI span with heartbeat and idempotent finally stop", () => {
+  const replyStart = zaloSource.indexOf("async function traLoiCumTin");
+  const replyEnd = zaloSource.indexOf("\nasync function handleNewIncomingMessage", replyStart);
+  const replySource = zaloSource.slice(replyStart, replyEnd);
+  const providerTypingStart = zaloSource.indexOf("function batDauGoPhim");
+  const providerTypingEnd = zaloSource.indexOf("\n/* --- LINK CO ANH", providerTypingStart);
+  const providerTypingSource = zaloSource.slice(providerTypingStart, providerTypingEnd);
+
+  assert.match(replySource, /realtime\?\.emit\("bot_typing_status",\s*\{[\s\S]*ownerUid:[\s\S]*threadId:[\s\S]*typing,[\s\S]*at: Date\.now\(\)/);
+  assert.match(replySource, /setInterval\(nhac, heartbeatMs\)/);
+  assert.match(replySource, /if \(daDung\) return;[\s\S]*clearInterval\(dongHo\);[\s\S]*phat\(false\)/);
+  assert.doesNotMatch(providerTypingSource, /bot_typing_status|batDauWebTyping/);
+  assert.match(replySource, /const tatWebTyping = batDauWebTyping\(inferenceOwnerUid, tin\.threadId\)/);
+  assert.match(replySource, /catch \(error\)[\s\S]*finally\s*\{\s*tatGoPhim\(\);\s*tatWebTyping\(\);\s*\}/);
+  assert.match(replySource, /if \(!botWorkConHieuLuc\(\)\) return;/);
+
+  const bubbleStart = replySource.indexOf("for (const [i, bubble]");
+  const finallyStart = replySource.lastIndexOf("} finally {");
+  assert.doesNotMatch(replySource.slice(bubbleStart, finallyStart), /tatWebTyping\(|bot_typing_status/);
+});
+
+await test("STATIC", "WT3 frontend owner/thread filters and safety TTL exceed heartbeat", () => {
+  const heartbeat = Number(zaloSource.match(/const NHAC_GO_PHIM_MS = (\d+)/)?.[1]);
+  const ttl = Number(appSource.match(/const BOT_TYPING_TTL_MS = (\d+)/)?.[1]);
+  assert.ok(heartbeat > 0);
+  assert.ok(ttl > heartbeat);
+  assert.match(appSource, /socket\.on\("bot_typing_status"/);
+  assert.match(appSource, /ownerUid !== String\(state\.uid \|\| ""\)/);
+  assert.match(appSource, /threadId !== String\(state\.selectedThread\?\.id \|\| ""\)/);
+  assert.match(appSource, /socket\.on\("disconnect", anBotDangSoan\)/);
+  assert.match(appSource, /socket\.on\("connect", anBotDangSoan\)/);
+  assert.match(appSource, /window\.setTimeout\([\s\S]*BOT_TYPING_TTL_MS/);
+});
+
 await test("STATIC", "T16 per-thread Bot scaffold is wired to the scoped toggle API", () => {
   const status = staticDom.querySelector("#thread-bot-status");
   const button = staticDom.querySelector("#btn-thread-bot-toggle");
@@ -220,41 +272,17 @@ await test("STATIC", "T17 no unread tracking or persistence was added", () => {
   assert.doesNotMatch(publicSources(), /unreadCount|markAsRead|lastReadAt/);
 });
 
-await test("STATIC", "T18 Inbox remains unchanged while capability-routing edits stay in their authorized allowlist", () => {
+await test("STATIC", "T18 this lane changes only its explicit file allowlist", () => {
   const allowed = new Set([
-    "lib/db.js",
-    "server.js",
     "lib/zalo-service.js",
-    "lib/gom-tin.js",
-    "lib/pdf-automation.js",
     "public/index.html",
     "public/app.js",
     "public/style.css",
-    "kiem-thu/kiem-tra-inbox-ui-a.js",
-    "kiem-thu/kiem-tra-human-bot-continuity.js",
-    "kiem-thu/kiem-tra-pdf-automation.js",
-    "kiem-thu/kiem-tra-messaging-power-pack-v1.js",
-    "kiem-thu/kiem-tra-per-thread-bot-toggle.js",
-    "kiem-thu/kiem-tra-stab05-gj13-runtime.js",
-    "kiem-thu/kiem-tra-stab05-truthful-activity.js",
-    "kiem-thu/kiem-tra-stab09-b05-auto-reply-owner.js",
-    "lib/admin-command.js",
-    "lib/ai-chat.js",
-    "lib/doc-tep.js",
     "lib/opencode.js",
     "lib/owner-credentials.js",
-    "lib/training.js",
-    "lib/ai-model-router.js",
-    "lib/provider-failure.js",
     "public/config.js",
-    "kiem-thu/kiem-tra-capability-model-routing.js",
-    "kiem-thu/kiem-tra-capability-routing-db.js",
-    "kiem-thu/kiem-tra-customer-image-capability-assist.js",
-    "kiem-thu/kiem-tra-bot-commander-part1.js",
-    "kiem-thu/kiem-tra-bot-commander-lane-b-app-aware.js",
+    "kiem-thu/kiem-tra-inbox-ui-a.js",
     "kiem-thu/kiem-tra-owner-credentials.js",
-    "kiem-thu/kiem-tra-p9-production-legacy-owner.js",
-    "kiem-thu/sqlite3-node24-test-adapter.js",
   ]);
   const runtimeOnly = (file) => file === "data/.gitkeep"
     || file.startsWith("data.ui-a-fresh-backup-")
@@ -264,14 +292,12 @@ await test("STATIC", "T18 Inbox remains unchanged while capability-routing edits
     || file.startsWith("kiem-thu/evidence/")
     || /^data\/(?:credentials\.json|\.secret-key|.+\.db(?:-.+)?)$/.test(file);
   const changed = workingTreeChanges().filter((file) => !runtimeOnly(file));
-  assert.ok(changed.includes("lib/ai-model-router.js"));
-  assert.ok(changed.includes("lib/provider-failure.js"));
-  assert.ok(changed.includes("public/config.js"));
+  assert.deepEqual(changed, [...allowed].sort());
   for (const file of changed) assert.ok(allowed.has(file), `Out-of-scope source file: ${file}`);
 
   const ids = [...htmlSource.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
   assert.equal(new Set(ids).size, ids.length, "DOM IDs must remain unique");
-  for (const id of ["btn-chat-image", "btn-chat-more", "btn-thread-bot-toggle", "thread-bot-status"]) {
+  for (const id of ["btn-chat-image", "btn-chat-more", "btn-thread-bot-toggle", "thread-bot-status", "bot-typing-indicator"]) {
     assert.ok(staticDom.getElementById(id), `Missing allowlisted new ID #${id}`);
   }
 });
@@ -690,6 +716,57 @@ await test("BEHAVIOR", "T16 per-thread toggle updates the selected model while T
   assert.equal(document.querySelector("#btn-thread-bot-toggle .thread-bot-mobile-label").textContent, "Bật");
   assert.equal(document.querySelector("#bot-toggle").getAttribute("aria-checked"), globalBotBefore);
   assert.equal(document.querySelector(".chat-more-menu"), null);
+});
+
+await test("WEB-TYPING", "WT4 start, heartbeat, wrong identity, renderMessages and stop are safe", () => {
+  const typing = socketHandlers.get("bot_typing_status");
+  const indicator = document.querySelector("#bot-typing-indicator");
+  const panel = document.querySelector("#chat-panel");
+  assert.equal(typeof typing, "function");
+  assert.ok(indicator.classList.contains("hidden"));
+
+  typing({ ownerUid: "UI-A", threadId: "thread-group", typing: true, at: Date.now() });
+  assert.equal(indicator.classList.contains("hidden"), false);
+  assert.equal(indicator.textContent, "Đang soạn tin...");
+  assert.ok(panel.classList.contains("bot-is-typing"));
+
+  // Heartbeat refreshes the same visible span; it never creates another node.
+  typing({ ownerUid: "UI-A", threadId: "thread-group", typing: true, at: Date.now() + 3000 });
+  assert.equal(document.querySelectorAll("#bot-typing-indicator").length, 1);
+  assert.equal(indicator.classList.contains("hidden"), false);
+
+  socketHandlers.get("new-message")({
+    id: "typing-render", threadId: "thread-group", content: "Tin trong lúc bot đang soạn",
+    ts: 1_800_086_500_000, isSelf: false, senderId: "A", senderName: "Thành viên A",
+  });
+  assert.ok(document.body.contains(indicator));
+  assert.equal(indicator.classList.contains("hidden"), false);
+
+  typing({ ownerUid: "UI-A", threadId: "thread-alpha", typing: false, at: Date.now() });
+  typing({ ownerUid: "OWNER-KHAC", threadId: "thread-group", typing: false, at: Date.now() });
+  assert.equal(indicator.classList.contains("hidden"), false);
+
+  typing({ ownerUid: "UI-A", threadId: "thread-group", typing: false, at: Date.now() });
+  assert.ok(indicator.classList.contains("hidden"));
+  assert.equal(panel.classList.contains("bot-is-typing"), false);
+});
+
+await test("WEB-TYPING", "WT5 thread switch, disconnect and reconnect clear stale typing", async () => {
+  const typing = socketHandlers.get("bot_typing_status");
+  const indicator = document.querySelector("#bot-typing-indicator");
+
+  typing({ ownerUid: "UI-A", threadId: "thread-group", typing: true, at: Date.now() });
+  [...document.querySelectorAll(".thread-item")].find((node) => node.textContent.includes("Khách Alpha")).click();
+  await flush();
+  assert.ok(indicator.classList.contains("hidden"));
+
+  typing({ ownerUid: "UI-A", threadId: "thread-alpha", typing: true, at: Date.now() });
+  socketHandlers.get("disconnect")();
+  assert.ok(indicator.classList.contains("hidden"));
+
+  typing({ ownerUid: "UI-A", threadId: "thread-alpha", typing: true, at: Date.now() });
+  socketHandlers.get("connect")();
+  assert.ok(indicator.classList.contains("hidden"));
 });
 
 const passed = results.filter((result) => result.pass).length;

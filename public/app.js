@@ -56,6 +56,7 @@ const els = {
   chatAvatar: document.querySelector("#chat-avatar"),
   chatTitle: document.querySelector("#chat-title-text"),
   messages: document.querySelector("#messages"),
+  botTypingIndicator: document.querySelector("#bot-typing-indicator"),
   form: document.querySelector("#send-form"),
   input: document.querySelector("#message-input"),
   fileInput: document.querySelector("#chat-file-input"),
@@ -102,6 +103,38 @@ let tepChat = null;
 let dangGuiTin = false;
 let frontendOwnerGeneration = 0;
 let mobileThreadScrollTop = 0;
+const BOT_TYPING_TTL_MS = 8000;
+let botTypingTtl = null;
+let botTypingIdentity = null;
+
+function anBotDangSoan() {
+  if (botTypingTtl !== null) window.clearTimeout(botTypingTtl);
+  botTypingTtl = null;
+  botTypingIdentity = null;
+  if (els.botTypingIndicator) els.botTypingIndicator.textContent = "";
+  els.botTypingIndicator?.classList.add("hidden");
+  els.chatPanel?.classList.remove("bot-is-typing");
+}
+
+function hienBotDangSoan(ownerUid, threadId) {
+  const owner = String(ownerUid || "");
+  const hoiThoai = String(threadId || "");
+  if (owner !== String(state.uid || "") || hoiThoai !== String(state.selectedThread?.id || "")) return;
+
+  if (botTypingTtl !== null) window.clearTimeout(botTypingTtl);
+  botTypingIdentity = `${owner}\u0000${hoiThoai}`;
+  const composerHeight = Number(els.form?.getBoundingClientRect?.().height || els.form?.offsetHeight || 0);
+  if (composerHeight > 0) {
+    els.chatPanel.style.setProperty("--bot-typing-composer-height", `${Math.ceil(composerHeight)}px`);
+  }
+  els.botTypingIndicator.textContent = "Đang soạn tin...";
+  els.botTypingIndicator?.classList.remove("hidden");
+  els.chatPanel?.classList.add("bot-is-typing");
+  const identity = botTypingIdentity;
+  botTypingTtl = window.setTimeout(() => {
+    if (botTypingIdentity === identity) anBotDangSoan();
+  }, BOT_TYPING_TTL_MS);
+}
 
 function chupFrontendOwner() {
   return {
@@ -183,6 +216,16 @@ window.addEventListener("popstate", () => {
 });
 
 socket.on("state", applyState);
+socket.on("connect", anBotDangSoan);
+socket.on("disconnect", anBotDangSoan);
+socket.on("bot_typing_status", (event) => {
+  const ownerUid = String(event?.ownerUid || "");
+  const threadId = String(event?.threadId || "");
+  if (ownerUid !== String(state.uid || "")) return;
+  if (threadId !== String(state.selectedThread?.id || "")) return;
+  if (event?.typing === true) hienBotDangSoan(ownerUid, threadId);
+  else if (event?.typing === false) anBotDangSoan();
+});
 socket.on("threads", (threads) => {
   state.threads = threads || [];
   if (state.selectedThread) {
@@ -415,6 +458,7 @@ function applyState(next) {
 
 function invalidateOwnerFrontendState(nextOwnerUid = null) {
   frontendOwnerGeneration += 1;
+  anBotDangSoan();
   state.threads = [];
   state.selectedThread = null;
   state.messagesByThread.clear();
@@ -584,6 +628,7 @@ function formatThreadPreview(lastMessage) {
 }
 
 async function selectThread(thread) {
+  if (state.selectedThread?.id !== thread.id) anBotDangSoan();
   if (state.selectedThread?.id && state.selectedThread.id !== thread.id) boTepChat();
   dongLopThaoTacTin();
   dongBangSticker();

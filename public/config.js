@@ -774,6 +774,22 @@ export const CONFIG_TABS = [
         keyStatus.textContent = text;
       }
 
+      function tenHangKey(providerId) {
+        const option = [...keyProvider.options].find((item) => item.value === providerId);
+        return String(option?.textContent || providerId)
+          .replace(/\s*·\s*đã có key\s*$/i, "")
+          .trim();
+      }
+
+      const THONG_BAO_THU_KEY = Object.freeze({
+        INVALID_KEY: "API key không hợp lệ.",
+        NO_QUOTA: "API key hợp lệ nhưng tài khoản đã hết hạn mức hoặc cần thanh toán.",
+        QUOTA_EXHAUSTED: "API key hợp lệ nhưng tài khoản đã hết hạn mức hoặc cần thanh toán.",
+        TIMEOUT: "Nhà cung cấp AI phản hồi quá lâu. Vui lòng thử lại.",
+        PROVIDER_UNAVAILABLE: "Nhà cung cấp AI đang tạm thời không khả dụng.",
+        OPENCODE_RUNTIME_ERROR: "Hệ thống AI đang gặp lỗi kỹ thuật. Vui lòng thử lại.",
+      });
+
       function setKeyButton(button, enabled) {
         button.disabled = !enabled;
         button.setAttribute("aria-disabled", String(!enabled));
@@ -790,7 +806,7 @@ export const CONFIG_TABS = [
         setKeyButton(btnKeyClear, !keyBusy && ownerKeyStatus.size > 0);
       }
 
-      async function napDanhSachHangChoKey() {
+      async function napDanhSachHangChoKey({ preserveStatus = false } = {}) {
         const dangChon = keyProvider.value;
         try {
           const [catalogResponse, statusResponse] = await Promise.all([
@@ -829,9 +845,12 @@ export const CONFIG_TABS = [
           nhom("Tất cả hãng khác", conLai);
 
           if (dangChon && all.some((provider) => provider.id === dangChon)) keyProvider.value = dangChon;
-          baoKey(daCoKey.length ? `${daCoKey.length} hãng đã kết nối` : "Chưa có kết nối.");
+          if (!preserveStatus) {
+            baoKey(daCoKey.length ? `${daCoKey.length} hãng đã kết nối` : "Chưa có kết nối.");
+          }
           capNhatRoutingControls();
         } catch (e) {
+          if (preserveStatus) throw e;
           ownerKeyStatus = new Map();
           keyProvider.innerHTML = "";
           keyProvider.append(new Option("— Không kết nối được OpenCode —", ""));
@@ -859,9 +878,10 @@ export const CONFIG_TABS = [
           return baoKey("API key không được để trống.", "var(--danger)");
         }
         const providerId = keyProvider.value;
+        const providerName = tenHangKey(providerId);
         keyBusy = true;
         updateKeyButtons();
-        baoKey("Đang lưu key...");
+        baoKey("Đang lưu...");
         try {
           const res = await fetch("/api/ai-chat/owner-credentials", {
             method: "POST",
@@ -871,15 +891,32 @@ export const CONFIG_TABS = [
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "Lưu thất bại");
           keyValue.value = "";
-          await napDanhSachHangChoKey();
-          await napAgentVaModel(
-            ocProvider.value ? ocModel.value : "",
-            ocFallbackProvider.value ? ocFallbackModel.value : ""
-          );
-          baoKey("Đã lưu key. Bấm Thử key để chắc chắn key còn dùng được.", "var(--ok)");
+          ownerKeyStatus.set(providerId, {
+            providerId,
+            providerName,
+            connected: true,
+            updatedAt: data.updatedAt,
+          });
+          baoKey(`Đã lưu API key ${providerName} thành công`, "var(--ok)");
           window.dispatchEvent(new CustomEvent("zalo:canonical-save", {
             detail: { section: "api-key", providerId },
           }));
+
+          // Persisted save da PASS. Cac refresh UI phu chay sau boundary nay va
+          // khong duoc phep bien ket qua Save thanh failure.
+          try {
+            await napDanhSachHangChoKey({ preserveStatus: true });
+          } catch (refreshError) {
+            console.error("Không làm mới được danh sách hãng sau khi lưu key", refreshError);
+          }
+          try {
+            await napAgentVaModel(
+              ocProvider.value ? ocModel.value : "",
+              ocFallbackProvider.value ? ocFallbackModel.value : ""
+            );
+          } catch (refreshError) {
+            console.error("Không làm mới được agent/model sau khi lưu key", refreshError);
+          }
         } catch (e) {
           baoKey(e.message, "var(--danger)");
         } finally {
@@ -891,6 +928,8 @@ export const CONFIG_TABS = [
       btnKeyTest.addEventListener("click", async () => {
         if (!keyProvider.value) return baoKey("Chọn hãng trước đã.", "var(--danger)");
         if (!ownerKeyStatus.has(keyProvider.value)) return baoKey("Hãy lưu key hãng này trước.", "var(--danger)");
+        const providerId = keyProvider.value;
+        const providerName = tenHangKey(providerId);
         keyBusy = true;
         updateKeyButtons();
         baoKey("Đang gọi thử một câu...");
@@ -898,13 +937,21 @@ export const CONFIG_TABS = [
           const res = await fetch("/api/ai-chat/owner-credentials/test", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ providerId: keyProvider.value }),
+            body: JSON.stringify({ providerId }),
           });
           const data = await res.json();
-          if (!res.ok) throw new Error(data.message || data.error || "Không gọi được");
-          baoKey(`Key còn dùng được · ${data.model} trả lời: ${String(data.reply).slice(0, 40)}`, "var(--ok)");
+          if (!res.ok) {
+            baoKey(
+              THONG_BAO_THU_KEY[String(data.error || "")]
+                || data.message
+                || "Không kiểm tra được API key.",
+              "var(--danger)"
+            );
+            return;
+          }
+          baoKey(`API key ${providerName} hoạt động bình thường.`, "var(--ok)");
         } catch (e) {
-          baoKey("Key không dùng được: " + e.message, "var(--danger)");
+          baoKey(e.message || "Không kiểm tra được API key.", "var(--danger)");
         } finally {
           keyBusy = false;
           updateKeyButtons();
