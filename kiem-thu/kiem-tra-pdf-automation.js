@@ -455,7 +455,7 @@ async function main() {
     assert.ok(incoming.indexOf("persistAndBroadcastMessage") < incoming.indexOf("boGom.them"));
     assert.match(incoming, /if \(!processedMsg\) return/);
     const aggregate = zalo.slice(zalo.indexOf("async function traLoiCumTin"), zalo.indexOf("async function handleNewIncomingMessage"));
-    assert.match(aggregate, /handlePdfAutomation\(\{[\s\S]*?tins,[\s\S]*?tin,[\s\S]*?originToken,[\s\S]*?automaticWork: automaticContext/);
+    assert.match(aggregate, /handlePdfAutomation\(\{\s*tins:\s*segmentTins,\s*tin:\s*segmentTin,\s*originToken:\s*segmentOriginToken,\s*automaticWork:\s*segmentAutomaticContext,\s*\}\)/);
     assert.ok(aggregate.indexOf("handlePdfAutomation") < aggregate.indexOf("aiChat.tryReply"));
 
     const aiStart = config.indexOf('id: "ai-chat"');

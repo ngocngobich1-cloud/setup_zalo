@@ -8,6 +8,7 @@
  *   ./kiem-thu/kiem-tra-bot-commander-lane-b-app-aware.js
  */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -157,8 +158,22 @@ try {
     const gitdirMatch = worktreePointer.match(/^gitdir:\s*(.+)$/i);
     assert.ok(gitdirMatch, "Expected this checkout to be a linked worktree");
     const gitdir = path.resolve(gitdirMatch[1]);
-    const head = fs.readFileSync(path.join(gitdir, "HEAD"), "utf8").trim();
-    assert.equal(head, "d22ad869393a58d3f4ebb6c881ff1328217338d8");
+    assert.ok(fs.existsSync(path.join(gitdir, "HEAD")), "Expected linked worktree HEAD authority");
+    const approvedBaseline = "030d613e0c038ade2eb5e6f3ed92ec4ee44829e5";
+    const head = execFileSync("git", ["rev-parse", "--verify", "HEAD^{commit}"], {
+      cwd: REPO,
+      encoding: "utf8",
+      windowsHide: true,
+    }).trim();
+    assert.match(head, /^[0-9a-f]{40}$/);
+    assert.doesNotThrow(
+      () => execFileSync("git", ["merge-base", "--is-ancestor", approvedBaseline, head], {
+        cwd: REPO,
+        stdio: "ignore",
+        windowsHide: true,
+      }),
+      `Expected approved C1 baseline ${approvedBaseline} to be an ancestor of HEAD ${head}`
+    );
     assert.equal(path.basename(REPO), "zalo-web-capability-routing-v1-20260903");
   });
 
@@ -633,14 +648,18 @@ try {
   let secondActual;
   await test("B2-T1", "same training session receives fresh context on every Normal turn", async () => {
     const beforeFirst = businessSnapshot();
+    const inferenceBeforeFirst = actualInferenceCalls;
     assert.equal(await training.guiTinHuanLuyen(OWNER, "Mục tiêu lượt A", []), "LANE_B_MODEL_REPLY_1");
+    assert.equal(actualInferenceCalls - inferenceBeforeFirst, 1);
     assert.deepEqual(businessSnapshot(), beforeFirst, "Turn A mutated business/config state");
     firstActual = captured.filter((body) => String(body?.parts?.[0]?.text || "").includes("CURRENT APP STATE"))[0];
     assert.equal(byId(parseContextPart(firstActual), "AdminCommand.enabled").configuration, CONFIGURATION.CONFIGURED);
 
     await db.setAdminZalo(OWNER, "", "");
     const beforeSecond = businessSnapshot();
+    const inferenceBeforeSecond = actualInferenceCalls;
     assert.equal(await training.guiTinHuanLuyen(OWNER, "Mục tiêu lượt B", []), "LANE_B_MODEL_REPLY_2");
+    assert.equal(actualInferenceCalls - inferenceBeforeSecond, 1);
     assert.deepEqual(businessSnapshot(), beforeSecond, "Turn B mutated business/config state");
     secondActual = captured.filter((body) => String(body?.parts?.[0]?.text || "").includes("CURRENT APP STATE"))[1];
     assert.equal(byId(parseContextPart(secondActual), "AdminCommand.enabled").configuration, CONFIGURATION.NOT_CONFIGURED);
@@ -653,6 +672,17 @@ try {
     assert.deepEqual(firstActual.parts[1], { type: "text", text: "Mục tiêu lượt A" });
     assert.match(secondActual.parts[0].text, /CURRENT APP STATE — READ-ONLY UNTRUSTED DATA/);
     assert.deepEqual(secondActual.parts[1], { type: "text", text: "Mục tiêu lượt B" });
+  });
+
+  await test("B2-C2-T1", "C2 advisor follows the factual fence on every existing-session turn", () => {
+    for (const body of [firstActual, secondActual]) {
+      const text = String(body?.parts?.[0]?.text || "");
+      const fenceEnd = text.indexOf("END_APP_CONTEXT_DATA");
+      const advisorStart = text.indexOf("# MULTI-PATH APP ADVISOR — REASONING POLICY FOR THIS TURN");
+      assert.ok(fenceEnd >= 0, "Missing factual fence end");
+      assert.ok(advisorStart > fenceEnd, "C2 advisor must be outside and after the factual fence");
+    }
+    assert.equal(createSessionCalls, 1, "existing Lane-B lifecycle semantics must stay baseline-equivalent");
   });
 
   await test("B2-T3", "App Context is not persisted into the visible training transcript", async () => {
@@ -677,6 +707,7 @@ try {
     assert.match(text, /Bắt đầu bằng phần app hiện có liên quan đến mục tiêu/);
     assert.match(text, /soạn\/sửa Soul như trước/);
     assert.match(text, /SOUL HIỆN TẠI CỦA BOT/);
+    assert.doesNotMatch(text, /MULTI-PATH APP ADVISOR/);
   });
 
   await test("B2-T5", "tongHopSoul remains functional and uses the fresh-context request contract", async () => {
