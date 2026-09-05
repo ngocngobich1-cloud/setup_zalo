@@ -74,6 +74,7 @@ const CONFIG = {
   opencodeModel: "provider-x/chat-model",
   opencodeFallbackModel: "provider-y/chat-model",
 };
+const REAL_SET_TIMEOUT = globalThis.setTimeout;
 const fake = {
   auth: new Map(),
   calls: [],
@@ -83,6 +84,9 @@ const fake = {
   failInference: false,
   failPutProvider: null,
   failNextNewDirectoryProviderGet: false,
+  fetchOverride: null,
+  captureCallTimeouts: false,
+  lastScheduledTimeoutMs: null,
   nextSession: 1,
   sessions: new Map(),
 };
@@ -103,6 +107,46 @@ function json(value, status = 200) {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function abortError() {
+  const error = new Error("fixture aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function abortableDelay(ms, value, signal, { hang = false } = {}) {
+  return new Promise((resolve, reject) => {
+    let timer = null;
+    const abort = () => {
+      if (timer) clearTimeout(timer);
+      reject(abortError());
+    };
+    if (signal?.aborted) return abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    if (!hang) {
+      timer = REAL_SET_TIMEOUT(() => {
+        signal?.removeEventListener("abort", abort);
+        resolve(value);
+      }, ms);
+    }
+  });
+}
+
+async function withCallTimeoutCapture(operation) {
+  const originalSetTimeout = globalThis.setTimeout;
+  fake.captureCallTimeouts = true;
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    fake.lastScheduledTimeoutMs = Number(delay);
+    return originalSetTimeout(callback, delay, ...args);
+  };
+  try {
+    return await operation();
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    fake.captureCallTimeouts = false;
+    fake.lastScheduledTimeoutMs = null;
+  }
 }
 
 const DEFAULT_DIRECTORY = "__default__";
@@ -130,14 +174,21 @@ globalThis.fetch = async (input, options = {}) => {
   const directory = directoryOf(url);
   const body = options.body ? JSON.parse(String(options.body)) : null;
   const directoryExists = directory === DEFAULT_DIRECTORY || fs.existsSync(directory);
-  fake.calls.push({
+  const recordedCall = {
     method,
     pathname,
     directory,
     directoryExists,
     publishedDirectory: opencode.credentialPlaneState().credentialDirectory,
+    activeReaders: opencode.credentialPlaneState().lock.activeReaders,
+    timeoutMs: fake.captureCallTimeouts ? fake.lastScheduledTimeoutMs : undefined,
+    recordedAt: Date.now(),
     body,
-  });
+  };
+  fake.calls.push(recordedCall);
+
+  const overridden = fake.fetchOverride?.(recordedCall, options);
+  if (overridden !== undefined) return await overridden;
 
   if (pathname === "/provider" && method === "GET") {
     const isNewDirectory = !fake.contexts.has(directory);
@@ -1344,6 +1395,7 @@ await test("T70", "Frontend Save/Test boundaries are scoped, immediate and secre
   const saveSource = source.config.slice(saveStart, testStart);
   const testSource = source.config.slice(testStart, deleteStart);
   const successIndex = saveSource.indexOf("Đã lưu API key ${providerName} thành công");
+  const busyReleaseIndex = saveSource.indexOf("keyBusy = false");
   const refreshProviderIndex = saveSource.indexOf("await napDanhSachHangChoKey");
   const refreshModelIndex = saveSource.indexOf("await napAgentVaModel");
 
@@ -1351,7 +1403,10 @@ await test("T70", "Frontend Save/Test boundaries are scoped, immediate and secre
   assert.match(saveSource, /method: "POST"/);
   assert.match(saveSource, /body: JSON\.stringify\(\{ providerId, apiKey: keyValue\.value\.trim\(\) \}\)/);
   assert.match(saveSource, /baoKey\("Đang lưu\.\.\."\)/);
-  assert.ok(successIndex >= 0 && successIndex < refreshProviderIndex && successIndex < refreshModelIndex);
+  assert.ok(successIndex >= 0 && successIndex < busyReleaseIndex);
+  assert.ok(busyReleaseIndex < refreshProviderIndex);
+  assert.ok(busyReleaseIndex < refreshModelIndex);
+  assert.match(saveSource.slice(successIndex, refreshProviderIndex), /keyBusy = false;\s*updateKeyButtons\(\);/);
   assert.match(saveSource, /try\s*\{\s*await napDanhSachHangChoKey\(\{ preserveStatus: true \}\);\s*\} catch/);
   assert.match(saveSource, /try\s*\{\s*await napAgentVaModel[\s\S]*?\} catch/);
 
@@ -1371,6 +1426,194 @@ await test("T70", "Frontend Save/Test boundaries are scoped, immediate and secre
     source.server,
     /saveCurrentOwnerCredential\([\s\S]*?await aiChat\.refreshConfig\(\);\s*res\.json\(\{ ok: true, providerId: saved\.providerId/
   );
+});
+
+await test("T71", "Explicit Test deadline starts at entry and provider pre-validation is absent", () => {
+  const start = source.owner.indexOf("export async function testCurrentOwnerCredential");
+  const end = source.owner.indexOf("export async function withCurrentOwnerCredentialRead", start);
+  const testSource = source.owner.slice(start, end);
+  const clockIndex = testSource.indexOf("const startedAt = Date.now()");
+  const canonicalIndex = testSource.indexOf("const owner = canonicalOwner");
+  assert.ok(clockIndex >= 0 && clockIndex < canonicalIndex);
+  assert.match(testSource, /const deadlineAt = startedAt \+ 20_000/);
+  assert.doesNotMatch(testSource, /validateProviderUnlocked|getProviderState/);
+  assert.match(testSource, /testProviderKey\(config, provider, \{ deadlineAt \}\)/);
+  assert.equal(opencode.PROVIDER_TEST_TIMEOUT_MS, 20000);
+  assert.equal(opencode.CREDENTIAL_TEST_CLEANUP_RESERVE_MS, 500);
+});
+
+await test("T72", "/config/providers hang is bounded by remaining explicit-Test deadline", async () => {
+  await activate("B");
+  const start = fake.calls.length;
+  const startedAt = Date.now();
+  fake.fetchOverride = (call, options) => call.pathname === "/config/providers"
+    ? abortableDelay(0, null, options.signal, { hang: true })
+    : undefined;
+  try {
+    await withCallTimeoutCapture(() => assert.rejects(
+      opencode.testProviderKey(CONFIG, "provider-x", { deadlineAt: startedAt + 80 }),
+      (error) => error.code === "TIMEOUT"
+    ));
+  } finally {
+    fake.fetchOverride = null;
+  }
+  const elapsed = Date.now() - startedAt;
+  const calls = fake.calls.slice(start);
+  const catalog = calls.find((call) => call.pathname === "/config/providers");
+  assert.ok(elapsed < 500);
+  assert.ok(catalog.timeoutMs > 0 && catalog.timeoutMs <= 80);
+  assert.equal(calls.some((call) => call.pathname === "/session"), false);
+  assert.equal(calls.some(
+    (call) => call.method === "DELETE" && /^\/session\/[^/]+$/.test(call.pathname)
+  ), false);
+});
+
+await test("T73", "Session create and message probe receive only remaining deadline budget", async () => {
+  await activate("B");
+  const start = fake.calls.length;
+  let delayedSessionId = null;
+  fake.fetchOverride = (call, options) => {
+    if (call.pathname === "/config/providers") {
+      return abortableDelay(
+        30,
+        json({ providers: providersForContext(contextFor(call.directory)) }),
+        options.signal
+      );
+    }
+    if (call.pathname === "/session" && call.method === "POST") {
+      delayedSessionId = `session-${fake.nextSession++}`;
+      fake.sessions.set(delayedSessionId, { directory: call.directory });
+      return abortableDelay(40, json({ id: delayedSessionId }), options.signal);
+    }
+    return undefined;
+  };
+  try {
+    const result = await withCallTimeoutCapture(() => opencode.testProviderKey(
+      CONFIG,
+      "provider-x",
+      { deadlineAt: Date.now() + 800 }
+    ));
+    assert.equal(result.daThu, 1);
+  } finally {
+    fake.fetchOverride = null;
+    if (delayedSessionId) fake.sessions.delete(delayedSessionId);
+  }
+  const calls = fake.calls.slice(start);
+  const catalog = calls.find((call) => call.pathname === "/config/providers");
+  const create = calls.find((call) => call.pathname === "/session" && call.method === "POST");
+  const probe = calls.find((call) => /\/session\/[^/]+\/message$/.test(call.pathname));
+  assert.ok(catalog.timeoutMs <= 800);
+  assert.ok(create.timeoutMs <= 300);
+  assert.ok(create.timeoutMs > 0 && create.timeoutMs < catalog.timeoutMs);
+  assert.ok(probe.timeoutMs > 0 && probe.timeoutMs < create.timeoutMs);
+});
+
+await test("T74", "Hanging probe returns TIMEOUT, tries one model and awaits cleanup", async () => {
+  await activate("B");
+  const start = fake.calls.length;
+  const startedAt = Date.now();
+  const deadlineAt = startedAt + 650;
+  fake.fetchOverride = (call, options) => /\/session\/[^/]+\/message$/.test(call.pathname)
+    ? abortableDelay(0, null, options.signal, { hang: true })
+    : undefined;
+  try {
+    await withCallTimeoutCapture(() => assert.rejects(
+      opencode.testProviderKey(CONFIG, "provider-x", { deadlineAt }),
+      (error) => error.code === "TIMEOUT"
+    ));
+  } finally {
+    fake.fetchOverride = null;
+  }
+  const calls = fake.calls.slice(start);
+  const probes = calls.filter((call) => /\/session\/[^/]+\/message$/.test(call.pathname));
+  const cleanup = calls.find((call) => call.method === "DELETE" && /^\/session\/[^/]+$/.test(call.pathname));
+  assert.ok(Date.now() - startedAt < 650);
+  assert.equal(probes.length, 1);
+  assert.ok(probes[0].timeoutMs > 0 && probes[0].timeoutMs <= 150);
+  assert.ok(cleanup);
+  assert.equal(cleanup.activeReaders, 1);
+  assert.ok(cleanup.timeoutMs > 0);
+  assert.ok(cleanup.timeoutMs <= Math.max(0, deadlineAt - cleanup.recordedAt) + 5);
+});
+
+await test("T75", "Slow cleanup stays awaited inside credential READ and remains deadline-bounded", async () => {
+  await activate("B");
+  const start = fake.calls.length;
+  const startedAt = Date.now();
+  const deadlineAt = startedAt + 650;
+  fake.fetchOverride = (call, options) => call.method === "DELETE" && /^\/session\/[^/]+$/.test(call.pathname)
+    ? abortableDelay(0, null, options.signal, { hang: true })
+    : undefined;
+  let result;
+  try {
+    result = await withCallTimeoutCapture(() => opencode.testProviderKey(
+      CONFIG,
+      "provider-x",
+      { deadlineAt }
+    ));
+  } finally {
+    fake.fetchOverride = null;
+  }
+  const elapsed = Date.now() - startedAt;
+  const cleanup = fake.calls.slice(start).find(
+    (call) => call.method === "DELETE" && /^\/session\/[^/]+$/.test(call.pathname)
+  );
+  assert.equal(result.reply, "OK");
+  assert.ok(elapsed >= cleanup.timeoutMs - 20);
+  assert.ok(elapsed < 800);
+  assert.ok(cleanup.timeoutMs > 0);
+  assert.ok(cleanup.timeoutMs <= Math.max(0, deadlineAt - cleanup.recordedAt) + 5);
+  assert.equal(cleanup.activeReaders, 1);
+  assert.equal(opencode.credentialPlaneState().lock.activeReaders, 0);
+});
+
+await test("T76", "Explicit Test error-code delta is characterized without taxonomy remapping", async () => {
+  await activate("A");
+  await assert.rejects(
+    ownerCredentials.testCurrentOwnerCredential("A", "provider-y", { config: CONFIG }),
+    (error) => error.code === "CREDENTIAL_NOT_SAVED"
+  );
+  await assert.rejects(
+    ownerCredentials.testCurrentOwnerCredential("A", "provider-unknown", { config: CONFIG }),
+    (error) => error.code === "CREDENTIAL_NOT_SAVED"
+  );
+
+  await activate("B");
+  fake.fetchOverride = (call) => call.pathname === "/config/providers"
+    ? json({ providers: [] })
+    : undefined;
+  try {
+    await assert.rejects(
+      ownerCredentials.testCurrentOwnerCredential("B", "provider-x", { config: CONFIG }),
+      (error) => error.code === "PROVIDER_UNAVAILABLE"
+    );
+  } finally {
+    fake.fetchOverride = null;
+  }
+});
+
+await test("T77", "Hanging /provider is absent from explicit Test path (F5-H)", async () => {
+  await activate("B");
+  const start = fake.calls.length;
+  const startedAt = Date.now();
+  fake.fetchOverride = (call, options) => call.pathname === "/provider"
+    ? abortableDelay(0, null, options.signal, { hang: true })
+    : undefined;
+  try {
+    const result = await withCallTimeoutCapture(() => ownerCredentials.testCurrentOwnerCredential(
+      "B",
+      "provider-x",
+      { config: CONFIG }
+    ));
+    assert.equal(result.daThu, 1);
+  } finally {
+    fake.fetchOverride = null;
+  }
+  const calls = fake.calls.slice(start);
+  assert.equal(calls.filter((call) => call.pathname === "/provider").length, 0);
+  const catalog = calls.find((call) => call.pathname === "/config/providers");
+  assert.ok(catalog.timeoutMs > 0 && catalog.timeoutMs <= 20000);
+  assert.ok(Date.now() - startedAt < 500);
 });
 
 const failed = results.filter((result) => !result.pass);

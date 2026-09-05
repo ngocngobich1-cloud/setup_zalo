@@ -902,6 +902,9 @@ export const CONFIG_TABS = [
             detail: { section: "api-key", providerId },
           }));
 
+          keyBusy = false;
+          updateKeyButtons();
+
           // Persisted save da PASS. Cac refresh UI phu chay sau boundary nay va
           // khong duoc phep bien ket qua Save thanh failure.
           try {
