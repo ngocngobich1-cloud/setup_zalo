@@ -106,7 +106,9 @@ function sqliteClose(database) {
 
 function sourceProof() {
   const server = fs.readFileSync(path.join(REPO, "server.js"), "utf8");
-  const scheduler = fs.readFileSync(path.join(REPO, "lib", "scheduler.js"), "utf8");
+  const scheduler = fs
+    .readFileSync(path.join(REPO, "lib", "scheduler.js"), "utf8")
+    .replace(/\r\n?/g, "\n");
   const emailCheck = fs.readFileSync(path.join(REPO, "lib", "email-check.js"), "utf8");
   const aiChat = fs.readFileSync(path.join(REPO, "lib", "ai-chat.js"), "utf8");
   const adminCommand = fs.readFileSync(path.join(REPO, "lib", "admin-command.js"), "utf8");
@@ -345,6 +347,9 @@ async function behaviorProof(tempDir) {
 
   const db = await import(pathToFileURL(path.join(REPO, "lib", "db.js")).href);
   const aiChat = await import(pathToFileURL(path.join(REPO, "lib", "ai-chat.js")).href);
+  const ownerCredentials = await import(
+    pathToFileURL(path.join(REPO, "lib", "owner-credentials.js")).href
+  );
   const adminCommand = await import(pathToFileURL(path.join(REPO, "lib", "admin-command.js")).href);
   const customerMemory = await import(pathToFileURL(path.join(REPO, "lib", "customer-memory.js")).href);
   const emailCheck = await import(pathToFileURL(path.join(REPO, "lib", "email-check.js")).href);
@@ -676,20 +681,64 @@ async function behaviorProof(tempDir) {
   const runtimeMessages = [];
   let runtimeSessionNumber = 0;
   let localRuntimeRequests = 0;
+  const runtimeAuth = new Map();
+  const runtimeAuthContexts = new Map();
+  const fixtureProvider = {
+    id: "fixture",
+    name: "STAB-04 fixture provider",
+    models: {
+      stab04b1: {
+        name: "STAB-04 fixture model",
+        capabilities: { input: { text: true }, output: { text: true } },
+        limit: { context: 16_000 },
+      },
+    },
+  };
+  const authForDirectory = (directory) => {
+    if (directory === "__default__") return runtimeAuth;
+    if (!runtimeAuthContexts.has(directory)) {
+      runtimeAuthContexts.set(directory, new Map(runtimeAuth));
+    }
+    return runtimeAuthContexts.get(directory);
+  };
   const localRuntime = http.createServer(async (req, res) => {
     localRuntimeRequests += 1;
     let body = "";
     for await (const chunk of req) body += chunk;
     const payload = body ? JSON.parse(body) : {};
+    const requestUrl = new URL(req.url, "http://127.0.0.1");
+    const pathname = requestUrl.pathname;
+    const directory = requestUrl.searchParams.get("directory") || "__default__";
     res.setHeader("Content-Type", "application/json");
 
-    if (req.method === "POST" && req.url === "/session") {
+    if (req.method === "GET" && pathname === "/provider") {
+      res.end(JSON.stringify({
+        all: [fixtureProvider],
+        default: {},
+        connected: [...authForDirectory(directory).keys()],
+      }));
+      return;
+    }
+
+    if (req.method === "PUT" && pathname === "/auth/fixture") {
+      runtimeAuth.set("fixture", String(payload.key || ""));
+      res.end(JSON.stringify(true));
+      return;
+    }
+
+    if (req.method === "DELETE" && pathname === "/auth/fixture") {
+      runtimeAuth.delete("fixture");
+      res.end(JSON.stringify(true));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/session") {
       runtimeSessionNumber += 1;
       res.end(JSON.stringify({ id: `stab04b1-session-${runtimeSessionNumber}` }));
       return;
     }
 
-    if (req.method === "POST" && /^\/session\/[^/]+\/message$/.test(req.url)) {
+    if (req.method === "POST" && /^\/session\/[^/]+\/message$/.test(pathname)) {
       const text = (payload.parts || [])
         .filter((part) => part?.type === "text")
         .map((part) => String(part.text || ""))
@@ -707,7 +756,7 @@ async function behaviorProof(tempDir) {
       return;
     }
 
-    if (req.method === "DELETE" && /^\/session\/[^/]+$/.test(req.url)) {
+    if (req.method === "DELETE" && /^\/session\/[^/]+$/.test(pathname)) {
       res.end(JSON.stringify({ ok: true }));
       return;
     }
@@ -782,6 +831,19 @@ async function behaviorProof(tempDir) {
     }
 
     let activeOwner = OWNER_A;
+    const credentialConfig = {
+      opencodeBaseUrl: localRuntimeUrl,
+      opencodeAgent: "general",
+      opencodeModel: "fixture/stab04b1",
+    };
+    ownerCredentials.configureCurrentOwnerResolver(() => activeOwner);
+    await ownerCredentials.projectOwnerCredentials(OWNER_A, { config: credentialConfig });
+    await ownerCredentials.saveCurrentOwnerCredential(
+      OWNER_A,
+      "fixture",
+      "STAB04_OWNER_A_LOCAL_ONLY_KEY",
+      { config: credentialConfig }
+    );
     aiChat.capHinhChuTaiKhoan(() => activeOwner);
     await aiChat.loadConfig();
     customerMemory.quenTatCaPhien();
@@ -861,6 +923,13 @@ async function behaviorProof(tempDir) {
     });
 
     activeOwner = OWNER_B;
+    await ownerCredentials.projectOwnerCredentials(OWNER_B, { config: credentialConfig });
+    await ownerCredentials.saveCurrentOwnerCredential(
+      OWNER_B,
+      "fixture",
+      "STAB04_OWNER_B_LOCAL_ONLY_KEY",
+      { config: credentialConfig }
+    );
     aiChat.capHinhChuTaiKhoan(() => activeOwner);
     await aiChat.loadConfig();
     customerMemory.quenTatCaPhien();

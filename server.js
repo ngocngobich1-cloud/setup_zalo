@@ -69,6 +69,8 @@ import {
 } from "./lib/zalo-service.js";
 import * as aiChat from "./lib/ai-chat.js";
 import * as ownerCredentials from "./lib/owner-credentials.js";
+import { recoverAdminClarifications } from "./lib/admin-clarification.js";
+import { sendAdminNotification } from "./lib/admin-notification.js";
 import {
   WEB_PROBE_STATES,
   capabilityRoutingEnabled,
@@ -104,6 +106,7 @@ activityLog.setEmitter((entry) => io.emit("activity-log", entry));
 
 // DB phai san sang TRUOC khi dung session middleware, vi khoa ky session doc tu DB.
 await initDb();
+await recoverAdminClarifications();
 
 // Khoa ky session sinh MOT LAN roi luu vao DB. Truoc day sinh ngau nhien moi lan
 // khoi dong nen restart la moi nguoi bi dang xuat.
@@ -2039,12 +2042,16 @@ server.listen(port, "0.0.0.0", async () => {
   const { batDauScheduler, capHinhScheduler } = await import("./lib/scheduler.js");
   const { capHinhBaoAdmin } = await import("./lib/email-check.js");
   const { getAdminZalo } = await import("./lib/db.js");
-
   // Bao rieng cho nick admin. Khong dat admin thi im lang - van con tab LOG.
   const nhanRiengChoAdmin = async (ownerUid, text) => {
     const admin = await getAdminZalo(ownerUid);
     if (!admin?.uid) return;
-    await sendChatMessage({ threadId: admin.uid, threadType: 0, text });
+    await sendAdminNotification({
+      ownerUid,
+      text,
+      admin,
+      send: () => sendChatMessage({ threadId: admin.uid, threadType: 0, text }),
+    });
   };
 
   const { capHinhTaoNhac, capHinhBinhChon, capHinhGhiChu, capHinhTimNguoi, capHinhNhom, capHinhNhan } =
