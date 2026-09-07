@@ -854,15 +854,21 @@ input {
 }
 
 #message-input {
+  width: auto;
   min-width: 0;
-  height: 36px;
-  min-height: 36px;
-  padding: 0 13px;
+  height: 46px;
+  min-height: 46px;
+  max-height: 156px;
+  padding-block: 11px;
+  padding-left: 13px;
   border: 1px solid #e5e9f0;
   border-radius: 20px;
   background: #f5f7fa;
   color: var(--text);
-  font-size: 15px;
+  font-size: 16px;
+  line-height: 22px;
+  overflow-y: hidden;
+  resize: none;
 }
 
 #message-input:focus {
@@ -912,6 +918,7 @@ input {
 .chat-panel .send-button {
   grid-column: 4;
   grid-row: 3;
+  align-self: end;
   margin: 9px 12px 9px 0;
 }
 
@@ -1158,23 +1165,21 @@ input {
   .chat-panel #btn-chat-image {
     grid-column: 1;
     grid-row: 3;
+    align-self: end;
     margin: 0;
   }
 
   .chat-panel #btn-chat-attach {
     grid-column: 2;
     grid-row: 3;
+    align-self: end;
     margin: 0;
   }
 
   .chat-panel #message-input {
     grid-column: 3;
     grid-row: 3;
-    height: 40px;
-    min-height: 40px;
-    padding: 0 13px;
     border-radius: 20px;
-    font-size: 15px;
     margin: 0;
   }
 
@@ -1186,6 +1191,7 @@ input {
   .chat-panel .send-input-row .send-button {
     grid-column: 4;
     grid-row: 3;
+    align-self: end;
     min-width: 44px;
     width: 44px;
     height: 44px;
@@ -4525,8 +4531,9 @@ textarea {
   grid-column: 3;
   grid-row: 3;
   justify-self: end;
-  align-self: center;
+  align-self: end;
   margin-right: 8px;
+  margin-bottom: 16px;
 }
 
 /* Cho nut sticker cho trong, khong de chu chay ra sau no. */
@@ -4773,6 +4780,7 @@ textarea {
     height: 36px;
     min-width: 36px;
     margin-right: 4px;
+    margin-bottom: 4px;
   }
 
   .chat-sticker-button .chat-tool-icon { width: 22px; height: 22px; }
@@ -4834,4 +4842,18 @@ textarea {
   .msg-reaction-option { width: 44px; height: 44px; font-size: 23px; }
   .msg-action-item { padding: 13px 10px; font-size: 15px; }
   .forward-panel { max-height: 80vh; }
+}
+
+@media (max-width: 760px) {
+  .thread-search,
+  #training-text,
+  #module-training .canonical-config-section input,
+  #module-training .canonical-config-section select,
+  #module-training .canonical-config-section textarea,
+  .tools-panel input,
+  .tools-panel select,
+  .auth-input,
+  .forward-search {
+    font-size: 16px;
+  }
 }

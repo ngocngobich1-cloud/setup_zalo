@@ -116,6 +116,13 @@ function anBotDangSoan() {
   els.chatPanel?.classList.remove("bot-is-typing");
 }
 
+function dongBoChieuCaoComposer() {
+  const composerHeight = Number(els.form?.getBoundingClientRect?.().height || els.form?.offsetHeight || 0);
+  if (composerHeight > 0 && els.chatPanel) {
+    els.chatPanel.style.setProperty("--bot-typing-composer-height", `${Math.ceil(composerHeight)}px`);
+  }
+}
+
 function hienBotDangSoan(ownerUid, threadId) {
   const owner = String(ownerUid || "");
   const hoiThoai = String(threadId || "");
@@ -123,10 +130,7 @@ function hienBotDangSoan(ownerUid, threadId) {
 
   if (botTypingTtl !== null) window.clearTimeout(botTypingTtl);
   botTypingIdentity = `${owner}\u0000${hoiThoai}`;
-  const composerHeight = Number(els.form?.getBoundingClientRect?.().height || els.form?.offsetHeight || 0);
-  if (composerHeight > 0) {
-    els.chatPanel.style.setProperty("--bot-typing-composer-height", `${Math.ceil(composerHeight)}px`);
-  }
+  dongBoChieuCaoComposer();
   els.botTypingIndicator.textContent = "Đang soạn tin...";
   els.botTypingIndicator?.classList.remove("hidden");
   els.chatPanel?.classList.add("bot-is-typing");
@@ -917,6 +921,7 @@ async function sendMessage(event) {
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || "Không gửi được tin nhắn.");
     els.input.value = "";
+    coGianOSoanTin();
     datLaiNhipGoPhim();
     if (attachment === tepChat) boTepChat();
   } catch (error) {
@@ -1683,8 +1688,24 @@ document.addEventListener("click", (event) => {
 
 /** Zalo tu tat dau ba cham sau vai giay; nhac lai day hon 3 giay mot lan la spam. */
 const NHIP_GO_PHIM_MS = 3000;
+const COMPOSER_MIN = 46;
+const COMPOSER_MAX = 156;
+const COMPOSER_VIEN = 2;
 let mocGoPhimCuoi = 0;
 let composerDangCoChu = false;
+
+function coGianOSoanTin() {
+  const o = els.input;
+  if (!o) return;
+
+  o.style.height = "auto";
+  const chieuCaoNoiDung = o.scrollHeight + COMPOSER_VIEN;
+  const cao = Math.min(Math.max(chieuCaoNoiDung, COMPOSER_MIN), COMPOSER_MAX);
+  o.style.height = `${cao}px`;
+  o.style.overflowY = cao >= COMPOSER_MAX && chieuCaoNoiDung > COMPOSER_MAX ? "auto" : "hidden";
+
+  if (els.chatPanel?.classList.contains("bot-is-typing")) dongBoChieuCaoComposer();
+}
 
 function datLaiNhipGoPhim() {
   mocGoPhimCuoi = 0;
@@ -1716,8 +1737,20 @@ function thuBaoDangSoan() {
   }).catch(() => {});
 }
 
-els.input?.addEventListener("input", thuBaoDangSoan);
+els.input?.addEventListener("input", () => {
+  coGianOSoanTin();
+  thuBaoDangSoan();
+});
+els.input?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  if (event.isComposing || event.keyCode === 229) return;
+  if (isMobileInbox() || event.shiftKey) return;
+
+  event.preventDefault();
+  els.form.requestSubmit();
+});
 els.input?.addEventListener("blur", datLaiNhipGoPhim);
+coGianOSoanTin();
 
 /* --- DA XEM: tu dong, va chi khi nguoi dung THAT SU dang nhin --- */
 
