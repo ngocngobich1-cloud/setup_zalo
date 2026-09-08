@@ -170,7 +170,9 @@
                   <circle cx="11" cy="11" r="6.5" />
                   <path d="m20 20-3.6-3.6" />
                 </svg>
-                <input id="thread-search" class="thread-search" placeholder="Tìm kiếm" autocomplete="off" />
+                <input id="thread-search" class="thread-search" type="search" name="conversation-search"
+                  placeholder="Tìm kiếm" autocomplete="off" autocapitalize="none" spellcheck="false"
+                  inputmode="search" aria-label="Tìm kiếm hội thoại" />
               </div>
               <ul id="threads" class="threads"></ul>
               <p id="thread-empty" class="empty-hint">Chua co cuoc tro chuyen...</p>
@@ -265,8 +267,10 @@
                       <button id="btn-forward-close" class="forward-close" type="button"
                         aria-label="Đóng">×</button>
                     </header>
-                    <input id="forward-search" class="forward-search" placeholder="Tìm cuộc trò chuyện…"
-                      autocomplete="off" />
+                    <input id="forward-search" class="forward-search" type="search"
+                      name="forward-conversation-search" placeholder="Tìm cuộc trò chuyện…" autocomplete="off"
+                      autocapitalize="none" spellcheck="false" inputmode="search"
+                      aria-label="Tìm kiếm hội thoại để chuyển tiếp" />
                     <div id="forward-list" class="forward-list"></div>
                   </div>
                 </div>
