@@ -30,6 +30,7 @@ const ui = {
 
 const state = { loaded: false, loading: false, syncing: false, page: 1, totalPages: 1 };
 let searchTimer = null;
+let listRequestSeq = 0;
 
 function text(tag, value, className = "") {
   const node = document.createElement(tag);
@@ -45,10 +46,14 @@ function money(value) {
 }
 
 function date(value, withTime = false) {
-  if (!Number.isFinite(Number(value))) return "—";
+  if (value === null || value === undefined || value === "" || value === 0 || value === "0") return "—";
+  const milliseconds = Number(value);
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return "—";
+  const parsed = new Date(milliseconds);
+  if (!Number.isFinite(parsed.getTime())) return "—";
   return new Intl.DateTimeFormat("vi-VN", withTime
     ? { dateStyle: "short", timeStyle: "short" }
-    : { dateStyle: "short" }).format(new Date(Number(value)));
+    : { dateStyle: "short" }).format(parsed);
 }
 
 async function json(url, options) {
@@ -58,10 +63,10 @@ async function json(url, options) {
   return body;
 }
 
-function queryString() {
+function queryString(page = state.page) {
   const [sort, dir] = ui.sort.value.split(":");
   const params = new URLSearchParams({
-    page: String(state.page),
+    page: String(page),
     pageSize: ui.pageSize.value,
     sort,
     dir,
@@ -131,6 +136,7 @@ function renderList(data) {
   ui.tableBody.replaceChildren(...data.items.map(makeRow));
   ui.cards.replaceChildren(...data.items.map(makeCard));
   ui.empty.classList.toggle("hidden", data.items.length > 0);
+  state.page = data.page;
   state.totalPages = data.totalPages;
   ui.pageLabel.textContent = `Trang ${data.page} / ${data.totalPages} · ${data.total} khách hàng`;
   ui.previous.disabled = data.page <= 1;
@@ -143,18 +149,20 @@ function renderList(data) {
   fillSelect(ui.stage, data.filters?.stages || [], "Tình trạng");
 }
 
-async function loadList() {
-  if (state.loading) return;
+async function loadList(targetPage = state.page) {
+  const requestSeq = ++listRequestSeq;
   state.loading = true;
   ui.message.textContent = "Đang tải dữ liệu…";
   try {
-    const data = await json(`/api/data/customers?${queryString()}`);
+    const data = await json(`/api/data/customers?${queryString(targetPage)}`);
+    if (requestSeq !== listRequestSeq) return;
     renderList(data);
     ui.message.textContent = "";
   } catch (error) {
+    if (requestSeq !== listRequestSeq) return;
     ui.message.textContent = error.message;
   } finally {
-    state.loading = false;
+    if (requestSeq === listRequestSeq) state.loading = false;
   }
 }
 
@@ -162,11 +170,15 @@ async function loadStatus() {
   try {
     const data = await json("/api/data/sync-status");
     const run = data.run;
-    ui.lastSync.textContent = run?.finished_at ? date(run.finished_at, true)
-      : data.status === "INTERRUPTED" ? "Bị gián đoạn" : "Chưa đồng bộ";
-    ui.received.textContent = run ? String(run.received_count) : "—";
-    ui.saved.textContent = run ? String(run.applied_count) : "—";
-    ui.skipped.textContent = run ? String(run.skipped_count) : "—";
+    if (data.status === "NEVER_RUN") ui.lastSync.textContent = "Chưa đồng bộ";
+    else if (data.status === "RUNNING") ui.lastSync.textContent = "Đang đồng bộ…";
+    else if (data.status === "INTERRUPTED") ui.lastSync.textContent = "Bị gián đoạn";
+    else if (data.status === "FAILED") ui.lastSync.textContent = "Đồng bộ thất bại";
+    else ui.lastSync.textContent = run?.finished_at ? date(run.finished_at, true) : "Chưa đồng bộ";
+    const completedRun = data.status === "COMPLETED" ? run : null;
+    ui.received.textContent = completedRun ? String(completedRun.received_count) : "—";
+    ui.saved.textContent = completedRun ? String(completedRun.applied_count) : "—";
+    ui.skipped.textContent = completedRun ? String(completedRun.skipped_count) : "—";
     ui.totalCustomers.textContent = String(data.total_customers || 0);
     if (!state.syncing) {
       ui.sync.disabled = data.status === "RUNNING";
@@ -185,9 +197,8 @@ async function syncNow() {
   ui.message.textContent = "Đang lấy dữ liệu từ Website…";
   try {
     await json("/api/data/sync", { method: "POST" });
-    state.page = 1;
     ui.message.textContent = "Đồng bộ Website hoàn tất.";
-    await Promise.all([loadList(), loadStatus()]);
+    await Promise.all([loadList(1), loadStatus()]);
   } catch (error) {
     ui.message.textContent = error.message;
     await loadStatus();
@@ -248,14 +259,14 @@ function closeDetail() {
 }
 
 ui.sync?.addEventListener("click", syncNow);
-ui.toolbar?.addEventListener("change", () => { state.page = 1; void loadList(); });
+ui.toolbar?.addEventListener("change", () => { void loadList(1); });
 ui.search?.addEventListener("input", () => {
   window.clearTimeout(searchTimer);
-  searchTimer = window.setTimeout(() => { state.page = 1; void loadList(); }, 250);
+  searchTimer = window.setTimeout(() => { void loadList(1); }, 250);
 });
-ui.pageSize?.addEventListener("change", () => { state.page = 1; void loadList(); });
-ui.previous?.addEventListener("click", () => { if (state.page > 1) { state.page--; void loadList(); } });
-ui.next?.addEventListener("click", () => { if (state.page < state.totalPages) { state.page++; void loadList(); } });
+ui.pageSize?.addEventListener("change", () => { void loadList(1); });
+ui.previous?.addEventListener("click", () => { if (state.page > 1) void loadList(state.page - 1); });
+ui.next?.addEventListener("click", () => { if (state.page < state.totalPages) void loadList(state.page + 1); });
 document.querySelector(".data-results")?.addEventListener("click", (event) => {
   const item = event.target.closest("[data-customer-id]");
   if (item) void openDetail(item.dataset.customerId);

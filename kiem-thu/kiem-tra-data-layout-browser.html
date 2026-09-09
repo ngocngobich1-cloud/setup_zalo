@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Data stabilization browser geometry</title>
+  <link rel="stylesheet" href="../public/style.css" />
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; }
+    #harness { width: 100%; height: 720px; }
+    #result { position: fixed; inset: 0; z-index: 1000; margin: 0; padding: 12px; overflow: auto; background: white; color: black; font: 12px/1.4 monospace; }
+  </style>
+</head>
+<body>
+  <div id="harness">
+    <div class="data-panel">
+      <header class="data-header">
+        <button class="mobile-menu-button" type="button" aria-label="Mở menu"></button>
+        <div class="data-heading"><h2>Data khách hàng</h2><p>Dữ liệu cục bộ đã đồng bộ từ Website.</p></div>
+        <button class="primary-button" type="button">Đồng bộ ngay</button>
+      </header>
+      <section class="data-sync-status">
+        <span><small>Nguồn</small><strong>Website</strong></span>
+        <span><small>Đồng bộ gần nhất</small><strong>1/1/2026</strong></span>
+        <span><small>Tổng nhận</small><strong>50</strong></span>
+        <span><small>Đã lưu</small><strong>50</strong></span>
+        <span><small>Bỏ qua</small><strong>0</strong></span>
+        <span><small>Tổng khách hàng</small><strong>50</strong></span>
+      </section>
+      <form id="data-toolbar" class="data-toolbar">
+        <input id="data-search" type="search" placeholder="Tìm theo tên, số điện thoại hoặc email" />
+        <select><option>Sản phẩm</option></select>
+        <div class="data-date-filter"><input type="date" disabled /><input type="date" disabled /></div>
+        <select><option>Tình trạng</option></select>
+        <select><option>Tên A–Z</option></select>
+      </form>
+      <p id="data-date-note" class="data-date-note">Website chưa có dữ liệu ngày mua đã đồng bộ cho các bản ghi này.</p>
+      <p id="data-message" class="data-message"></p>
+      <div class="data-results">
+        <div class="data-table-wrap"><table class="data-table"><thead><tr><th>Tên khách hàng</th><th>Số điện thoại</th><th>Email</th><th>Sản phẩm</th><th>Ngày mua</th><th>Tình trạng</th><th>Tổng đã chi</th></tr></thead><tbody id="rows"></tbody></table></div>
+        <div class="data-cards" id="cards"></div>
+        <p class="data-empty hidden" id="empty">Chưa có dữ liệu khách hàng phù hợp.</p>
+      </div>
+      <footer class="data-pagination">
+        <label>Hiển thị <select><option>50</option></select></label>
+        <span id="page-label">Trang 1 / 1</span>
+        <button class="secondary-button">Trước</button><button class="secondary-button">Sau</button>
+      </footer>
+    </div>
+  </div>
+  <script>
+    const panel = document.querySelector(".data-panel");
+    const note = document.querySelector("#data-date-note");
+    const message = document.querySelector("#data-message");
+    const results = document.querySelector(".data-results");
+    const rows = document.querySelector("#rows");
+    const cards = document.querySelector("#cards");
+    const empty = document.querySelector("#empty");
+    const pageLabel = document.querySelector("#page-label");
+
+    function fill(count) {
+      rows.replaceChildren();
+      cards.replaceChildren();
+      for (let index = 0; index < count; index++) {
+        const tr = document.createElement("tr");
+        for (const value of [`Khách ${index + 1}`, "0900000000", "test@example.com", "Sản phẩm", "—", "STAGE_03", "1.000 ₫"]) {
+          const td = document.createElement("td"); td.textContent = value; tr.append(td);
+        }
+        rows.append(tr);
+        const card = document.createElement("button");
+        card.className = "data-card"; card.textContent = `Khách ${index + 1}`; cards.append(card);
+      }
+      empty.classList.toggle("hidden", count > 0);
+    }
+
+    async function frame() {
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    }
+
+    async function measure(name, { noteVisible, count, pages = 1, error = "" }) {
+      note.classList.toggle("hidden", !noteVisible);
+      message.textContent = error;
+      fill(count);
+      pageLabel.textContent = `Trang 1 / ${pages}`;
+      await frame();
+      const messageBox = message.getBoundingClientRect();
+      const resultsBox = results.getBoundingClientRect();
+      const style = getComputedStyle(panel);
+      const resultStyle = getComputedStyle(results);
+      const paginationStyle = getComputedStyle(document.querySelector(".data-pagination"));
+      return {
+        name,
+        viewportWidth: innerWidth,
+        gap: Number((resultsBox.top - messageBox.bottom).toFixed(3)),
+        resultsHeight: Number(resultsBox.height.toFixed(3)),
+        resultsTop: Number(resultsBox.top.toFixed(3)),
+        messageBottom: Number(messageBox.bottom.toFixed(3)),
+        tracks: style.gridTemplateRows,
+        resultsGridRow: resultStyle.gridRowStart,
+        paginationGridRow: paginationStyle.gridRowStart,
+        noteDisplay: getComputedStyle(note).display,
+        inputFontSize: getComputedStyle(document.querySelector("#data-search")).fontSize,
+      };
+    }
+
+    addEventListener("load", async () => {
+      const cases = [
+        ["note-visible-0", { noteVisible: true, count: 0 }],
+        ["note-visible-1", { noteVisible: true, count: 1 }],
+        ["note-visible-few", { noteVisible: true, count: 5 }],
+        ["note-visible-full", { noteVisible: true, count: 50 }],
+        ["note-visible-multi", { noteVisible: true, count: 50, pages: 2 }],
+        ["note-hidden-0", { noteVisible: false, count: 0 }],
+        ["note-hidden-1", { noteVisible: false, count: 1 }],
+        ["note-hidden-few", { noteVisible: false, count: 5 }],
+        ["note-hidden-full", { noteVisible: false, count: 50 }],
+        ["message-visible", { noteVisible: true, count: 1, error: "Lỗi tổng hợp được inject để kiểm tra message row tăng tự nhiên và không chiếm flexible track." }],
+      ];
+      const measurements = [];
+      for (const [name, options] of cases) measurements.push(await measure(name, options));
+      const failures = measurements.filter((item) => item.gap < -0.5 || item.gap >= 4 || item.resultsHeight <= 0 || item.resultsGridRow !== "6" || item.paginationGridRow !== "7");
+      const mode = innerWidth <= 760 ? "mobile" : "desktop";
+      const fontFailure = mode === "mobile" && measurements.some((item) => Number.parseFloat(item.inputFontSize) < 16);
+      const output = { mode, pass: failures.length === 0 && !fontFailure, failures, measurements };
+      const pre = document.createElement("pre"); pre.id = "result"; pre.textContent = JSON.stringify(output, null, 2); document.body.append(pre);
+      document.title = `DATA_LAYOUT_${mode.toUpperCase()}_${output.pass ? "PASS" : "FAIL"}`;
+    });
+  </script>
+</body>
+</html>
