@@ -4,6 +4,7 @@ import { dinhDangDungLuong, laAnhZalo, phanLoaiMediaTinNhan } from "./chat-media
 import { napEmail } from "./email.js";
 import { napZoom } from "./zoom.js";
 import { napWebsite } from "./website.js";
+import { napData } from "./data.js";
 import {
   datManHinhHuanLuyen,
   dongBoTrangThaiZalo,
@@ -1215,6 +1216,7 @@ function chonPhanHe(target, options = {}) {
   // Nap lan dau khi thuc su mo phan he, khong goi OpenCode ngay luc tai trang.
   void datManHinhHuanLuyen(target === "training", options);
   if (target === "training") napHuanLuyen();
+  if (target === "data") napData();
   // Cau hinh Zoho gio nam trong phan he Cong cu (khoa "note"), khong con phan he
   // Email rieng nua. Khoa van la "note" vi no da nam trong hop dong dieu huong.
   if (target === "note") {

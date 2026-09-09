@@ -48,6 +48,15 @@
             </span>
             <span class="module-label">Huấn luyện bot</span>
           </button>
+          <button class="module-item" type="button" data-module="data" title="Data khách hàng" aria-label="Data khách hàng">
+            <span class="module-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <ellipse cx="12" cy="5" rx="8" ry="3" />
+                <path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7" />
+              </svg>
+            </span>
+            <span class="module-label">Data khách hàng</span>
+          </button>
           <!-- Khoa data-module van la "note": ma dieu huong trong app.js gan
                id panel theo khoa nay (module-note). Chi doi nhan va bieu tuong. -->
           <button class="module-item" type="button" data-module="note" title="Công cụ" aria-label="Công cụ">
@@ -535,6 +544,79 @@
                 </section>
                 <button id="btn-training-open-config" class="training-open-config" type="button">Xem toàn bộ cấu hình</button>
               </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="module-panel hidden" id="module-data">
+          <div class="data-panel">
+            <header class="data-header">
+              <button class="mobile-menu-button" type="button" aria-label="Mở menu">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                  <path d="M4 7h16M4 12h16M4 17h16" />
+                </svg>
+              </button>
+              <div class="data-heading">
+                <h2>Data khách hàng</h2>
+                <p>Dữ liệu cục bộ đã đồng bộ từ Website.</p>
+              </div>
+              <button id="data-sync" class="primary-button" type="button">Đồng bộ ngay</button>
+            </header>
+
+            <section class="data-sync-status" aria-label="Trạng thái đồng bộ Website">
+              <span><small>Nguồn</small><strong>Website</strong></span>
+              <span><small>Đồng bộ gần nhất</small><strong id="data-last-sync">Chưa đồng bộ</strong></span>
+              <span><small>Tổng nhận</small><strong id="data-received">—</strong></span>
+              <span><small>Đã lưu</small><strong id="data-saved">—</strong></span>
+              <span><small>Bỏ qua</small><strong id="data-skipped">—</strong></span>
+              <span><small>Tổng khách hàng</small><strong id="data-total-customers">0</strong></span>
+            </section>
+
+            <form id="data-toolbar" class="data-toolbar" role="search">
+              <input id="data-search" type="search" name="customer-data-search"
+                placeholder="Tìm theo tên, số điện thoại hoặc email" autocomplete="off"
+                autocapitalize="none" spellcheck="false" inputmode="search" />
+              <select id="data-product" aria-label="Lọc theo sản phẩm"><option value="">Sản phẩm</option></select>
+              <div class="data-date-filter">
+                <input id="data-date-from" type="date" aria-label="Ngày mua từ" disabled />
+                <input id="data-date-to" type="date" aria-label="Ngày mua đến" disabled />
+              </div>
+              <select id="data-stage" aria-label="Lọc theo tình trạng"><option value="">Tình trạng</option></select>
+              <select id="data-sort" aria-label="Sắp xếp">
+                <option value="name:asc">Tên A–Z</option>
+                <option value="name:desc">Tên Z–A</option>
+                <option value="total_spent:desc">Tổng chi cao nhất</option>
+                <option value="total_spent:asc">Tổng chi thấp nhất</option>
+              </select>
+            </form>
+            <p id="data-date-note" class="data-date-note">Website chưa có dữ liệu ngày mua đã đồng bộ cho các bản ghi này.</p>
+            <p id="data-message" class="data-message" role="status" aria-live="polite"></p>
+
+            <div class="data-results">
+              <div class="data-table-wrap">
+                <table class="data-table">
+                  <thead><tr>
+                    <th>Tên khách hàng</th><th>Số điện thoại</th><th>Email</th><th>Sản phẩm</th>
+                    <th>Ngày mua</th><th>Tình trạng</th><th>Tổng đã chi</th>
+                  </tr></thead>
+                  <tbody id="data-table-body"></tbody>
+                </table>
+              </div>
+              <div id="data-cards" class="data-cards"></div>
+              <p id="data-empty" class="data-empty hidden">Chưa có dữ liệu khách hàng phù hợp.</p>
+            </div>
+
+            <footer class="data-pagination">
+              <label>Hiển thị <select id="data-page-size"><option>25</option><option selected>50</option><option>100</option></select></label>
+              <span id="data-page-label">Trang 1 / 1</span>
+              <button id="data-prev" class="secondary-button" type="button">Trước</button>
+              <button id="data-next" class="secondary-button" type="button">Sau</button>
+            </footer>
+
+            <button id="data-detail-backdrop" class="data-detail-backdrop hidden" type="button" aria-label="Đóng chi tiết"></button>
+            <aside id="data-detail" class="data-detail hidden" aria-labelledby="data-detail-title">
+              <header><h3 id="data-detail-title">Chi tiết khách hàng</h3><button id="data-detail-close" type="button" aria-label="Đóng">×</button></header>
+              <div id="data-detail-body"></div>
             </aside>
           </div>
         </section>

@@ -1452,6 +1452,70 @@ app.get("/api/website/customers", async (_req, res) => {
   }
 });
 
+/* --- LOCAL WEBSITE DATA (authenticated by the app-wide gates above) --- */
+
+app.get("/api/data/customers", async (req, res) => {
+  try {
+    const { listWebsiteCustomers } = await import("./lib/website-query.js");
+    res.json(await listWebsiteCustomers({
+      q: req.query.q,
+      page: req.query.page,
+      pageSize: req.query.pageSize,
+      sort: req.query.sort,
+      dir: req.query.dir,
+      product: req.query.product,
+      stage: req.query.stage ?? req.query.status,
+      dateFrom: req.query.dateFrom,
+      dateTo: req.query.dateTo,
+    }));
+  } catch (error) {
+    console.error("[data-customers]", error.message);
+    res.status(500).json({ error: "Không đọc được dữ liệu khách hàng." });
+  }
+});
+
+app.get("/api/data/customers/:id", async (req, res) => {
+  try {
+    const { getWebsiteCustomerDetail } = await import("./lib/website-query.js");
+    const detail = await getWebsiteCustomerDetail(req.params.id);
+    if (!detail) return res.status(404).json({ error: "Không tìm thấy khách hàng." });
+    res.json(detail);
+  } catch (error) {
+    console.error("[data-customer-detail]", error.message);
+    res.status(500).json({ error: "Không đọc được chi tiết khách hàng." });
+  }
+});
+
+app.post("/api/data/sync", async (_req, res) => {
+  const sync = await import("./lib/website-sync.js");
+  try {
+    res.json({ ok: true, ...(await sync.syncWebsiteData()) });
+  } catch (error) {
+    if (error instanceof sync.WebsiteSyncConflictError) {
+      return res.status(409).json({ error: error.message, code: error.code });
+    }
+    const website = await import("./lib/website.js");
+    if (error instanceof website.LoiWebsite) {
+      return res.status(400).json({ error: error.message, code: error.ma });
+    }
+    console.error("[data-sync]", error.message);
+    res.status(500).json({ error: "Đồng bộ Website thất bại." });
+  }
+});
+
+app.get("/api/data/sync-status", async (_req, res) => {
+  try {
+    const [{ getWebsiteSyncStatus }, { isWebsiteSyncRunning }] = await Promise.all([
+      import("./lib/website-query.js"),
+      import("./lib/website-sync.js"),
+    ]);
+    res.json(await getWebsiteSyncStatus({ mutexHeld: isWebsiteSyncRunning() }));
+  } catch (error) {
+    console.error("[data-sync-status]", error.message);
+    res.status(500).json({ error: "Không đọc được trạng thái đồng bộ." });
+  }
+});
+
 /* --- ZOOM (Server-to-Server OAuth) ---
  *
  * Vong nay CHI lo ket noi: luu chia khoa, kiem tra, ngat. Khong co duong nao
