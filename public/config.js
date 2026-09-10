@@ -2154,6 +2154,11 @@ export const CONFIG_TABS = [
       const otpEnabled = panel.querySelector("#otp-enabled");
       const otpZalo = panel.querySelector("#otp-zalo");
       const adminZalo = panel.querySelector("#admin-zalo");
+      let adminZaloReady = false;
+      let adminZaloClear = false;
+      adminZalo.addEventListener("change", () => {
+        adminZaloClear = adminZaloReady && adminZalo.value === "";
+      });
       const otpEmail = panel.querySelector("#otp-email");
       const otpStatus = panel.querySelector("#otp-settings-status");
       const smtp = {
@@ -2172,6 +2177,8 @@ export const CONFIG_TABS = [
 
       async function napCaiDatOtp() {
         const generation = settingsOwnerGeneration;
+        adminZaloReady = false;
+        adminZaloClear = false;
         try {
           const [resSettings, resBootstrap] = await Promise.all([
             fetch("/api/auth/otp-settings"),
@@ -2224,6 +2231,7 @@ export const CONFIG_TABS = [
             adminZalo.append(opt);
           }
           adminZalo.value = data.adminZaloUid || "";
+          adminZaloReady = true;
 
           otpEnabled.checked = Boolean(data.otpEnabled);
           otpEmail.value = data.otpEmail || "";
@@ -2240,6 +2248,8 @@ export const CONFIG_TABS = [
       }
 
       invalidateAdminOwnerSink = () => {
+        adminZaloReady = false;
+        adminZaloClear = false;
         otpEnabled.checked = false;
         otpZalo.innerHTML = "<option value=''>— Chưa tải hồ sơ hiện tại —</option>";
         adminZalo.innerHTML = "<option value=''>— Chưa tải hồ sơ hiện tại —</option>";
@@ -2263,8 +2273,9 @@ export const CONFIG_TABS = [
               otpZaloThreadId: otpZalo.value,
               otpZaloLabel: otpZalo.selectedOptions[0]?.textContent || "",
               otpEmail: otpEmail.value.trim(),
-              adminZaloUid: adminZalo.value,
-              adminZaloLabel: adminZalo.selectedOptions[0]?.textContent || "",
+              adminZaloUid: adminZaloReady ? adminZalo.value : undefined,
+              adminZaloClear: adminZaloReady && adminZaloClear && adminZalo.value === "",
+              adminZaloLabel: adminZaloReady ? (adminZalo.selectedOptions[0]?.textContent || "") : undefined,
               smtp: {
                 host: smtp.host.value.trim(),
                 port: Number(smtp.port.value) || 587,

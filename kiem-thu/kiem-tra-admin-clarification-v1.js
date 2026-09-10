@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import "./node24-arm64-test-polyfills.js";
+import { splitIntoBubbles } from "../lib/message-utils.js";
+import { taoDieuPhoiHoiThoai } from "../lib/conversation-inflight.js";
 import {
   ADMIN_CLARIFICATION_STATUS as S,
   CLARIFICATION_TTL_MS,
@@ -76,6 +78,12 @@ class MemoryStore {
     if (!row) return false;
     row.latestContextBoundary = String(boundary); row.updatedAt = now; return true;
   }
+  async getRecentFailedAck(ownerUid, threadId, excludeId, createdSince) {
+    return this.copy(this.rows.find((row) => row.ownerUid === String(ownerUid)
+      && row.customerThreadId === String(threadId) && row.id !== Number(excludeId)
+      && row.status === S.ADMIN_NOTIFY_FAILED
+      && ["SENDING", "SENT"].includes(row.customerAckState) && row.createdAt >= createdSince));
+  }
   async claimAnswer(input) {
     const row = this.rows.find((item) => item.ownerUid === String(input.ownerUid)
       && item.correlationToken === input.correlationToken && item.status === S.WAITING_ADMIN
@@ -123,6 +131,226 @@ class MemoryStore {
 
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
+const fallbackCopy = "Em chưa có đủ thông tin để trả lời chính xác lúc này. Em đã ghi nhận câu hỏi của anh/chị.";
+
+test("P0 UI explicit clear is user intent; loading, invalidation and transient empty preserve", () => {
+  const source = fs.readFileSync(new URL("../public/config.js", import.meta.url), "utf8");
+  const stateStart = source.indexOf('      const adminZalo = panel.querySelector("#admin-zalo");');
+  const stateEnd = source.indexOf('      const otpEmail =', stateStart);
+  const loadStart = source.indexOf('      async function napCaiDatOtp()');
+  const loadEnd = source.indexOf('        try {', loadStart);
+  const loadedStart = source.indexOf('          adminZalo.value = data.adminZaloUid || "";', loadStart);
+  const loadedEnd = source.indexOf('          otpEnabled.checked', loadedStart);
+  const invalidateStart = source.indexOf('      invalidateAdminOwnerSink = () => {');
+  const invalidateEnd = source.indexOf('        otpEnabled.checked', invalidateStart);
+  const payloadStart = source.indexOf('              adminZaloUid: adminZaloReady');
+  const payloadEnd = source.indexOf('              smtp:', payloadStart);
+  for (const index of [stateStart, stateEnd, loadStart, loadEnd, loadedStart, loadedEnd, invalidateStart, invalidateEnd, payloadStart, payloadEnd]) assert.ok(index >= 0);
+  let change;
+  const select = { value: "", selectedOptions: [{ textContent: "Admin name" }], addEventListener: (_event, listener) => { change = listener; } };
+  const control = Function("panel", `
+    const settingsOwnerGeneration = 1;
+    ${source.slice(stateStart, stateEnd)}
+    return {
+      loading: () => { ${source.slice(source.indexOf('        const generation', loadStart), loadEnd)} },
+      loaded: (data) => { ${source.slice(loadedStart, loadedEnd)} },
+      invalidate: () => { ${source.slice(source.indexOf('        adminZaloReady', invalidateStart), invalidateEnd)} },
+      payload: () => ({ ${source.slice(payloadStart, payloadEnd)} })
+    };` )({ querySelector: () => select });
+  change(); assert.equal(control.payload().adminZaloClear, false);
+  control.loaded({ adminZaloUid: "saved-admin" });
+  select.value = ""; // Programmatic transient reset must not request clear.
+  assert.equal(control.payload().adminZaloClear, false);
+  select.value = "chosen-admin"; change();
+  assert.equal(control.payload().adminZaloUid, "chosen-admin");
+  assert.equal(control.payload().adminZaloClear, false);
+  select.value = ""; change();
+  assert.equal(control.payload().adminZaloClear, true);
+  control.loading();
+  assert.equal(control.payload().adminZaloUid, undefined);
+  assert.equal(control.payload().adminZaloClear, false);
+  control.loaded({ adminZaloUid: "saved-admin" }); select.value = ""; change();
+  control.invalidate(); change();
+  assert.equal(control.payload().adminZaloClear, false);
+  assert.equal(control.payload().adminZaloUid, undefined);
+  control.loaded({ adminZaloUid: "" });
+  assert.equal(control.payload().adminZaloClear, false);
+});
+
+// Execute the production NEED_ADMIN branch and outbound function with fake I/O.
+async function hotfixOutbound(opened, mode = "confirmed", complete = async () => {}) {
+  const logs = []; const sends = []; const completions = []; let stickers = 0;
+  let originCurrent = true; let generationCurrent = true; let typingStops = 0;
+  const message = { ...customer("hotfix-outbound"), content: "Câu hỏi", isSelf: false };
+  const branchStart = aiChatSource.indexOf("  if (result.needAdmin) {");
+  const branchEnd = aiChatSource.indexOf("\n  if (result.skipped)", branchStart);
+  assert.ok(branchStart >= 0 && branchEnd > branchStart);
+  const replyBranch = Function("openAdminClarification", "addLog", "canonicalDecisionResultLog",
+    `return async (messageObj) => { const ownerUid = "owner"; const result = { needAdmin: true };
+      ${aiChatSource.slice(branchStart, branchEnd)} };`
+  )(async () => opened, async (entry) => logs.push(entry), canonicalDecisionResultLog);
+  const zalo = fs.readFileSync(new URL("../lib/zalo-service.js", import.meta.url), "utf8");
+  const start = zalo.indexOf("async function traLoiCumTin(");
+  const end = zalo.indexOf("\nasync function handleNewIncomingMessage", start);
+  assert.ok(start >= 0 && end > start);
+  const dependencies = {
+    automaticWorkConHieuLuc: () => generationCurrent,
+    tuyChonGuiTuDong: (work) => work,
+    originConHieuLuc: () => originCurrent,
+    gopThanhMotTin: (messages) => ({ ...messages.at(-1) }),
+    chuHienTai: () => "owner",
+    guiDaXemChoTins: () => {},
+    thuThaCamXuc: async () => false,
+    batDauGoPhim: () => () => { typingStops += 1; },
+    aiChat: {
+      getConfig: () => ({}),
+      tryReply: async (_text, metadata) => {
+        const reply = mode === "normal" ? "Trả lời thông thường" : mode === "skip" ? null : await replyBranch(metadata);
+        if (mode === "origin-after-ai") originCurrent = false;
+        if (mode === "generation-after-ai") generationCurrent = false;
+        if (mode === "throw-after-metadata") throw new Error("after metadata");
+        return reply;
+      },
+    },
+    ownerCredentials: { withCurrentOwnerCredentialRead: async (_owner, _config, work) => work() },
+    ThreadType: { Group: 1, User: 0 },
+    splitIntoBubbles,
+    doi: async () => {
+      if (mode === "origin-before-bubble") originCurrent = false;
+      if (mode === "generation-before-bubble") generationCurrent = false;
+    },
+    nghiTruocBubble: () => 0,
+    sendChatMessage: async (input) => {
+      sends.push(input);
+      if (mode === "send-throw") throw new Error("provider failure");
+      return mode === "unconfirmed" ? null : { id: "confirmed-customer-message" };
+    },
+    completeAdminClarificationAck: async (...args) => { completions.push(args); return complete(...args); },
+    addLog: async (entry) => logs.push(entry),
+    thuGuiSticker: async () => { stickers += 1; },
+    console: { error: () => {} },
+  };
+  const outbound = Function(...Object.keys(dependencies), `${zalo.slice(start, end)}; return traLoiCumTin;`)(...Object.values(dependencies));
+  const coordinator = taoDieuPhoiHoiThoai({ chay: async (work, generation) => {
+    await outbound(work, { originToken: { originOwnerUid: "owner" } }, generation);
+  } });
+  await coordinator.them({ ownerUid: "owner", threadId: message.threadId, tins: [message] });
+  // A second work item must run even after failed/early-exit outbound.
+  originCurrent = true; generationCurrent = true;
+  let released = false;
+  dependencies.aiChat.tryReply = async () => { released = true; return null; };
+  await coordinator.them({ ownerUid: "owner", threadId: message.threadId, tins: [{ ...message, id: "next" }] });
+  assert.equal(released, true, "conversation queue released");
+  assert.equal(message.__adminClarificationFallback, undefined, "original inbound must not carry metadata");
+  assert.ok(typingStops > 0);
+  return { logs, sends, completions, stickers };
+}
+
+test("P0 B2/B3 F1/F2 failed notification returns row, truthful bubble, no success log or sticker", async () => {
+  for (const reason of ["ADMIN_NOT_CONFIGURED", "ADMIN_NOTIFY_NOT_CONFIRMED"]) {
+    const store = new MemoryStore();
+    configureAdminClarificationRuntime({ notifyAdmin: async () => ({ sent: false, reason }), log: async () => {} });
+    const originalQuery = store.getRecentFailedAck.bind(store);
+    store.getRecentFailedAck = async (...args) => {
+      const current = await store.getById(args[2]);
+      assert.equal(current.status, S.ADMIN_NOTIFY_FAILED);
+      assert.equal(current.customerAckState, "PENDING", "query precedes SENDING");
+      return originalQuery(...args);
+    };
+    const opened = await createAdminClarificationEngine({ store, now: () => 100_000 }).open({ ownerUid: "owner", message: customer("failure") });
+    assert.equal(opened.row.status, S.ADMIN_NOTIFY_FAILED);
+    assert.equal(opened.row.errorDetail, reason);
+    assert.equal(opened.row.customerAckState, "SENDING");
+    assert.equal(opened.acknowledgement, fallbackCopy);
+    assert.deepEqual(splitIntoBubbles(opened.acknowledgement), [fallbackCopy]);
+    const result = await hotfixOutbound(opened);
+    assert.deepEqual(result.sends.map((item) => item.text), [fallbackCopy]);
+    assert.deepEqual(result.completions, [[opened.row.id, "confirmed-customer-message", true]]);
+    assert.equal(result.stickers, 0);
+    assert.equal(result.logs.some((entry) => entry.event === "ai_need_admin"), false);
+  }
+});
+
+test("P0 B2b confirmed first fallback suppresses messages 2 and 3 with PENDING rows", async () => {
+  const store = new MemoryStore(); let clock = 100_000;
+  configureAdminClarificationRuntime({ notifyAdmin: async () => ({ sent: false, reason: "ADMIN_NOT_CONFIGURED" }) });
+  const engine = createAdminClarificationEngine({ store, now: () => clock });
+  const first = await engine.open({ ownerUid: "owner", message: customer("repeat") });
+  const result = await hotfixOutbound(first, "confirmed", async (id, messageId, confirmed) => {
+    assert.equal(confirmed, true);
+    await store.transition(id, S.ADMIN_NOTIFY_FAILED, S.ADMIN_NOTIFY_FAILED, { customerAckState: "SENT", customerAckId: messageId });
+  });
+  assert.equal(result.sends.length, 1);
+  for (const id of ["m2", "m3"]) {
+    clock += 100;
+    const next = await engine.open({ ownerUid: "owner", message: customer("repeat", id) });
+    assert.equal(next.acknowledgement, null);
+    assert.equal(next.row.customerAckState, "PENDING");
+    const suppressed = await hotfixOutbound(next);
+    assert.equal(suppressed.sends.length, 0); assert.equal(suppressed.completions.length, 0);
+  }
+});
+
+test("P0 suppression SENDING/SENT only, created_at TTL, owner/thread isolation and current exclusion", async () => {
+  const now = CLARIFICATION_TTL_MS * 3;
+  for (const state of ["SENDING", "SENT", "SEND_UNKNOWN", "PENDING"]) {
+    for (const age of [1, CLARIFICATION_TTL_MS, CLARIFICATION_TTL_MS + 1]) {
+      const store = new MemoryStore();
+      const previous = store.seed({ status: S.ADMIN_NOTIFY_FAILED, customerThreadId: "ttl", customerAckState: state, createdAt: now - age, updatedAt: now });
+      assert.equal(await store.getRecentFailedAck("owner", "ttl", previous.id, 0), null);
+      assert.equal(await store.getRecentFailedAck("other", "ttl", 0, 0), null);
+      assert.equal(await store.getRecentFailedAck("owner", "other", 0, 0), null);
+      const opened = await createAdminClarificationEngine({ store, now: () => now }).open({ ownerUid: "owner", message: customer("ttl") });
+      const suppress = ["SENDING", "SENT"].includes(state) && age <= CLARIFICATION_TTL_MS;
+      assert.equal(opened.acknowledgement, suppress ? null : fallbackCopy);
+      assert.equal(opened.row.customerAckState, suppress ? "PENDING" : "SENDING");
+    }
+  }
+});
+
+test("P0 B4/B4b every failed or early outbound exit completes SEND_UNKNOWN and releases queue", async () => {
+  for (const mode of ["send-throw", "unconfirmed", "origin-after-ai", "generation-after-ai", "origin-before-bubble", "generation-before-bubble", "throw-after-metadata"]) {
+    const opened = { opened: false, row: { id: 999 }, acknowledgement: fallbackCopy, adminClarificationFallback: true };
+    const result = await hotfixOutbound(opened, mode);
+    assert.deepEqual(result.completions, [[999, null, false]], mode);
+    assert.equal(result.stickers, 0, mode);
+  }
+});
+
+test("P0 B5/B6/B9 normal answer and SKIP preserve outbound and sticker behavior", async () => {
+  const normal = await hotfixOutbound(null, "normal");
+  assert.deepEqual(normal.sends.map((item) => item.text), ["Trả lời thông thường"]);
+  assert.equal(normal.stickers, 1); assert.equal(normal.completions.length, 0);
+  const skip = await hotfixOutbound(null, "skip");
+  assert.equal(skip.sends.length, 0); assert.equal(skip.stickers, 0); assert.equal(skip.completions.length, 0);
+});
+
+test("P0 B1/B7/B8 WAITING_ADMIN survives restart, claims and resumes; failed row cannot resume", async () => {
+  const store = new MemoryStore();
+  configureAdminClarificationRuntime({ notifyAdmin: async () => ({ sent: true, message: { id: "admin-notification" } }), scheduleResume: async () => {} });
+  const opened = await createAdminClarificationEngine({ store, now: () => 100_000 }).open({ ownerUid: "owner", message: customer("restart") });
+  const ack = await hotfixOutbound(opened);
+  assert.equal(ack.logs.filter((entry) => entry.event === "ai_need_admin").length, 1);
+  assert.deepEqual(ack.sends.map((item) => item.text), [opened.acknowledgement]);
+  assert.deepEqual(ack.completions, [[opened.row.id, "confirmed-customer-message", true]]);
+  assert.equal(ack.stickers, 1);
+  const restarted = createAdminClarificationEngine({ store, now: () => 101_000 });
+  await restarted.recover({ ownerUid: "owner" });
+  assert.equal((await store.getById(opened.row.id)).status, S.WAITING_ADMIN);
+  const claimed = await restarted.handleAdminMessage({ ownerUid: "owner", message: {
+    id: "reply-after-restart", senderId: "admin", content: `${opened.row.correlationToken} Đã xác nhận`,
+  } });
+  assert.equal(claimed.claimed, true);
+  assert.equal((await restarted.resume(opened.row.id, successfulCallbacks())).sent, true);
+  const failed = store.seed({ status: S.ADMIN_NOTIFY_FAILED, customerAckState: "SENT" });
+  const result = await restarted.resume(failed.id, successfulCallbacks({
+    generate: async () => assert.fail("failure must never generate final answer"),
+    send: async () => assert.fail("failure must never resume send"),
+  }));
+  assert.equal(result.resumed, false);
+  assert.equal((await store.getById(failed.id)).status, S.ADMIN_NOTIFY_FAILED);
+});
+
 function customer(threadId, id = "m1", threadType = 0) {
   return { id, threadId, threadType, senderId: `u-${threadId}`, senderName: threadId };
 }
@@ -678,6 +906,26 @@ test("DB-E2E additive SQLite schema, waiting uniqueness and status CAS are real"
     await import("./sqlite3-node24-test-register.js");
     const db = await import(`../lib/db.js?admin-clarification-e2e=${Date.now()}`);
     await db.initDb();
+    const serverSource = fs.readFileSync(new URL("../server.js", import.meta.url), "utf8");
+    const adminDecisionSource = serverSource.match(/function adminZaloUpdateFromRequest\(body = \{\}\) \{[\s\S]*?\n\}/)?.[0];
+    assert.ok(adminDecisionSource);
+    const adminDecision = Function(`${adminDecisionSource}; return adminZaloUpdateFromRequest;`)();
+    const updateAdmin = async (body) => {
+      const update = adminDecision(body);
+      if (update) await db.setAdminZalo("config-owner", update.uid, update.label);
+    };
+    await db.setAdminZalo("config-owner", "original-admin", "Original Admin");
+    for (const body of [{ adminZaloUid: "" }, {}, { adminZaloUid: undefined }, { adminZaloUid: null }, { adminZaloUid: "  " }, { adminZaloClear: "true" }]) {
+      await updateAdmin(body);
+      assert.deepEqual(await db.getAdminZalo("config-owner"), { uid: "original-admin", label: "Original Admin" });
+    }
+    for (const uid of [undefined, null]) await db.setAdminZalo("config-owner", uid, "Ignored");
+    assert.deepEqual(await db.getAdminZalo("config-owner"), { uid: "original-admin", label: "Original Admin" });
+    await updateAdmin({ adminZaloClear: true, adminZaloUid: "ignored", adminZaloLabel: "Stale label" });
+    assert.deepEqual(await db.getAdminZalo("config-owner"), { uid: "", label: "" });
+    await updateAdmin({ adminZaloUid: "new-admin", adminZaloLabel: "New Admin" });
+    assert.deepEqual(await db.getAdminZalo("config-owner"), { uid: "new-admin", label: "New Admin" });
+    console.log("PASS A1-A4 canonical config persistence, positional null guards and label clear");
     const first = await db.createAdminClarification({
       ownerUid: "db-owner", customerThreadId: "db-thread", requesterUid: "db-customer",
       requesterName: "DB Customer", correlationToken: "#AC-DB0001",
@@ -698,6 +946,53 @@ test("DB-E2E additive SQLite schema, waiting uniqueness and status CAS are real"
     assert.equal(await db.touchWaitingAdminClarification("db-owner", "db-thread", "db-m3", 10_005), true);
     const claimed = await db.claimAdminClarificationAnswer({ ownerUid: "db-owner", correlationToken: "#AC-DB0001", adminMessageId: "db-a1", adminSenderUid: "db-admin", adminAnswer: "DB answer", now: 10_006 });
     assert.equal(claimed.frozenContextBoundary, "db-m3"); assert.equal(claimed.waitingSlot, null);
+    const schemaBefore = await db.websiteDataAll("SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name");
+    const columns = await db.websiteDataAll("PRAGMA table_info(admin_clarifications)");
+    assert.deepEqual(columns.map((column) => column.name), [
+      "id", "owner_uid", "customer_thread_id", "customer_thread_type", "requester_uid", "requester_name",
+      "correlation_token", "status", "waiting_slot", "opened_context_boundary", "latest_context_boundary",
+      "frozen_context_boundary", "admin_message_id", "admin_sender_uid", "admin_answer", "admin_replied_at",
+      "expires_at", "admin_notification_state", "admin_notification_id", "customer_ack_state", "customer_ack_id",
+      "customer_final_reply_text", "customer_final_reply_id", "generation_attempts", "error_stage", "error_detail",
+      "created_at", "updated_at", "closed_at",
+    ]);
+    const store = {
+      create: db.createAdminClarification, expireWaiting: db.expireWaitingAdminClarifications,
+      getWaiting: db.getWaitingAdminClarification, transition: db.transitionAdminClarification,
+      getRecentFailedAck: db.getRecentFailedAdminClarificationAck,
+    };
+    let clock = CLARIFICATION_TTL_MS * 4;
+    configureAdminClarificationRuntime({ notifyAdmin: async () => ({ sent: false, reason: "ADMIN_NOT_CONFIGURED" }), log: async () => {} });
+    const engine = createAdminClarificationEngine({ store, now: () => clock });
+    for (const mode of ["confirmed", "send-throw", "unconfirmed", "origin-after-ai", "generation-before-bubble"]) {
+      const input = { ownerUid: "owner", message: customer(`db-${mode}`) };
+      const opened = await engine.open(input);
+      assert.equal(opened.row.status, S.ADMIN_NOTIFY_FAILED);
+      assert.equal(opened.row.customerAckState, "SENDING", "existing DB self-transition succeeds");
+      assert.equal(await db.getRecentFailedAdminClarificationAck("owner", input.message.threadId, opened.row.id, 0), null);
+      assert.equal(await db.getRecentFailedAdminClarificationAck("other", input.message.threadId, 0, 0), null);
+      assert.equal(await db.getRecentFailedAdminClarificationAck("owner", "other", 0, 0), null);
+      const whileSending = await engine.open(input);
+      assert.equal(whileSending.acknowledgement, null); assert.equal(whileSending.row.customerAckState, "PENDING");
+      await hotfixOutbound(opened, mode, (id, messageId, confirmed) => db.completeAdminClarificationAck(id, messageId, confirmed, clock));
+      const completed = await db.getAdminClarificationById(opened.row.id);
+      assert.equal(completed.customerAckState, mode === "confirmed" ? "SENT" : "SEND_UNKNOWN");
+      assert.equal(completed.status, S.ADMIN_NOTIFY_FAILED);
+      const next = await engine.open(input);
+      assert.equal(next.acknowledgement, mode === "confirmed" ? null : fallbackCopy, "SEND_UNKNOWN allows another fallback");
+      if (mode !== "confirmed") {
+        await hotfixOutbound(next, "confirmed", (id, messageId, confirmed) => db.completeAdminClarificationAck(id, messageId, confirmed, clock));
+        assert.equal((await db.getAdminClarificationById(next.row.id)).customerAckState, "SENT");
+      }
+      // A fresh updated_at must not extend an old created_at window.
+      clock += CLARIFICATION_TTL_MS + 1;
+      await db.transitionAdminClarification(opened.row.id, S.ADMIN_NOTIFY_FAILED, S.ADMIN_NOTIFY_FAILED, {}, { now: clock });
+      const afterTtl = await engine.open(input);
+      assert.equal(afterTtl.acknowledgement, fallbackCopy);
+      await db.completeAdminClarificationAck(afterTtl.row.id, null, false, clock);
+    }
+    assert.deepEqual(await db.websiteDataAll("SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name"), schemaBefore);
+    console.log("PASS DB-E2E P0 suppression, self-transition, SENT/SEND_UNKNOWN, B2d resend and NO_SCHEMA_CHANGE");
   } finally {
     const adapter = await import("./sqlite3-node24-test-adapter.js");
     adapter.closeAllTestDatabases();

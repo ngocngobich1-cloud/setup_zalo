@@ -421,6 +421,13 @@ app.get("/api/auth/otp-settings", async (req, res) => {
   });
 });
 
+function adminZaloUpdateFromRequest(body = {}) {
+  if (body?.adminZaloClear === true) return { uid: "", label: "" };
+  const uid = typeof body?.adminZaloUid === "string" ? body.adminZaloUid.trim() : "";
+  if (!uid) return null;
+  return { uid, label: body.adminZaloLabel };
+}
+
 app.post("/api/auth/otp-settings", async (req, res) => {
   const { otpEnabled, otpZaloThreadId, otpZaloLabel, otpEmail, smtp } = req.body || {};
 
@@ -468,7 +475,8 @@ app.post("/api/auth/otp-settings", async (req, res) => {
   });
 
   const { setAdminZalo } = await import("./lib/db.js");
-  await setAdminZalo(chuHienTai(), req.body?.adminZaloUid, req.body?.adminZaloLabel);
+  const adminUpdate = adminZaloUpdateFromRequest(req.body);
+  if (adminUpdate) await setAdminZalo(chuHienTai(), adminUpdate.uid, adminUpdate.label);
   res.json({ ok: true });
 });
 
