@@ -253,9 +253,11 @@ function sourceProof() {
   assert.match(deleteKnowledgeBody, /WHERE id = \? AND owner_uid = \?/);
 
   assert.doesNotMatch(knowledgeSource, /layChuTaiKhoan\s*\(|chuHienTai\s*\(/);
-  assert.match(knowledgeSource, /getContentsForAi\(ownerUid, fileIds, maxChars = 12000\)/);
-  assert.match(knowledgeSource, /getKnowledgeFilesByIds\(ownerUid, fileIds\)/);
-  assert.match(aiChat, /knowledge\.getContentsForAi\(ownerUid, knowledgeFileIds, KNOWLEDGE_MAX_CHARS\)/);
+  assert.match(knowledgeSource, /retrieveForAi\(ownerUid, knowledgeFileIds, query, ceiling = 12000\)/);
+  assert.match(knowledgeSource, /getKnowledgeFilesByIds\(ownerUid, knowledgeFileIds\)/);
+  assert.match(aiChat, /knowledge\.retrieveForAi\(ownerUid, knowledgeFileIds, query, KNOWLEDGE_MAX_CHARS\)/);
+  const retrievalSource = fs.readFileSync(path.join(REPO, "lib", "knowledge-retrieval.js"), "utf8");
+  assert.doesNotMatch(retrievalSource, /(?:from\s*["'].*db\.js|layChuTaiKhoan\s*\(|chuHienTai\s*\()/);
 
   const listRoute = functionBody(server, 'app.get("/api/knowledge", async (_req, res) =>', "GET Knowledge");
   assert.match(listRoute, /const ownerUid = chuHienTai\(\);/);
@@ -427,11 +429,17 @@ async function behaviorProof(tempDir) {
   assert.equal(await knowledge.removeFile(OWNER_A, ownerADelete.id), true);
   assert.equal(await knowledge.getFileContent(OWNER_A, ownerADelete.id), null);
 
-  const mixedAiKnowledge = await knowledge.getContentsForAi(
+  // Retrieval rejects ubiquitous-only matches. A second authorized, unrelated
+  // document makes the positive owner-isolation assertion meaningful.
+  const retrievalDistractor = await knowledge.addFile(OWNER_A,
+    Buffer.from("Astronomy unrelated reference", "utf8"), "b2-retrieval-distractor.md");
+  const mixedAiResult = await knowledge.retrieveForAi(
     OWNER_A,
-    [ownerAKeep.id, ownerBFile.id, LEGACY_KNOWLEDGE_ID],
+    [ownerAKeep.id, ownerBFile.id, LEGACY_KNOWLEDGE_ID, retrievalDistractor.id],
+    "B2_OWNER_A_CONTENT",
     5000
   );
+  const mixedAiKnowledge = mixedAiResult.units.map((unit) => unit.text).join("\n");
   assert.match(mixedAiKnowledge, /B2_OWNER_A_CONTENT/);
   assert.doesNotMatch(mixedAiKnowledge, /B2_OWNER_B_CONTENT/);
   assert.doesNotMatch(mixedAiKnowledge, /B2_LEGACY_CONTENT/);

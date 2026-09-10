@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 const REPO = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 const suites = [
+  { id: "KNOWLEDGE_RETRIEVAL_V1", file: "kiem-thu/kiem-tra-knowledge-retrieval-v1.js", timeoutMs: 30_000 },
   { id: "CONVERSATION_INFLIGHT", file: "kiem-thu/kiem-tra-conversation-inflight.js", timeoutMs: 15_000 },
   { id: "AI_ACTION_BOUNDARY", file: "kiem-thu/kiem-tra-ai-action-boundary.js", timeoutMs: 15_000 },
   { id: "AI_DEFAULT", file: "kiem-thu/kiem-tra-ai-default.js", timeoutMs: 30_000, requiresNativeSqlite: true },
