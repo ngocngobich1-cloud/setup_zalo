@@ -528,6 +528,7 @@ test("T11", "sendPrompt failure has no ai_prompt success and preserves ai_error 
     filterSkipReason: () => "",
     describeMessage: () => ({}),
     isAiChatReady: () => true,
+    websiteEmailStatus: { lookupCustomerEmailStatus: async () => ({ outcome: "NO_MATCH" }) },
     generateReply: async () => result,
     customerMemory: { ducKetNeuDenLuot: async () => undefined },
     console: { warn: () => undefined },

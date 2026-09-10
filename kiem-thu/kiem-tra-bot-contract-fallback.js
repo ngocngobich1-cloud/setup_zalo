@@ -154,6 +154,7 @@ function harness(sequence, options = {}) {
       senderId: value?.senderId || null,
     }),
     isAiChatReady: () => true,
+    websiteEmailStatus: { lookupCustomerEmailStatus: async () => ({ outcome: "NO_MATCH" }) },
     generateReply,
     recordDecisionProtocolOutcome,
     canonicalDecisionResultLog: (result, context) => ({

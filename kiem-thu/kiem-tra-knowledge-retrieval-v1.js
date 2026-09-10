@@ -130,7 +130,7 @@ function harness(initialRows = baseCorpus) {
     setHistory: (value) => { history = value; }, setAttachment: (value) => { attachment = value; },
     setRejectMessage: (value) => { rejectMessage = value; },
     setInferenceError: (value) => { inferenceError = value; },
-    turn: (query, threadId = "thread") => ai.generateReply(query, { threadId, threadType: 0, id: randomUUID() }, "owner-A", config),
+    turn: (query, threadId = "thread") => ai.generateReply(query, { threadId, threadType: 0, id: randomUUID(), __emailStatusContext: "EMAIL_STATUS\n" }, "owner-A", config),
   };
 }
 
