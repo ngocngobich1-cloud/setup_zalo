@@ -33,6 +33,7 @@ const state = {
   threads: [],
   selectedThread: null,
   messagesByThread: new Map(),
+  historyByThread: new Map(),
   // "threadId|messageId" -> [{ ten, count, mine }]. Trinh duyet chi giu de VE;
   // nguon su that nam o may chu va den qua socket.
   reactionsByMessage: new Map(),
@@ -221,6 +222,16 @@ window.addEventListener("popstate", () => {
 });
 
 socket.on("state", applyState);
+socket.on("connect", () => {
+  for (const [threadId, history] of state.historyByThread) {
+    if (history.status === "error" || (history.status === "loaded" && history.syncPending)) {
+      void fetchThreadHistory(threadId);
+    } else if (history.status === "loading") {
+      // The initial response can predate a terminal event lost during disconnect.
+      history.refreshRequested = true;
+    }
+  }
+});
 socket.on("connect", anBotDangSoan);
 socket.on("disconnect", anBotDangSoan);
 socket.on("bot_typing_status", (event) => {
@@ -231,6 +242,37 @@ socket.on("bot_typing_status", (event) => {
   if (event?.typing === true) hienBotDangSoan(ownerUid, threadId);
   else if (event?.typing === false) anBotDangSoan();
 });
+socket.on("thread-history-updated", (event) => {
+  if (!state.uid || String(event?.ownerUid || "") !== String(state.uid)) return;
+  if (!["sync_complete", "sync_failed", "enrichment_updated"].includes(event.reason)) return;
+  const threadId = event.threadId;
+  const history = state.historyByThread.get(threadId);
+  if (!history || history.status === "not_loaded") return;
+  if (event.reason === "sync_failed") {
+    history.syncPending = true;
+    scheduleHistoryRetry(threadId, Number(event.retryAfterMs) || 30000);
+    if (history.status === "loading") history.refreshRequested = true;
+    if (state.selectedThread?.id === threadId) renderMessages(state.messagesByThread.get(threadId) || []);
+    return;
+  }
+  if (history.status === "loading") {
+    history.refreshRequested = true;
+    return;
+  }
+  if (event.reason === "sync_complete") {
+    window.clearTimeout(history.syncRetryTimer);
+    history.syncRetryTimer = null;
+  }
+  window.clearTimeout(history.refreshTimer);
+  const owner = chupFrontendOwner();
+  history.refreshTimer = window.setTimeout(() => {
+    history.refreshTimer = null;
+    if (!frontendOwnerConHieuLuc(owner)) return;
+    if (history.inflight) history.refreshRequested = true;
+    else void fetchThreadHistory(threadId);
+  }, 300);
+});
+
 socket.on("threads", (threads) => {
   state.threads = threads || [];
   if (state.selectedThread) {
@@ -249,11 +291,7 @@ socket.on("thread-refresh", (thread) => {
   veCongTacThread();
 });
 socket.on("new-message", (message) => {
-  const list = state.messagesByThread.get(message.threadId) || [];
-  if (!list.some((item) => item.id === message.id)) {
-    list.push(message);
-    state.messagesByThread.set(message.threadId, list);
-  }
+  const list = mergeThreadMessages(message.threadId, [message]);
   if (state.selectedThread?.id === message.threadId) renderMessages(list);
 });
 
@@ -467,6 +505,11 @@ function invalidateOwnerFrontendState(nextOwnerUid = null) {
   state.threads = [];
   state.selectedThread = null;
   state.messagesByThread.clear();
+  for (const history of state.historyByThread.values()) {
+    window.clearTimeout(history.syncRetryTimer);
+    window.clearTimeout(history.refreshTimer);
+  }
+  state.historyByThread.clear();
   state.reactionsByMessage.clear();
   daBaoDaXem.clear();
   dongLopThaoTacTin();
@@ -647,17 +690,88 @@ async function selectThread(thread) {
   els.chatTitle.textContent = thread.title || thread.id;
   setAvatar(els.chatAvatar, thread.avatar, thread.title || thread.id);
 
-  if (!state.messagesByThread.has(thread.id)) {
-    els.messages.textContent = "Dang tai lich su...";
-    const owner = chupFrontendOwner();
-    const res = await fetch(`/api/messages/${encodeURIComponent(thread.id)}`);
-    const data = await res.json();
+  const history = getThreadHistoryState(thread.id);
+  renderMessages(state.messagesByThread.get(thread.id) || []);
+  if (history.status !== "loaded") await fetchThreadHistory(thread.id);
+}
+
+function getThreadHistoryState(threadId) {
+  if (!state.historyByThread.has(threadId)) {
+    state.historyByThread.set(threadId, {
+      status: "not_loaded", inflight: null, loadedAt: null, error: null,
+      syncPending: false, syncRetryTimer: null, refreshRequested: false, refreshTimer: null,
+    });
+  }
+  return state.historyByThread.get(threadId);
+}
+
+function mergeThreadMessages(threadId, incoming) {
+  const byId = new Map((state.messagesByThread.get(threadId) || []).map((item) => [String(item.id), item]));
+  for (const message of incoming) byId.set(String(message.id), message);
+  const merged = [...byId.values()].sort((a, b) => {
+    const time = Number(a.ts) - Number(b.ts);
+    return time || (String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0);
+  });
+  state.messagesByThread.set(threadId, merged);
+  return merged;
+}
+
+function scheduleHistoryRetry(threadId, retryAfterMs) {
+  const history = getThreadHistoryState(threadId);
+  window.clearTimeout(history.syncRetryTimer);
+  history.syncRetryTimer = null;
+  if (!(retryAfterMs > 0)) return;
+  const owner = chupFrontendOwner();
+  history.syncRetryTimer = window.setTimeout(() => {
+    history.syncRetryTimer = null;
     if (!frontendOwnerConHieuLuc(owner)) return;
-    state.messagesByThread.set(thread.id, data.messages || []);
-  }
-  if (state.selectedThread?.id === thread.id) {
-    renderMessages(state.messagesByThread.get(thread.id) || []);
-  }
+    if (history.inflight) history.refreshRequested = true;
+    else void fetchThreadHistory(threadId);
+  }, retryAfterMs);
+}
+
+function fetchThreadHistory(threadId) {
+  const history = getThreadHistoryState(threadId);
+  if (history.inflight) return history.inflight;
+  const owner = chupFrontendOwner();
+  history.status = "loading";
+  history.error = null;
+  window.clearTimeout(history.refreshTimer);
+  history.refreshTimer = null;
+  const renderSelected = () => {
+    if (frontendOwnerConHieuLuc(owner) && state.selectedThread?.id === threadId) {
+      renderMessages(state.messagesByThread.get(threadId) || []);
+    }
+  };
+  renderSelected();
+  history.inflight = (async () => {
+    try {
+      const res = await fetch(`/api/messages/${encodeURIComponent(threadId)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!Array.isArray(data.messages)) throw new Error("Invalid history response");
+      if (!frontendOwnerConHieuLuc(owner)) return;
+      mergeThreadMessages(threadId, data.messages);
+      history.status = "loaded";
+      history.loadedAt = Date.now();
+      history.syncPending = Boolean(data.syncScheduled || data.syncInFlight || Number(data.syncRetryAfterMs) > 0);
+      scheduleHistoryRetry(threadId, Number(data.syncRetryAfterMs));
+    } catch {
+      if (!frontendOwnerConHieuLuc(owner)) return;
+      history.status = "error";
+      history.error = "Không tải được lịch sử hội thoại.";
+    } finally {
+      history.inflight = null;
+      if (frontendOwnerConHieuLuc(owner)) {
+        renderSelected();
+        if (history.refreshRequested) {
+          history.refreshRequested = false;
+          void fetchThreadHistory(threadId);
+        }
+      }
+    }
+  })();
+  return history.inflight;
 }
 
 function docKichThuocAnh(url) {
@@ -878,6 +992,24 @@ function renderMessages(messages) {
       row.append(avatarSlot, wrap);
     }
     els.messages.append(row);
+  }
+  const history = state.historyByThread.get(state.selectedThread?.id);
+  if (history?.status === "error" || history?.syncPending || messages.length === 0) {
+    const notice = document.createElement("div");
+    notice.className = "history-notice";
+    notice.setAttribute("role", history?.status === "error" ? "alert" : "status");
+    if (history?.status === "error") {
+      notice.textContent = history.error;
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.textContent = "Thử lại";
+      const threadId = state.selectedThread?.id;
+      retry.addEventListener("click", () => { void fetchThreadHistory(threadId); });
+      notice.append(retry);
+    } else if (history?.syncPending) notice.textContent = "Đang đồng bộ lịch sử từ Zalo…";
+    else if (history?.status === "loaded") notice.textContent = "Chưa có tin nhắn trong hội thoại này.";
+    else notice.textContent = "Đang tải lịch sử…";
+    els.messages.append(notice);
   }
   els.messages.scrollTop = els.messages.scrollHeight;
   thuBaoDaXem();
