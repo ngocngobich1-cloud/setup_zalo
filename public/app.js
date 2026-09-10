@@ -31,6 +31,7 @@ const state = {
   qr: {},
   ketNoi: { trangThai: "chua", lyDo: "" },
   threads: [],
+  threadSearchQuery: "",
   selectedThread: null,
   messagesByThread: new Map(),
   historyByThread: new Map(),
@@ -187,7 +188,46 @@ els.btnZaloLogout?.addEventListener("click", async () => {
     alert("Không đăng xuất được: " + error.message);
   }
 });
-els.search.addEventListener("input", renderThreads);
+let threadSearchEditPending = false;
+
+function normalizeThreadSearchBeforeUserEdit() {
+  if (els.search.value !== state.threadSearchQuery) els.search.value = state.threadSearchQuery;
+}
+
+function beginThreadSearchUserEdit() {
+  normalizeThreadSearchBeforeUserEdit();
+  threadSearchEditPending = true;
+}
+
+function clearThreadSearch() {
+  threadSearchEditPending = false;
+  state.threadSearchQuery = "";
+  els.search.value = "";
+  renderThreads();
+}
+
+els.search.form?.addEventListener("submit", (event) => event.preventDefault());
+els.search.addEventListener("focus", normalizeThreadSearchBeforeUserEdit);
+els.search.addEventListener("beforeinput", beginThreadSearchUserEdit);
+els.search.addEventListener("paste", beginThreadSearchUserEdit);
+els.search.addEventListener("cut", beginThreadSearchUserEdit);
+els.search.addEventListener("drop", beginThreadSearchUserEdit);
+els.search.addEventListener("input", () => {
+  if (!threadSearchEditPending) {
+    if (els.search.value === "") {
+      clearThreadSearch();
+      return;
+    }
+    normalizeThreadSearchBeforeUserEdit();
+    return;
+  }
+  threadSearchEditPending = false;
+  state.threadSearchQuery = els.search.value;
+  renderThreads();
+});
+els.search.addEventListener("search", () => {
+  if (els.search.value === "") clearThreadSearch();
+});
 els.form.addEventListener("submit", sendMessage);
 els.btnImage.addEventListener("click", () => {
   if (dangGuiTin) return;
@@ -515,6 +555,7 @@ function invalidateOwnerFrontendState(nextOwnerUid = null) {
   dongLopThaoTacTin();
   dongBangSticker();
   datLaiNhipGoPhim();
+  state.threadSearchQuery = "";
   els.search.value = "";
   els.messages.innerHTML = "";
   els.chatPanel.classList.add("hidden");
@@ -619,7 +660,7 @@ function closeMobileLayerWithHistory() {
 }
 
 function renderThreads() {
-  const query = els.search.value.trim().toLowerCase();
+  const query = state.threadSearchQuery.trim().toLowerCase();
   const filtered = state.threads.filter((thread) => {
     const haystack = `${thread.title || ""} ${thread.lastMessage || ""} ${thread.id}`.toLowerCase();
     return haystack.includes(query);
@@ -1746,6 +1787,7 @@ async function chuyenTiepToi(dich) {
 }
 
 els.btnForwardClose?.addEventListener("click", dongBangChuyenTiep);
+els.forwardSearch?.form?.addEventListener("submit", (event) => event.preventDefault());
 els.forwardSearch?.addEventListener("input", veDanhSachChuyenTiep);
 els.forwardDialog?.addEventListener("click", (event) => {
   if (event.target === els.forwardDialog) dongBangChuyenTiep();

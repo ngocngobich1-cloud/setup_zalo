@@ -13,6 +13,7 @@ import { JSDOM } from "jsdom";
 
 const REPO = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const html = fs.readFileSync(path.join(REPO, "public", "index.html"), "utf8");
+const appSource = fs.readFileSync(path.join(REPO, "public", "app.js"), "utf8");
 const document = new JSDOM(html).window.document;
 const results = [];
 
@@ -66,14 +67,17 @@ test("T9", "#thread-search has an exact accessible label", () => {
 test("T10", "#thread-search has no value attribute", () => {
   assert.equal(threadSearch.hasAttribute("value"), false);
 });
-test("T11", "#thread-search has no form owner", () => {
-  assert.equal(threadSearch.form, null);
+test("T11", "#thread-search has a dedicated search form owner", () => {
+  assert.equal(threadSearch.form?.id, "thread-search-form");
+  assert.equal(threadSearch.form?.getAttribute("role"), "search");
+  assert.equal(threadSearch.form?.getAttribute("autocomplete"), "off");
+  assert.deepEqual([...threadSearch.form.elements].map((element) => element.id), ["thread-search"]);
 });
 
 test("T12", "#forward-search exists and preserves its DOM placement", () => {
   assert.ok(forwardSearch);
   assert.equal(forwardSearch.getAttribute("placeholder"), "Tìm cuộc trò chuyện…");
-  assert.ok(forwardSearch.parentElement?.classList.contains("forward-panel"));
+  assert.ok(forwardSearch.form?.classList.contains("forward-panel"));
   assert.ok(forwardSearch.previousElementSibling?.classList.contains("forward-header"));
   assert.equal(forwardSearch.nextElementSibling?.id, "forward-list");
 });
@@ -105,8 +109,13 @@ test("T20", "#forward-search has a meaningful accessible label", () => {
 test("T21", "#forward-search has no value attribute", () => {
   assert.equal(forwardSearch.hasAttribute("value"), false);
 });
-test("T22", "#forward-search has no form owner", () => {
-  assert.equal(forwardSearch.form, null);
+test("T22", "#forward-search has a dedicated search form owner", () => {
+  assert.equal(forwardSearch.form?.id, "forward-search-form");
+  assert.equal(forwardSearch.form?.getAttribute("role"), "search");
+  assert.equal(forwardSearch.form?.getAttribute("autocomplete"), "off");
+  const textLikeControls = [...forwardSearch.form.elements]
+    .filter((element) => ["email", "password", "search", "text"].includes(element.type));
+  assert.deepEqual(textLikeControls.map((element) => element.id), ["forward-search"]);
 });
 
 test("T23", "#thread-search ID is unique", () => {
@@ -130,6 +139,30 @@ test("T26", "#thread-search preserves class thread-search", () => {
 });
 test("T27", "#forward-search preserves class forward-search", () => {
   assert.equal(forwardSearch.classList.contains("forward-search"), true);
+});
+test("T28", "search forms are isolated from each other and the password control", () => {
+  const trainingKey = document.querySelector("#training-key-value");
+  assert.ok(trainingKey);
+  assert.notEqual(threadSearch.form, forwardSearch.form);
+  assert.notEqual(trainingKey.form, threadSearch.form);
+  assert.notEqual(trainingKey.form, forwardSearch.form);
+  assert.equal(threadSearch.form.contains(trainingKey), false);
+  assert.equal(forwardSearch.form.contains(trainingKey), false);
+});
+test("T29", "both dedicated search-form submits are prevented by app code", () => {
+  assert.match(appSource, /els\.search\.form\?\.addEventListener\("submit", \(event\) => event\.preventDefault\(\)\)/);
+  assert.match(appSource, /els\.forwardSearch\?\.form\?\.addEventListener\("submit", \(event\) => event\.preventDefault\(\)\)/);
+});
+test("T30", "no page reload workaround is present", () => {
+  assert.doesNotMatch(appSource, /(?:window\.)?location\.reload\s*\(|history\.go\s*\(\s*0\s*\)|location\.href\s*=\s*location\.href/);
+});
+test("T31", "renderThreads has no raw DOM search dependency", () => {
+  const start = appSource.indexOf("function renderThreads() {");
+  const end = appSource.indexOf("\nfunction formatThreadPreview", start);
+  assert.ok(start >= 0 && end > start);
+  const body = appSource.slice(start, end);
+  assert.match(body, /state\.threadSearchQuery/);
+  assert.doesNotMatch(body, /els\.search\.value/);
 });
 
 const failed = results.filter((result) => !result.pass);
