@@ -676,7 +676,9 @@ function caseJAndIntegration() {
   assert.match(ZALO, /khiHuyTheoThread:[\s\S]*dieuPhoiHoiThoai\.huyTheoThread\(/);
   assert.match(ZALO, /khiHuyTatCa: \(\) => dieuPhoiHoiThoai\.huyTatCa\(/);
   assert.match(ZALO, /boGom\.dangBan\?\.\(/);
-  assert.match(ZALO, /conversationGeneration\.chapNhanOutbound\(\)/);
+  assert.match(ZALO, /conversationGeneration && !conversationGeneration\.giuChoOutbound\(\)/);
+  assert.match(ZALO, /conversationGeneration\?\.xacNhanOutbound\(\)/);
+  assert.match(ZALO, /conversationGeneration\?\.traLaiOutbound\(\)/);
   assert.match(ZALO, /event: "stale_outbound_skipped"/);
   assert.match(ZALO, /segment\.preAiDone = true/);
   assert.match(ZALO, /workOrTins\.staleProviderHistory/);
