@@ -978,7 +978,7 @@ async function testQ6PhysicalSuccessSignalOrdering() {
     "\n/** Danh muc sticker"
   );
   const providerCall = providerSource.indexOf("ketQua = await ownerApi.addReaction(");
-  const successSignal = providerSource.indexOf("internalOptions?.onProviderSuccess?.()");
+  const successSignal = providerSource.indexOf("internalOptions?.onProviderSuccess?.(");
   const postCheck = providerSource.indexOf("chotQuyenRuntime(capturedAuthority)");
   assert.ok(providerCall >= 0 && providerCall < successSignal);
   assert.ok(successSignal < postCheck);

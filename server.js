@@ -2112,6 +2112,7 @@ server.listen(port, "0.0.0.0", async () => {
   // khong: dang nhap hong ma bo hen gio cung khong chay thi lich cua chi im lang
   // ca ngay, tren VPS thi khong ai nhin thay.
   const { batDauScheduler, capHinhScheduler } = await import("./lib/scheduler.js");
+  const { batDauDurableDispatcher } = await import("./lib/durable-message-queue.js");
   const { capHinhBaoAdmin } = await import("./lib/email-check.js");
   const { getAdminZalo } = await import("./lib/db.js");
   // Bao rieng cho nick admin. Khong dat admin thi im lang - van con tab LOG.
@@ -2156,4 +2157,7 @@ server.listen(port, "0.0.0.0", async () => {
   const { capHinhGanNhan } = await import("./lib/ai-chat.js");
   capHinhGanNhan(ganNhanZalo);
   batDauScheduler();
+  // Quet ngay sau startup, roi safety sweep 30 giay. Khong await backlog de
+  // HTTP readiness khong bi giu boi luong durable cu.
+  batDauDurableDispatcher();
 });
