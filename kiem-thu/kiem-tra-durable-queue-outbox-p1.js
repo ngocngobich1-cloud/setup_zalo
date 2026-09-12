@@ -1185,7 +1185,7 @@ async function worker(tempRoot) {
       "admitDurableMessageJob", "claimDurableMessageJob", "claimNextDurableMessageJobs",
       "assignDurableGeneration", "requeueDurableGeneration", "requeueStaleDurableGeneration",
       "markDurableJobsBlocked", "markDurableGenerationFailure", "settleDurableGeneration",
-      "recoverExpiredDurableJobs", "ensureOutboundIntent", "ensureOutboundIntents",
+      "recoverExpiredDurableJobs", "expireDurableWork", "ensureOutboundIntent", "ensureOutboundIntents",
       "claimOutboundIntent", "claimNextOutboundIntent", "markOutboundSent", "markOutboundFailure",
       "releaseOutboundIntent", "recoverExpiredOutboundIntents",
       "abandonOutboundGeneration",
@@ -1207,10 +1207,620 @@ async function worker(tempRoot) {
     assert.deepEqual(unprotected, []);
   });
 
+  const policyFixture = async (caseNumber, { slots = 1, admittedAt = Date.now() } = {}) => {
+    const accountId = `owner-${caseNumber}`;
+    const conversationId = `C${caseNumber}`;
+    const generationKey = `case-${caseNumber}-generation`;
+    const job = await db.admitDurableMessageJob({
+      accountId,
+      conversationId,
+      sourceMessageId: `c${caseNumber}-in`,
+      admittedAt,
+    });
+    const fixtureNow = Math.max(1, Number(admittedAt) + 1);
+    await db.claimDurableMessageJob(job.id, { now: fixtureNow, leaseMs: 3_600_000 });
+    await db.assignDurableGeneration([job.id], generationKey, { now: fixtureNow, leaseMs: 3_600_000 });
+    const rows = await db.ensureOutboundIntents({
+      generationKey,
+      accountId,
+      conversationId,
+      intents: Array.from({ length: slots }, (_, outboundSlot) => ({
+        outboundKind: "TEXT",
+        payload: { text: `case ${caseNumber} slot ${outboundSlot}` },
+      })),
+      now: fixtureNow,
+    });
+    const activeGeneration = generation(accountId, conversationId);
+    activeGeneration.durableGenerationKey = generationKey;
+    activeGeneration.durableJobIds = [job.id];
+    activeGeneration.durableOutboxPrepared = true;
+    return { accountId, conversationId, generationKey, job, rows, activeGeneration };
+  };
+
+  const failPolicyAttempt = async (fixture, row, error) => {
+    let surfaced = null;
+    try {
+      await outbox.guiDurableOutbound({
+        outbox: row,
+        conversationGeneration: fixture.activeGeneration,
+        send: async () => { throw error; },
+      });
+    } catch (caught) {
+      surfaced = caught;
+    }
+    return surfaced;
+  };
+
+  await regression(67, "DEFAULT_FAILURE_BELOW_CAP_STAYS_RETRYABLE", async () => {
+    const fixture = await policyFixture(67);
+    await rawRun("UPDATE outbound_outbox SET attempt_count=4 WHERE id=?", [fixture.rows[0].id]);
+    await failPolicyAttempt(fixture, { ...fixture.rows[0], attemptCount: 4 }, Object.assign(new Error("c67 unavailable"), { status: 503 }));
+    const row = (await db.listOutbox({ generationKey: fixture.generationKey }))[0];
+    console.log(`CASE_67_OBSERVED=${JSON.stringify({ status: row.status, attemptCount: row.attemptCount })}`);
+    assert.equal(row.attemptCount, 5);
+    assert.equal(row.status, "RETRY");
+  });
+
+  await regression(68, "DEFAULT_FAILURE_TERMINAL_AT_EXACTLY_SIX", async () => {
+    const fixture = await policyFixture(68);
+    await rawRun("UPDATE outbound_outbox SET attempt_count=5 WHERE id=?", [fixture.rows[0].id]);
+    await failPolicyAttempt(fixture, { ...fixture.rows[0], attemptCount: 5 }, Object.assign(new Error("c68 unavailable"), { status: 503 }));
+    const row = (await db.listOutbox({ generationKey: fixture.generationKey }))[0];
+    const job = await db.getDurableMessageJob(fixture.job.id);
+    console.log(`CASE_68_OBSERVED=${JSON.stringify({ status: row.status, attemptCount: row.attemptCount, jobStatus: job.status })}`);
+    assert.equal(row.attemptCount, 6);
+    assert.equal(row.status, "FAILED_TERMINAL");
+    assert.equal(job.status, "FAILED_TERMINAL");
+  });
+
+  await regression(69, "FAILED_TERMINAL_PREVENTS_SEVENTH_PROVIDER_CALL", async () => {
+    const fixture = await policyFixture(69);
+    await rawRun("UPDATE outbound_outbox SET attempt_count=5 WHERE id=?", [fixture.rows[0].id]);
+    let providerCalls = 5;
+    await failPolicyAttempt(fixture, { ...fixture.rows[0], attemptCount: 5 }, Object.assign(new Error("c69 sixth failed"), { status: 503 }));
+    providerCalls += 1;
+    await rawRun(
+      "UPDATE outbound_outbox SET next_attempt_at=9007199254740991 WHERE generation_key<>? AND status IN ('PENDING','RETRY','BLOCKED')",
+      [fixture.generationKey]
+    );
+    await rawRun("UPDATE outbound_outbox SET next_attempt_at=0 WHERE generation_key=? AND status IN ('PENDING','RETRY','BLOCKED')", [fixture.generationKey]);
+    outbox.capHinhOutboundOutbox({
+      layAuthority: async () => ({ originToken: { ownerUid: fixture.accountId } }),
+      gui: async (_row, _authority, hooks = {}) => {
+        providerCalls += 1;
+        const result = { id: "c69-seventh" };
+        hooks.onProviderSuccess?.(result);
+        return result;
+      },
+    });
+    await outbox.quetOutboundNgay({ max: 1 });
+    console.log(`CASE_69_OBSERVED=${JSON.stringify({ providerCalls, status: (await db.listOutbox({ generationKey: fixture.generationKey }))[0].status })}`);
+    assert.equal(providerCalls, 6);
+  });
+
+  await regression(70, "CREDENTIAL_CONTROL_FIRST_FAILURE_ALLOWS_SECOND_ATTEMPT", async () => {
+    const fixture = await policyFixture(70);
+    await failPolicyAttempt(fixture, fixture.rows[0], Object.assign(new Error("owner context changed"), { code: "OWNER_CONTEXT_CHANGED" }));
+    let row = (await db.listOutbox({ generationKey: fixture.generationKey }))[0];
+    await rawRun("UPDATE outbound_outbox SET next_attempt_at=0 WHERE id=?", [row.id]);
+    const secondClaim = await db.claimOutboundIntent(row.id);
+    console.log(`CASE_70_OBSERVED=${JSON.stringify({ status: row.status, attemptCount: row.attemptCount, secondClaimed: Boolean(secondClaim) })}`);
+    assert.equal(row.attemptCount, 1);
+    assert.notEqual(row.status, "FAILED_TERMINAL");
+    assert.ok(secondClaim);
+    await rawRun("UPDATE outbound_outbox SET status='BLOCKED', lease_until=NULL, next_attempt_at=9007199254740991 WHERE id=?", [row.id]);
+  });
+
+  await regression(71, "CREDENTIAL_CONTROL_TERMINAL_AT_EXACTLY_TWO", async () => {
+    const fixture = await policyFixture(71);
+    await rawRun("UPDATE outbound_outbox SET attempt_count=1 WHERE id=?", [fixture.rows[0].id]);
+    await failPolicyAttempt(fixture, { ...fixture.rows[0], attemptCount: 1 }, Object.assign(new Error("owner context changed"), { code: "OWNER_CONTEXT_CHANGED" }));
+    const row = (await db.listOutbox({ generationKey: fixture.generationKey }))[0];
+    console.log(`CASE_71_OBSERVED=${JSON.stringify({ status: row.status, attemptCount: row.attemptCount })}`);
+    assert.equal(row.attemptCount, 2);
+    assert.equal(row.status, "FAILED_TERMINAL");
+  });
+
+  await regression(72, "MIXED_FAILURE_USES_CURRENT_CREDENTIAL_CAP", async () => {
+    const fixture = await policyFixture(72);
+    await failPolicyAttempt(fixture, fixture.rows[0], Object.assign(new Error("first unavailable"), { status: 503 }));
+    let row = (await db.listOutbox({ generationKey: fixture.generationKey }))[0];
+    await rawRun("UPDATE outbound_outbox SET next_attempt_at=0 WHERE id=?", [row.id]);
+    row = await db.claimOutboundIntent(row.id);
+    await failPolicyAttempt(fixture, { ...row, __claimedHere: true }, Object.assign(new Error("owner context changed"), { code: "OWNER_CONTEXT_CHANGED" }));
+    row = (await db.listOutbox({ generationKey: fixture.generationKey }))[0];
+    console.log(`CASE_72_OBSERVED=${JSON.stringify({ status: row.status, attemptCount: row.attemptCount })}`);
+    assert.equal(row.attemptCount, 2);
+    assert.equal(row.status, "FAILED_TERMINAL");
+  });
+
+  await regression(73, "PRE_PROVIDER_SENTINELS_DO_NOT_CONSUME_ATTEMPT_CAP", async () => {
+    const fixture = await policyFixture(73);
+    let providerCalls = 0;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await rawRun("UPDATE outbound_outbox SET next_attempt_at=0 WHERE id=?", [fixture.rows[0].id]);
+      const row = (await db.listOutbox({ generationKey: fixture.generationKey }))[0];
+      await outbox.guiDurableOutbound({
+        outbox: row,
+        conversationGeneration: fixture.activeGeneration,
+        send: async () => ({ authorityRejectedBeforeProvider: true }),
+      });
+    }
+    const row = (await db.listOutbox({ generationKey: fixture.generationKey }))[0];
+    console.log(`CASE_73_OBSERVED=${JSON.stringify({ providerCalls, status: row.status, attemptCount: row.attemptCount })}`);
+    assert.equal(providerCalls, 0);
+    assert.equal(row.attemptCount, 0);
+    assert.notEqual(row.status, "FAILED_TERMINAL");
+  });
+
+  await regression(74, "SIXTH_DEFAULT_ATTEMPT_MAY_SUCCEED", async () => {
+    const fixture = await policyFixture(74);
+    await rawRun("UPDATE outbound_outbox SET attempt_count=5 WHERE id=?", [fixture.rows[0].id]);
+    let providerCalls = 5;
+    await outbox.guiDurableOutbound({
+      outbox: { ...fixture.rows[0], attemptCount: 5 },
+      conversationGeneration: fixture.activeGeneration,
+      send: async (hooks = {}) => {
+        providerCalls += 1;
+        const result = { id: "c74-sixth-success" };
+        hooks.onProviderSuccess?.(result);
+        return result;
+      },
+    });
+    const row = (await db.listOutbox({ generationKey: fixture.generationKey }))[0];
+    console.log(`CASE_74_OBSERVED=${JSON.stringify({ providerCalls, status: row.status, attemptCount: row.attemptCount })}`);
+    assert.equal(providerCalls, 6);
+    assert.equal(row.status, "SENT");
+  });
+
+  await regression(75, "MULTI_BUBBLE_CAP_TERMINALIZATION_SURVIVES_SETTLE", async () => {
+    const fixture = await policyFixture(75, { slots: 3 });
+    await rawRun("UPDATE outbound_outbox SET status='SENT', sent_at=75000 WHERE id=?", [fixture.rows[0].id]);
+    await rawRun("UPDATE outbound_outbox SET attempt_count=5 WHERE id=?", [fixture.rows[1].id]);
+    await failPolicyAttempt(fixture, { ...fixture.rows[1], attemptCount: 5 }, Object.assign(new Error("c75 unavailable"), { status: 503 }));
+    const beforeSettle = await db.listOutbox({ generationKey: fixture.generationKey });
+    await db.settleDurableGeneration(fixture.generationKey);
+    const job = await db.getDurableMessageJob(fixture.job.id);
+    console.log(`CASE_75_OBSERVED=${JSON.stringify({ statuses: beforeSettle.map((row) => row.status), jobStatus: job.status })}`);
+    assert.deepEqual(beforeSettle.map((row) => row.status), ["SENT", "FAILED_TERMINAL", "FAILED_TERMINAL"]);
+    assert.equal(job.status, "FAILED_TERMINAL");
+  });
+
+  await regression(76, "TERMINAL_POLICY_NOTIFICATION_AT_MOST_ONCE", async () => {
+    const fixture = await policyFixture(76);
+    await rawRun("UPDATE outbound_outbox SET attempt_count=5 WHERE id=?", [fixture.rows[0].id]);
+    let terminalPolicyNotifications = 0;
+    outbox.capHinhOutboundOutbox({
+      thongBaoAdmin: async (notice) => { if (notice?.terminalPolicy === true) terminalPolicyNotifications += 1; },
+      layAuthority: async () => null,
+      gui: null,
+    });
+    await failPolicyAttempt(fixture, { ...fixture.rows[0], attemptCount: 5 }, Object.assign(new Error("c76 unavailable"), { status: 503 }));
+    await outbox.quetOutboundNgay({ max: 1 });
+    await outbox.quetOutboundNgay({ max: 1 });
+    console.log(`CASE_76_OBSERVED=${JSON.stringify({ terminalPolicyNotifications })}`);
+    assert.equal(terminalPolicyNotifications, 1);
+  });
+
+  await regression(77, "REPLAY_AGE_1799999_REMAINS_ELIGIBLE", async () => {
+    const now = 20_000_000;
+    const job = await db.admitDurableMessageJob({ accountId: "owner-77", conversationId: "C77", sourceMessageId: "c77-in", admittedAt: now - 1_799_999 });
+    assert.equal(typeof db.expireDurableWork, "function");
+    const result = await db.expireDurableWork({ now, limit: 100 });
+    const current = await db.getDurableMessageJob(job.id);
+    console.log(`CASE_77_OBSERVED=${JSON.stringify({ status: current.status, expiredJobs: result.expiredJobs })}`);
+    assert.equal(current.status, "PENDING");
+  });
+
+  await regression(78, "REPLAY_AGE_EXACT_1800000_EXPIRES", async () => {
+    const now = 21_000_000;
+    const job = await db.admitDurableMessageJob({ accountId: "owner-78", conversationId: "C78", sourceMessageId: "c78-in", admittedAt: now - 1_800_000 });
+    assert.equal(typeof db.expireDurableWork, "function");
+    await db.expireDurableWork({ now, limit: 100 });
+    const current = await db.getDurableMessageJob(job.id);
+    console.log(`CASE_78_OBSERVED=${JSON.stringify({ status: current.status })}`);
+    assert.equal(current.status, "EXPIRED");
+  });
+
+  await regression(79, "BOT_OFF_31_MIN_JOB_EXPIRES_AND_NEVER_REPLAYS", async () => {
+    const now = 22_000_000;
+    const job = await db.admitDurableMessageJob({ accountId: "owner-79", conversationId: "C79", sourceMessageId: "c79-in", admittedAt: now - 31 * 60_000 });
+    let providerCalls = 0;
+    queue.capHinhDurableDispatcher({ layAuthority: async () => null, enqueue: async () => { providerCalls += 1; }, gui: null });
+    await queue.quetDurableNgay({ now });
+    queue.capHinhDurableDispatcher({
+      layAuthority: async () => ({ originToken: { ownerUid: "owner-79" }, automaticWork: {} }),
+      enqueue: async () => { providerCalls += 1; },
+      gui: null,
+    });
+    await queue.quetDurableNgay({ now: now + 1 });
+    const current = await db.getDurableMessageJob(job.id);
+    console.log(`CASE_79_OBSERVED=${JSON.stringify({ status: current.status, providerCalls })}`);
+    assert.equal(current.status, "EXPIRED");
+    assert.equal(providerCalls, 0);
+  });
+
+  await regression(80, "PREPARED_UNDELIVERED_GENERATION_EXPIRES_ATOMICALLY", async () => {
+    const now = 23_000_000;
+    const fixture = await policyFixture(80, { slots: 2, admittedAt: now - 1_800_000 });
+    assert.equal(typeof db.expireDurableWork, "function");
+    await db.expireDurableWork({ now, limit: 100 });
+    const rows = await db.listOutbox({ generationKey: fixture.generationKey });
+    const job = await db.getDurableMessageJob(fixture.job.id);
+    console.log(`CASE_80_OBSERVED=${JSON.stringify({ outbox: rows.map((row) => row.status), job: job.status })}`);
+    assert.deepEqual(rows.map((row) => row.status), ["EXPIRED", "EXPIRED"]);
+    assert.equal(job.status, "EXPIRED");
+  });
+
+  await regression(81, "DELIVERY_STARTED_GENERATION_DOES_NOT_AGE_EXPIRE", async () => {
+    const now = 24_000_000;
+    const sending = await policyFixture("81-sending", { admittedAt: now - 1_800_000 });
+    const sent = await policyFixture("81-sent", { admittedAt: now - 1_800_000 });
+    await rawRun("UPDATE outbound_outbox SET status='SENDING', lease_until=? WHERE id=?", [now + 60_000, sending.rows[0].id]);
+    await rawRun("UPDATE outbound_outbox SET status='SENT', sent_at=? WHERE id=?", [now - 1, sent.rows[0].id]);
+    assert.equal(typeof db.expireDurableWork, "function");
+    await db.expireDurableWork({ now, limit: 100 });
+    const sendingJob = await db.getDurableMessageJob(sending.job.id);
+    const sentJob = await db.getDurableMessageJob(sent.job.id);
+    console.log(`CASE_81_OBSERVED=${JSON.stringify({ sendingJob: sendingJob.status, sentJob: sentJob.status })}`);
+    assert.notEqual(sendingJob.status, "EXPIRED");
+    assert.notEqual(sentJob.status, "EXPIRED");
+  });
+
+  await regression(82, "TERMINAL_STATES_SURVIVE_CLAIM_RECOVERY_AND_SWEEP", async () => {
+    const failedJob = await db.admitDurableMessageJob({ accountId: "owner-82", conversationId: "C82", sourceMessageId: "c82-failed" });
+    const expiredJob = await db.admitDurableMessageJob({ accountId: "owner-82", conversationId: "C82", sourceMessageId: "c82-expired" });
+    await rawRun("UPDATE durable_message_jobs SET status='FAILED_TERMINAL', lease_until=NULL WHERE id=?", [failedJob.id]);
+    await rawRun("UPDATE durable_message_jobs SET status='EXPIRED', lease_until=NULL WHERE id=?", [expiredJob.id]);
+    const rows = await db.ensureOutboundIntents({
+      generationKey: "case-82-generation", accountId: "owner-82", conversationId: "C82",
+      intents: [0, 1].map((slot) => ({ outboundKind: "TEXT", payload: { text: `c82-${slot}` } })),
+    });
+    await rawRun("UPDATE outbound_outbox SET status='FAILED_TERMINAL', lease_until=NULL WHERE id=?", [rows[0].id]);
+    await rawRun("UPDATE outbound_outbox SET status='EXPIRED', lease_until=NULL WHERE id=?", [rows[1].id]);
+    assert.equal(await db.claimDurableMessageJob(failedJob.id), null);
+    assert.equal(await db.claimDurableMessageJob(expiredJob.id), null);
+    assert.equal(await db.claimOutboundIntent(rows[0].id), null);
+    assert.equal(await db.claimOutboundIntent(rows[1].id), null);
+    await db.recoverExpiredDurableJobs(Date.now() + 1_000_000);
+    await db.recoverExpiredOutboundIntents(Date.now() + 1_000_000);
+    const jobsAfter = await db.listDurableMessageJobs({ accountId: "owner-82", conversationId: "C82" });
+    const outboxAfter = await db.listOutbox({ generationKey: "case-82-generation" });
+    console.log(`CASE_82_OBSERVED=${JSON.stringify({ jobs: jobsAfter.map((row) => row.status), outbox: outboxAfter.map((row) => row.status) })}`);
+    assert.deepEqual(jobsAfter.map((row) => row.status), ["FAILED_TERMINAL", "EXPIRED"]);
+    assert.deepEqual(outboxAfter.map((row) => row.status), ["FAILED_TERMINAL", "EXPIRED"]);
+  });
+
+  await regression(83, "ASSIGN_CANNOT_RESURRECT_TERMINAL_JOBS", async () => {
+    const failed = await db.admitDurableMessageJob({ accountId: "owner-83", conversationId: "C83", sourceMessageId: "c83-failed" });
+    const expired = await db.admitDurableMessageJob({ accountId: "owner-83", conversationId: "C83", sourceMessageId: "c83-expired" });
+    await rawRun("UPDATE durable_message_jobs SET status='FAILED_TERMINAL' WHERE id=?", [failed.id]);
+    await rawRun("UPDATE durable_message_jobs SET status='EXPIRED' WHERE id=?", [expired.id]);
+    await db.assignDurableGeneration([failed.id, expired.id], "case-83-generation");
+    const rows = await db.listDurableMessageJobs({ accountId: "owner-83", conversationId: "C83" });
+    console.log(`CASE_83_OBSERVED=${JSON.stringify(rows.map((row) => ({ status: row.status, generationKey: row.generationKey })))}`);
+    assert.deepEqual(rows.map((row) => row.status), ["FAILED_TERMINAL", "EXPIRED"]);
+    assert.ok(rows.every((row) => row.generationKey === null));
+  });
+
+  await regression(84, "REQUEUE_FUNCTIONS_CANNOT_RESURRECT_TERMINAL_JOBS", async () => {
+    const failed = await db.admitDurableMessageJob({ accountId: "owner-84", conversationId: "C84", sourceMessageId: "c84-failed" });
+    const expired = await db.admitDurableMessageJob({ accountId: "owner-84", conversationId: "C84", sourceMessageId: "c84-expired" });
+    await rawRun("UPDATE durable_message_jobs SET status='FAILED_TERMINAL', generation_key='case-84-failed' WHERE id=?", [failed.id]);
+    await rawRun("UPDATE durable_message_jobs SET status='EXPIRED', generation_key='case-84-expired' WHERE id=?", [expired.id]);
+    await db.requeueDurableGeneration("case-84-failed");
+    await db.requeueStaleDurableGeneration("case-84-expired");
+    const rows = await db.listDurableMessageJobs({ accountId: "owner-84", conversationId: "C84" });
+    console.log(`CASE_84_OBSERVED=${JSON.stringify(rows.map((row) => row.status))}`);
+    assert.deepEqual(rows.map((row) => row.status), ["FAILED_TERMINAL", "EXPIRED"]);
+  });
+
+  await regression(85, "BLOCK_AND_FAILURE_CANNOT_RESURRECT_TERMINAL_JOBS", async () => {
+    const failed = await db.admitDurableMessageJob({ accountId: "owner-85", conversationId: "C85", sourceMessageId: "c85-failed" });
+    const expired = await db.admitDurableMessageJob({ accountId: "owner-85", conversationId: "C85", sourceMessageId: "c85-expired" });
+    await rawRun("UPDATE durable_message_jobs SET status='FAILED_TERMINAL', generation_key='case-85-generation' WHERE id=?", [failed.id]);
+    await rawRun("UPDATE durable_message_jobs SET status='EXPIRED', generation_key='case-85-generation' WHERE id=?", [expired.id]);
+    await db.markDurableJobsBlocked([failed.id, expired.id], "c85-block");
+    await db.markDurableGenerationFailure("case-85-generation", { status: "RETRY", errorCode: "c85-fail" });
+    const rows = await db.listDurableMessageJobs({ accountId: "owner-85", conversationId: "C85" });
+    console.log(`CASE_85_OBSERVED=${JSON.stringify(rows.map((row) => row.status))}`);
+    assert.deepEqual(rows.map((row) => row.status), ["FAILED_TERMINAL", "EXPIRED"]);
+  });
+
+  await regression(86, "SETTLE_CANNOT_RESURRECT_TERMINAL_JOBS", async () => {
+    const failed = await db.admitDurableMessageJob({ accountId: "owner-86", conversationId: "C86", sourceMessageId: "c86-failed" });
+    const expired = await db.admitDurableMessageJob({ accountId: "owner-86", conversationId: "C86", sourceMessageId: "c86-expired" });
+    await rawRun("UPDATE durable_message_jobs SET status='FAILED_TERMINAL', generation_key='case-86-generation' WHERE id=?", [failed.id]);
+    await rawRun("UPDATE durable_message_jobs SET status='EXPIRED', generation_key='case-86-generation' WHERE id=?", [expired.id]);
+    const settled = await db.settleDurableGeneration("case-86-generation", { allowNoOutbound: true });
+    const rows = await db.listDurableMessageJobs({ accountId: "owner-86", conversationId: "C86" });
+    console.log(`CASE_86_OBSERVED=${JSON.stringify({ settled, statuses: rows.map((row) => row.status) })}`);
+    assert.equal(settled, false);
+    assert.deepEqual(rows.map((row) => row.status), ["FAILED_TERMINAL", "EXPIRED"]);
+  });
+
+  await regression(87, "LEASE_EXPIRED_AT_FIVE_TERMINALIZES_AT_SIX", async () => {
+    const now = 87_000_000;
+    const fixture = await policyFixture(87);
+    await rawRun("UPDATE outbound_outbox SET status='SENDING', attempt_count=5, lease_until=? WHERE id=?", [now - 1, fixture.rows[0].id]);
+    await db.recoverExpiredOutboundIntents(now);
+    const row = (await db.listOutbox({ generationKey: fixture.generationKey }))[0];
+    const job = await db.getDurableMessageJob(fixture.job.id);
+    console.log(`CASE_87_OBSERVED=${JSON.stringify({ status: row.status, attemptCount: row.attemptCount, jobStatus: job.status })}`);
+    assert.equal(row.attemptCount, 6);
+    assert.equal(row.status, "FAILED_TERMINAL");
+    assert.equal(job.status, "FAILED_TERMINAL");
+  });
+
+  await regression(88, "ATOMIC_POLICY_OPERATIONS_DO_NOT_NEST_ARBITER", async () => {
+    const dbSource = source("lib/db.js");
+    assert.equal(typeof db.expireDurableWork, "function");
+    const exportedRegion = (name) => {
+      const start = dbSource.indexOf(`export async function ${name}`);
+      assert.ok(start >= 0, `missing exported function ${name}`);
+      const next = dbSource.indexOf("export async function ", start + 1);
+      return dbSource.slice(start, next > start ? next : dbSource.length);
+    };
+    const failureBody = exportedRegion("markOutboundFailure");
+    const expiryBody = exportedRegion("expireDurableWork");
+    assert.equal((failureBody.match(/withDurableWrite\(/g) || []).length, 1);
+    assert.equal((expiryBody.match(/withDurableWrite\(/g) || []).length, 1);
+    assert.doesNotMatch(failureBody, /await\s+(markOutboundFailure|recoverExpiredOutboundIntents|expireDurableWork)\s*\(/);
+    assert.doesNotMatch(expiryBody, /await\s+(markOutboundFailure|recoverExpiredDurableJobs|recoverExpiredOutboundIntents)\s*\(/);
+    const fixture = await policyFixture(88);
+    const claimed = await db.claimOutboundIntent(fixture.rows[0].id);
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("case88 arbiter timeout")), 1_000));
+    await Promise.race([
+      Promise.all([
+        db.markOutboundFailure(claimed.id, { status: "RETRY", errorCode: "c88", effectiveCap: 6 }),
+        db.expireDurableWork({ now: 88_000_000, limit: 10 }),
+      ]),
+      timeout,
+    ]);
+    console.log(`CASE_88_OBSERVED=${JSON.stringify({ failureAcquisitions: 1, expiryAcquisitions: 1, completed: true })}`);
+  });
+
+  await regression(89, "STALE_REQUEUE_CANNOT_RESURRECT_TERMINAL_OUTBOX", async () => {
+    const fixture = await policyFixture(89, { slots: 2 });
+    await rawRun("UPDATE outbound_outbox SET status='FAILED_TERMINAL', lease_until=NULL WHERE id=?", [fixture.rows[0].id]);
+    await rawRun("UPDATE outbound_outbox SET status='EXPIRED', lease_until=NULL WHERE id=?", [fixture.rows[1].id]);
+    await rawRun("UPDATE durable_message_jobs SET status='FAILED_TERMINAL' WHERE id=?", [fixture.job.id]);
+    await db.requeueStaleDurableGeneration(fixture.generationKey);
+    const rows = await db.listOutbox({ generationKey: fixture.generationKey });
+    console.log(`CASE_89_OBSERVED=${JSON.stringify(rows.map((row) => ({ status: row.status, generationKey: row.generationKey })))}`);
+    assert.deepEqual(rows.map((row) => row.status), ["FAILED_TERMINAL", "EXPIRED"]);
+    assert.ok(rows.every((row) => row.generationKey === fixture.generationKey));
+  });
+
+  await regression(90, "ABANDON_CANNOT_RESURRECT_TERMINAL_OUTBOX", async () => {
+    const fixture = await policyFixture(90, { slots: 2 });
+    await rawRun("UPDATE outbound_outbox SET status='FAILED_TERMINAL', lease_until=NULL WHERE id=?", [fixture.rows[0].id]);
+    await rawRun("UPDATE outbound_outbox SET status='EXPIRED', lease_until=NULL WHERE id=?", [fixture.rows[1].id]);
+    await db.abandonOutboundGeneration(fixture.generationKey, "c90-abandon");
+    const rows = await db.listOutbox({ generationKey: fixture.generationKey });
+    console.log(`CASE_90_OBSERVED=${JSON.stringify(rows.map((row) => ({ status: row.status, generationKey: row.generationKey })))}`);
+    assert.deepEqual(rows.map((row) => row.status), ["FAILED_TERMINAL", "EXPIRED"]);
+    assert.ok(rows.every((row) => row.generationKey === fixture.generationKey));
+  });
+
+  await regression(91, "MARK_SENT_DELAY_SELECTION_SKIPS_TERMINAL_SIBLINGS", async () => {
+    const now = 91_000_000;
+    const fixture = await policyFixture(91, { slots: 3 });
+    await rawRun("UPDATE outbound_outbox SET status='SENDING', lease_until=? WHERE id=?", [now + 1_000, fixture.rows[0].id]);
+    await rawRun("UPDATE outbound_outbox SET status='FAILED_TERMINAL' WHERE id=?", [fixture.rows[1].id]);
+    await db.markOutboundSent(fixture.rows[0].id, "c91-provider", now, { generationKey: fixture.generationKey, nextAttemptDelayMs: 500 });
+    const rows = await db.listOutbox({ generationKey: fixture.generationKey });
+    console.log(`CASE_91_OBSERVED=${JSON.stringify(rows.map((row) => ({ status: row.status, nextAttemptAt: row.nextAttemptAt })))}`);
+    assert.equal(rows[1].status, "FAILED_TERMINAL");
+    assert.equal(rows[2].nextAttemptAt, now + 500);
+  });
+
+  await regression(92, "LEASE_EXPIRED_MARKER_BLOCKS_GENERATION_AGE_EXPIRY", async () => {
+    const now = 92_000_000;
+    const fixture = await policyFixture(92, { admittedAt: now - 1_800_000 });
+    await rawRun("UPDATE outbound_outbox SET status='RETRY', last_error_code='LEASE_EXPIRED', lease_until=NULL WHERE id=?", [fixture.rows[0].id]);
+    assert.equal(typeof db.expireDurableWork, "function");
+    await db.expireDurableWork({ now, limit: 100 });
+    const row = (await db.listOutbox({ generationKey: fixture.generationKey }))[0];
+    const job = await db.getDurableMessageJob(fixture.job.id);
+    console.log(`CASE_92_OBSERVED=${JSON.stringify({ outboxStatus: row.status, marker: row.lastErrorCode, jobStatus: job.status })}`);
+    assert.equal(row.status, "RETRY");
+    assert.equal(row.lastErrorCode, "LEASE_EXPIRED");
+    assert.notEqual(job.status, "EXPIRED");
+  });
+
+  await regression(93, "AGE_EXPIRY_RUNS_BEFORE_LEASE_RECOVERY_IN_ONE_SWEEP", async () => {
+    const queueSource = source("lib/durable-message-queue.js");
+    const body = extractFunction(queueSource, "async function sweepBody");
+    const expiryIndex = body.indexOf("expireDurableWork");
+    const jobRecoveryIndex = body.indexOf("recoverExpiredDurableJobs");
+    const outboundSweepIndex = body.indexOf("quetOutboundNgay");
+    const claimIndex = body.indexOf("claimNextDurableMessageJobs");
+    console.log(`CASE_93_OBSERVED=${JSON.stringify({ expiryIndex, jobRecoveryIndex, outboundSweepIndex, claimIndex })}`);
+    assert.ok(expiryIndex >= 0);
+    assert.ok(expiryIndex < jobRecoveryIndex);
+    assert.ok(jobRecoveryIndex < outboundSweepIndex);
+    assert.ok(outboundSweepIndex < claimIndex);
+  });
+
+  await regression(94, "LEASE_CAP_EMITS_ONE_TERMINAL_POLICY_NOTIFICATION", async () => {
+    const now = 94_000_000;
+    const fixture = await policyFixture(94);
+    await rawRun("UPDATE outbound_outbox SET status='SENDING', attempt_count=5, lease_until=? WHERE id=?", [now - 1, fixture.rows[0].id]);
+    await rawRun(
+      "UPDATE outbound_outbox SET next_attempt_at=9007199254740991 WHERE generation_key<>? AND status IN ('PENDING','RETRY','BLOCKED')",
+      [fixture.generationKey]
+    );
+    let terminalPolicyNotifications = 0;
+    outbox.capHinhOutboundOutbox({
+      layAuthority: async () => null,
+      gui: null,
+      thongBaoAdmin: async (notice) => { if (notice?.terminalPolicy === true) terminalPolicyNotifications += 1; },
+    });
+    await outbox.quetOutboundNgay({ max: 1, now });
+    await outbox.quetOutboundNgay({ max: 1, now: now + 1 });
+    const row = (await db.listOutbox({ generationKey: fixture.generationKey }))[0];
+    console.log(`CASE_94_OBSERVED=${JSON.stringify({ status: row.status, terminalPolicyNotifications })}`);
+    assert.equal(row.status, "FAILED_TERMINAL");
+    assert.equal(terminalPolicyNotifications, 1);
+  });
+
+  await regression(95, "CAP_WINS_AGE_CONFLICT_AFTER_ORDERED_SWEEP", async () => {
+    const now = 95_000_000;
+    const fixture = await policyFixture(95, { admittedAt: now - 1_800_000 });
+    await rawRun("UPDATE outbound_outbox SET status='SENDING', attempt_count=5, lease_until=? WHERE id=?", [now - 1, fixture.rows[0].id]);
+    queue.capHinhDurableDispatcher({ layAuthority: async () => null, enqueue: async () => {}, gui: null, thongBaoAdmin: async () => {} });
+    await queue.quetDurableNgay({ now });
+    const row = (await db.listOutbox({ generationKey: fixture.generationKey }))[0];
+    const job = await db.getDurableMessageJob(fixture.job.id);
+    console.log(`CASE_95_OBSERVED=${JSON.stringify({ outboxStatus: row.status, attemptCount: row.attemptCount, jobStatus: job.status })}`);
+    assert.equal(row.status, "FAILED_TERMINAL");
+    assert.equal(job.status, "FAILED_TERMINAL");
+  });
+
+  await regression(96, "DYNAMIC_SQL_TERMINAL_RESURRECTION_AUDIT", async () => {
+    const dbSource = source("lib/db.js");
+    const statements = [...dbSource.matchAll(/`(UPDATE\s+(durable_message_jobs|outbound_outbox)[\s\S]*?)`/gi)]
+      .map((match) => ({ table: match[2], sql: match[1] }))
+      .filter(({ sql }) => /SET[\s\S]*?\bstatus\s*=/.test(sql));
+    const unsafe = statements.filter(({ sql }) => {
+      const predicate = sql.slice(sql.search(/\bWHERE\b/i));
+      return /status\s*<>/i.test(predicate)
+        || !/(status\s+IN\s*\(|status\s*=\s*'SENDING'|status\s*=\s*'PROCESSING')/i.test(predicate)
+        || /status\s+(?:IN\s*\([^)]*|=\s*)'(?:FAILED_TERMINAL|EXPIRED|DONE|SENT)'/i.test(predicate);
+    });
+    const unsafeJobs = unsafe.filter(({ table }) => table === "durable_message_jobs");
+    const unsafeOutbox = unsafe.filter(({ table }) => table === "outbound_outbox");
+    console.log(`CASE_96_OBSERVED=${JSON.stringify({
+      auditedStatements: statements.length,
+      jobTerminalResurrectionPaths: unsafeJobs.length,
+      outboxTerminalResurrectionPaths: unsafeOutbox.length,
+      unsafe: unsafe.map(({ table, sql }) => ({ table, sql: sql.replace(/\s+/g, " ") })),
+    })}`);
+    assert.ok(statements.length > 0);
+    assert.deepEqual(unsafeJobs, []);
+    assert.deepEqual(unsafeOutbox, []);
+  });
+
+  await regression(97, "EXPIRY_QUERY_PLAN_EVIDENCE", async () => {
+    const jobPlan = await db.websiteDataAll(
+      `EXPLAIN QUERY PLAN
+       SELECT id, account_id, conversation_id
+         FROM durable_message_jobs
+        WHERE generation_key IS NULL
+          AND status IN ('PENDING','PROCESSING','BLOCKED','RETRY','WAITING_OUTBOX')
+          AND admitted_at <= ?
+        ORDER BY admitted_at, id
+        LIMIT ?`,
+      [1_000_000, 100]
+    );
+    const generationPlan = await db.websiteDataAll(
+      `EXPLAIN QUERY PLAN
+       SELECT generation_key,
+              MIN(admitted_at) AS first_admitted_at,
+              MIN(account_id) AS account_id,
+              MIN(conversation_id) AS conversation_id
+         FROM durable_message_jobs
+        WHERE generation_key IS NOT NULL
+          AND status IN ('PENDING','PROCESSING','BLOCKED','RETRY','WAITING_OUTBOX')
+        GROUP BY generation_key
+       HAVING MIN(admitted_at) <= ?
+        ORDER BY MIN(admitted_at), generation_key
+        LIMIT ?`,
+      [1_000_000, 100]
+    );
+    console.log(`CASE_97_JOB_EXPLAIN_QUERY_PLAN=${JSON.stringify(jobPlan)}`);
+    console.log(`CASE_97_GENERATION_EXPLAIN_QUERY_PLAN=${JSON.stringify(generationPlan)}`);
+    assert.ok(jobPlan.length > 0);
+    assert.ok(generationPlan.length > 0);
+  });
+
+  await regression(98, "SENTINEL_ONLY_PATH_EVENTUALLY_AGE_EXPIRES", async () => {
+    const now = 98_000_000;
+    const fixture = await policyFixture(98, { admittedAt: now - 1_800_000 });
+    await outbox.guiDurableOutbound({
+      outbox: fixture.rows[0],
+      conversationGeneration: fixture.activeGeneration,
+      send: async () => ({ authorityRejectedBeforeProvider: true }),
+    });
+    await db.expireDurableWork({ now, limit: 100 });
+    const row = (await db.listOutbox({ generationKey: fixture.generationKey }))[0];
+    const job = await db.getDurableMessageJob(fixture.job.id);
+    console.log(`CASE_98_OBSERVED=${JSON.stringify({ outboxStatus: row.status, attemptCount: row.attemptCount, jobStatus: job.status })}`);
+    assert.equal(row.status, "EXPIRED");
+    assert.equal(row.attemptCount, 0);
+    assert.equal(job.status, "EXPIRED");
+  });
+
+  await regression(99, "CLASSIFIED_FAILURE_PATH_EVENTUALLY_AGE_EXPIRES", async () => {
+    const now = 99_000_000;
+    const fixture = await policyFixture(99, { admittedAt: now - 1_800_000 });
+    await failPolicyAttempt(fixture, fixture.rows[0], Object.assign(new Error("c99 unavailable"), { status: 503 }));
+    await db.expireDurableWork({ now, limit: 100 });
+    const row = (await db.listOutbox({ generationKey: fixture.generationKey }))[0];
+    const job = await db.getDurableMessageJob(fixture.job.id);
+    console.log(`CASE_99_OBSERVED=${JSON.stringify({ outboxStatus: row.status, attemptCount: row.attemptCount, marker: row.lastErrorCode, jobStatus: job.status })}`);
+    assert.equal(row.status, "EXPIRED");
+    assert.equal(row.attemptCount, 1);
+    assert.equal(job.status, "EXPIRED");
+  });
+
+  await regression(100, "EXPIRY_TERMINAL_POLICY_NOTIFICATION_AT_MOST_ONCE", async () => {
+    const now = 100_000_000;
+    const job = await db.admitDurableMessageJob({
+      accountId: "owner-100", conversationId: "C100", sourceMessageId: "c100-in",
+      admittedAt: now - 1_800_000,
+    });
+    let terminalPolicyNotifications = 0;
+    queue.capHinhDurableDispatcher({
+      layAuthority: async () => null,
+      enqueue: async () => {},
+      gui: null,
+      thongBaoAdmin: async (notice) => {
+        if (notice?.terminalPolicy === true && notice?.threadId === "C100") terminalPolicyNotifications += 1;
+      },
+    });
+    await queue.quetDurableNgay({ now });
+    await queue.quetDurableNgay({ now: now + 1 });
+    const current = await db.getDurableMessageJob(job.id);
+    console.log(`CASE_100_OBSERVED=${JSON.stringify({ status: current.status, terminalPolicyNotifications })}`);
+    assert.equal(current.status, "EXPIRED");
+    assert.equal(terminalPolicyNotifications, 1);
+  });
+
+  await regression(101, "LEASE_EXPIRED_BELOW_CAP_STAYS_BOUNDED_RETRY", async () => {
+    const now = 101_000_000;
+    const fixture = await policyFixture(101);
+    await rawRun("UPDATE outbound_outbox SET status='SENDING', attempt_count=4, lease_until=? WHERE id=?", [now - 1, fixture.rows[0].id]);
+    await db.recoverExpiredOutboundIntents(now);
+    const row = (await db.listOutbox({ generationKey: fixture.generationKey }))[0];
+    console.log(`CASE_101_OBSERVED=${JSON.stringify({ status: row.status, attemptCount: row.attemptCount, marker: row.lastErrorCode })}`);
+    assert.equal(row.status, "RETRY");
+    assert.equal(row.attemptCount, 5);
+    assert.equal(row.lastErrorCode, "LEASE_EXPIRED");
+  });
+
+  await regression(102, "GENERATION_AGE_USES_MIN_MEMBER_ADMITTED_AT", async () => {
+    const now = 102_000_000;
+    const fixture = await policyFixture(102, { admittedAt: now - 1_800_000 });
+    const newer = await db.admitDurableMessageJob({
+      accountId: fixture.accountId,
+      conversationId: fixture.conversationId,
+      sourceMessageId: "c102-newer",
+      admittedAt: now - 1_000,
+    });
+    await db.claimDurableMessageJob(newer.id, { now: now - 999, leaseMs: 3_600_000 });
+    await db.assignDurableGeneration([newer.id], fixture.generationKey, { now: now - 999, leaseMs: 3_600_000 });
+    await db.expireDurableWork({ now, limit: 100 });
+    const jobs = await db.listDurableMessageJobs({ accountId: fixture.accountId, conversationId: fixture.conversationId });
+    console.log(`CASE_102_OBSERVED=${JSON.stringify({ admittedAt: jobs.map((row) => row.admittedAt), statuses: jobs.map((row) => row.status) })}`);
+    assert.deepEqual(jobs.map((row) => row.status), ["EXPIRED", "EXPIRED"]);
+  });
+
   assert.equal(regressionFailures.length, 0, `Regression failures: ${regressionFailures.map(({ number }) => number).join(",")}`);
-  assert.equal(passed.length, 66);
-  assert.ok(Array.from({ length: 25 }, (_, index) => index + 41).every((number) => passed.includes(number)));
-  console.log("DURABLE_QUEUE_OUTBOX_P1 = 66/66 PASS");
+  assert.equal(passed.length, 102);
+  assert.ok(Array.from({ length: 55 }, (_, index) => index + 41).every((number) => passed.includes(number)));
+  console.log("DURABLE_QUEUE_OUTBOX_P1 = 102/102 PASS");
   console.log("REAL_ZALO_CALL = 0");
   console.log("REAL_LLM_CALL = 0");
   console.log("PRODUCTION_DB_TOUCHED = NO");
