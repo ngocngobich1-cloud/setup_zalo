@@ -177,6 +177,9 @@ function buildBubbleHarness({ bubbles, sendAt }) {
     guiDaXemChoTins: () => { seenCalls += 1; },
     thuThaCamXuc: async () => false,
     batDauGoPhim: () => () => undefined,
+    batDauWebTyping: () => Object.assign(() => undefined, { setPhase: () => undefined }),
+    durableIds: () => [],
+    withGlobalAiSlot: async (_request, work) => work(),
     aiChat: {
       getConfig: () => ({}),
       tryReply: async () => "AI reply",

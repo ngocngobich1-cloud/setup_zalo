@@ -126,7 +126,7 @@ function dongBoChieuCaoComposer() {
   }
 }
 
-function hienBotDangSoan(ownerUid, threadId) {
+function hienBotDangSoan(ownerUid, threadId, phase = "generating") {
   const owner = String(ownerUid || "");
   const hoiThoai = String(threadId || "");
   if (owner !== String(state.uid || "") || hoiThoai !== String(state.selectedThread?.id || "")) return;
@@ -134,7 +134,9 @@ function hienBotDangSoan(ownerUid, threadId) {
   if (botTypingTtl !== null) window.clearTimeout(botTypingTtl);
   botTypingIdentity = `${owner}\u0000${hoiThoai}`;
   dongBoChieuCaoComposer();
-  els.botTypingIndicator.textContent = "Đang soạn tin...";
+  els.botTypingIndicator.textContent = phase === "waiting"
+    ? "Đang chờ Vizen xử lý…"
+    : "Vizen đang soạn câu trả lời…";
   els.botTypingIndicator?.classList.remove("hidden");
   els.chatPanel?.classList.add("bot-is-typing");
   const identity = botTypingIdentity;
@@ -263,6 +265,9 @@ window.addEventListener("popstate", () => {
 
 socket.on("state", applyState);
 socket.on("connect", () => {
+  // Clear stale local state first; authenticated server bootstrap restores the
+  // current owner-scoped WAITING/GENERATING phase immediately afterwards.
+  anBotDangSoan();
   for (const [threadId, history] of state.historyByThread) {
     if (history.status === "error" || (history.status === "loaded" && history.syncPending)) {
       void fetchThreadHistory(threadId);
@@ -272,14 +277,13 @@ socket.on("connect", () => {
     }
   }
 });
-socket.on("connect", anBotDangSoan);
 socket.on("disconnect", anBotDangSoan);
 socket.on("bot_typing_status", (event) => {
   const ownerUid = String(event?.ownerUid || "");
   const threadId = String(event?.threadId || "");
   if (ownerUid !== String(state.uid || "")) return;
   if (threadId !== String(state.selectedThread?.id || "")) return;
-  if (event?.typing === true) hienBotDangSoan(ownerUid, threadId);
+  if (event?.typing === true) hienBotDangSoan(ownerUid, threadId, event?.phase);
   else if (event?.typing === false) anBotDangSoan();
 });
 socket.on("thread-history-updated", (event) => {

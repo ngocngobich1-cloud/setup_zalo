@@ -77,6 +77,7 @@ import {
   validateRoutingConfig,
 } from "./lib/ai-model-router.js";
 import { classifyProviderFailure } from "./lib/provider-failure.js";
+import { getOwnerAiRuntimePhases } from "./lib/global-ai-limiter.js";
 import {
   clearPendingPdfConfirmationsForRule,
   parsePdfEnabled,
@@ -2057,8 +2058,16 @@ app.delete("/api/logs", async (_req, res) => {
 });
 
 io.on("connection", async (socket) => {
+  const ownerUid = String(chuHienTai() || "").trim();
   socket.emit("state", getPublicState());
-  socket.emit("threads", await listThreads(chuHienTai(), { recentOnly: true }));
+  socket.emit("threads", await listThreads(ownerUid, { recentOnly: true }));
+  for (const phase of getOwnerAiRuntimePhases(ownerUid)) {
+    socket.emit("bot_typing_status", {
+      ...phase,
+      typing: true,
+      waitingCount: phase.normalWaitingCount,
+    });
+  }
 
   // Chi vua mo app -> kiem tra duong day Zalo con song khong. Day la luoi
   // an toan cho truong hop laptop ngu day: luc dut thi app dang dong bang nen

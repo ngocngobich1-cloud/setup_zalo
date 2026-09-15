@@ -266,6 +266,11 @@ function compileReply(sendChatMessage, bubbles, logs, counters, overrides = {}) 
     guiDaXemChoTins: () => {},
     thuThaCamXuc: async () => false,
     batDauGoPhim: () => () => {},
+    batDauWebTyping: () => Object.assign(() => {}, { setPhase: () => {} }),
+    durableIds: () => [],
+    giaHanLeaseDurableGeneration: async () => true,
+    cancelGlobalAiWaiter: () => false,
+    withGlobalAiSlot: async (_options, operation) => operation(),
     aiChat: {
       getConfig: () => ({ botEnabled: true }),
       tryReply: async () => { counters.llm += 1; return "AI"; },

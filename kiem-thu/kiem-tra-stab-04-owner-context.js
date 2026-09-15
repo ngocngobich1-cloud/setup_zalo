@@ -189,7 +189,8 @@ function sourceProof() {
   assert.match(adminCommandBody, /const khoa = khoaThaoTacCho\(ownerUid, message\.threadId\);/);
 
   const choAccesses = [...adminCommand.matchAll(/\bcho\.(get|set|delete|has)\s*\(\s*([^,\n)]+)/g)];
-  assert.equal(choAccesses.length, 23);
+  // P2 adds one owner-bound cho.delete(khoa) for typed AI-slot timeout cleanup.
+  assert.equal(choAccesses.length, 24);
   for (const access of choAccesses) {
     assert.ok(
       access[2].trim() === "khoa" || access[2].trim() === "khoaThaoTacCho(ownerUid",

@@ -825,6 +825,11 @@ async function runNonPdfStaleReplayScenario({ secondId, secondSender }) {
     guiDaXemChoTins: () => {},
     thuThaCamXuc: async () => false,
     batDauGoPhim: () => () => {},
+    batDauWebTyping: () => Object.assign(() => {}, { setPhase: () => {} }),
+    durableIds: () => [],
+    giaHanLeaseDurableGeneration: async () => true,
+    cancelGlobalAiWaiter: () => false,
+    withGlobalAiSlot: async (_options, operation) => operation(),
     aiChat: {
       getConfig: () => ({ botEnabled: true }),
       tryReply: async (_content, message) => {
@@ -961,6 +966,11 @@ async function runPdfServiceScenario({ content, pending = false, staleAttempts =
     guiDaXemChoTins: () => {},
     thuThaCamXuc: async () => false,
     batDauGoPhim: () => () => {},
+    batDauWebTyping: () => Object.assign(() => {}, { setPhase: () => {} }),
+    durableIds: () => [],
+    giaHanLeaseDurableGeneration: async () => true,
+    cancelGlobalAiWaiter: () => false,
+    withGlobalAiSlot: async (_options, operation) => operation(),
     aiChat: {
       getConfig: () => ({ botEnabled: true }),
       tryReply: async () => {

@@ -202,6 +202,11 @@ async function hotfixOutbound(opened, mode = "confirmed", complete = async () =>
     guiDaXemChoTins: () => {},
     thuThaCamXuc: async () => false,
     batDauGoPhim: () => () => { typingStops += 1; },
+    batDauWebTyping: () => Object.assign(() => {}, { setPhase: () => {} }),
+    durableIds: () => [],
+    giaHanLeaseDurableGeneration: async () => true,
+    cancelGlobalAiWaiter: () => false,
+    withGlobalAiSlot: async (_options, operation) => operation(),
     aiChat: {
       getConfig: () => ({}),
       tryReply: async (_text, metadata) => {
