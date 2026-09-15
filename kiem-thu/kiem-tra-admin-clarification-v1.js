@@ -3,6 +3,7 @@ import fs from "node:fs";
 import "./node24-arm64-test-polyfills.js";
 import { splitIntoBubbles } from "../lib/message-utils.js";
 import { taoDieuPhoiHoiThoai } from "../lib/conversation-inflight.js";
+import { locRuotGan } from "../lib/loc-ruot-gan.js";
 import {
   ADMIN_CLARIFICATION_STATUS as S,
   CLARIFICATION_TTL_MS,
@@ -220,6 +221,7 @@ async function hotfixOutbound(opened, mode = "confirmed", complete = async () =>
     ownerCredentials: { withCurrentOwnerCredentialRead: async (_owner, _config, work) => work() },
     ThreadType: { Group: 1, User: 0 },
     splitIntoBubbles,
+    locRuotGan,
     doi: async () => {
       if (mode === "origin-before-bubble") originCurrent = false;
       if (mode === "generation-before-bubble") generationCurrent = false;
@@ -230,6 +232,8 @@ async function hotfixOutbound(opened, mode = "confirmed", complete = async () =>
       if (mode === "send-throw") throw new Error("provider failure");
       return mode === "unconfirmed" ? null : { id: "confirmed-customer-message" };
     },
+    chuanBiDurableOutbox: async () => [],
+    guiDurableOutbound: async ({ send }) => send(),
     completeAdminClarificationAck: async (...args) => { completions.push(args); return complete(...args); },
     addLog: async (entry) => logs.push(entry),
     thuGuiSticker: async () => { stickers += 1; },
@@ -524,6 +528,58 @@ test("T18 malformed AI output is strict failure", () => {
   assert.equal(parseDecisionReply("Câu trả lời không token").valid, false);
   assert.equal(parseDecisionReply("x\n[[VIZEN_DECISION:ANSWERABLE]]\ny").valid, false);
   assert.equal(parseDecisionReply("[[VIZEN_DECISION:ANSWERABLE]]").valid, false);
+});
+
+test("T18b duplicate same decision marker is malformed with exact reason", () => {
+  const parsed = parseDecisionReply(
+    "[[VIZEN_DECISION:ANSWERABLE]]\nXin chào [[VIZEN_DECISION:ANSWERABLE]]"
+  );
+  assert.equal(parsed.valid, false);
+  assert.equal(parsed.reason, "EXTRA_DECISION_MARKER_IN_BODY");
+  assert.equal(parsed.decision, "ANSWERABLE");
+});
+
+test("T18c second different decision marker is malformed", () => {
+  const parsed = parseDecisionReply(
+    "[[VIZEN_DECISION:ANSWERABLE]]\nXin chào\n[[VIZEN_DECISION:NEED_ADMIN]]"
+  );
+  assert.equal(parsed.valid, false);
+  assert.equal(parsed.reason, "EXTRA_DECISION_MARKER_IN_BODY");
+});
+
+test("T18d inline decision marker is malformed", () => {
+  const parsed = parseDecisionReply(
+    "[[VIZEN_DECISION:NEED_ADMIN]]\nNội dung [[VIZEN_DECISION:OUT_OF_SCOPE]] cuối dòng"
+  );
+  assert.equal(parsed.valid, false);
+  assert.equal(parsed.reason, "EXTRA_DECISION_MARKER_IN_BODY");
+});
+
+test("T18e unknown decision marker in body is malformed", () => {
+  const parsed = parseDecisionReply(
+    "[[VIZEN_DECISION:OUT_OF_SCOPE]]\n[[VIZEN_DECISION:FOO]]"
+  );
+  assert.equal(parsed.valid, false);
+  assert.equal(parsed.reason, "EXTRA_DECISION_MARKER_IN_BODY");
+});
+
+test("T18f valid and legacy parser object shapes remain unchanged", () => {
+  assert.deepEqual(
+    parseDecisionReply("[[VIZEN_DECISION:ANSWERABLE]]\nXin chào"),
+    { valid: true, decision: "ANSWERABLE", body: "Xin chào", legacySkip: false }
+  );
+  assert.deepEqual(
+    parseDecisionReply("[[VIZEN_DECISION:NEED_ADMIN]]\nCần xác nhận"),
+    { valid: true, decision: "NEED_ADMIN", body: "Cần xác nhận", legacySkip: false }
+  );
+  assert.deepEqual(
+    parseDecisionReply("[[VIZEN_DECISION:OUT_OF_SCOPE]]"),
+    { valid: true, decision: "OUT_OF_SCOPE", body: "", legacySkip: false }
+  );
+  assert.deepEqual(
+    parseDecisionReply("SKIP anything"),
+    { valid: true, decision: "OUT_OF_SCOPE", body: "", legacySkip: true }
+  );
 });
 
 test("T19 malformed health alerts by consecutive OR rolling and observes cooldown", async () => {

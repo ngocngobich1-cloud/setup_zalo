@@ -1817,10 +1817,263 @@ async function worker(tempRoot) {
     assert.deepEqual(jobs.map((row) => row.status), ["EXPIRED", "EXPIRED"]);
   });
 
+  await regression(103, "C2_1_RECONCILE_SENT_RETURNS_REPLAY_WITHOUT_PROVIDER", async () => {
+    const row = await db.ensureOutboundIntent({
+      generationKey: "c2-1-generation", accountId: "owner", conversationId: "C2-1",
+      outboundKind: "TEXT", outboundSlot: 0, requiredOutboundCount: 1, payload: { text: "sent" },
+    });
+    await rawRun(
+      "UPDATE outbound_outbox SET status='SENT', provider_message_id='c2-1-provider', sent_at=? WHERE id=?",
+      [Date.now(), row.id]
+    );
+    let providerCalls = 0;
+    const activeGeneration = generation("owner", "C2-1");
+    const result = await outbox.guiDurableOutbound({
+      outbox: { ...row, status: "PENDING" },
+      conversationGeneration: activeGeneration,
+      send: async () => { providerCalls += 1; },
+    });
+    assert.deepEqual(result, { id: "c2-1-provider", durableReplay: true });
+    assert.equal(providerCalls, 0);
+    assert.equal(activeGeneration.accepted, true);
+  });
+
+  await regression(104, "C2_2_RECONCILE_SENDING_HANDS_OFF_WITHOUT_PROVIDER", async () => {
+    const row = await db.ensureOutboundIntent({
+      generationKey: "c2-2-generation", accountId: "owner", conversationId: "C2-2",
+      outboundKind: "TEXT", outboundSlot: 0, requiredOutboundCount: 1, payload: { text: "sending" },
+    });
+    await db.claimOutboundIntent(row.id);
+    let providerCalls = 0;
+    const result = await outbox.guiDurableOutbound({
+      outbox: row,
+      conversationGeneration: generation("owner", "C2-2"),
+      send: async () => { providerCalls += 1; },
+    });
+    assert.deepEqual(result, { outboundHandedOff: true, durableStatus: "SENDING", outboxId: row.id });
+    assert.equal(providerCalls, 0);
+  });
+
+  await regression(105, "C2_3_RECONCILE_FUTURE_PENDING_HANDS_OFF", async () => {
+    const row = await db.ensureOutboundIntent({
+      generationKey: "c2-3-generation", accountId: "owner", conversationId: "C2-3",
+      outboundKind: "TEXT", outboundSlot: 0, requiredOutboundCount: 1, payload: { text: "future" },
+    });
+    await rawRun("UPDATE outbound_outbox SET next_attempt_at=? WHERE id=?", [Date.now() + 60_000, row.id]);
+    let providerCalls = 0;
+    const result = await outbox.guiDurableOutbound({
+      outbox: row,
+      conversationGeneration: generation("owner", "C2-3"),
+      send: async () => { providerCalls += 1; },
+    });
+    assert.equal(result.outboundHandedOff, true);
+    assert.equal(result.durableStatus, "PENDING");
+    assert.equal(providerCalls, 0);
+  });
+
+  await regression(106, "C2_4_RECONCILE_FAILED_TERMINAL_THROWS_EXACT_CODE", async () => {
+    const row = await db.ensureOutboundIntent({
+      generationKey: "c2-4-generation", accountId: "owner", conversationId: "C2-4",
+      outboundKind: "TEXT", outboundSlot: 0, requiredOutboundCount: 1, payload: { text: "terminal" },
+    });
+    await rawRun("UPDATE outbound_outbox SET status='FAILED_TERMINAL' WHERE id=?", [row.id]);
+    await assert.rejects(
+      () => outbox.guiDurableOutbound({
+        outbox: row,
+        conversationGeneration: generation("owner", "C2-4"),
+        send: async () => assert.fail("provider must not run"),
+      }),
+      (error) => error?.code === "OUTBOX_GENERATION_TERMINAL"
+    );
+  });
+
+  await regression(107, "C2_5_RECONCILE_MISSING_INTENT_THROWS_EXACT_CODE", async () => {
+    await assert.rejects(
+      () => outbox.guiDurableOutbound({
+        outbox: { id: 9_999_999, generationKey: "c2-5-missing", status: "PENDING" },
+        conversationGeneration: generation("owner", "C2-5"),
+        send: async () => assert.fail("provider must not run"),
+      }),
+      (error) => error?.code === "OUTBOX_INTENT_MISSING"
+    );
+  });
+
+  await regression(108, "C2_6_TWO_BUBBLES_TWO_CONSUMERS_HAVE_ONE_PROVIDER_CALL_PER_SLOT", async () => {
+    const activeGeneration = await realDurableGeneration({
+      db, queue, taoDieuPhoiHoiThoai,
+      accountId: "owner", conversationId: "C2-6", sourceMessageId: "c2-6-in",
+    });
+    const rows = await outbox.chuanBiDurableOutbox(activeGeneration, [
+      { outboundKind: "TEXT", payload: { text: "slot 0" } },
+      { outboundKind: "TEXT", payload: { text: "slot 1" } },
+    ]);
+    const workerClaim = await db.claimOutboundIntent(rows[0].id);
+    let providerCalls = 0;
+    const providerOrder = [];
+    const handoff = await outbox.guiDurableOutbound({
+      outbox: rows[0], conversationGeneration: activeGeneration,
+      send: async () => { providerCalls += 1; },
+    });
+    assert.equal(handoff.outboundHandedOff, true);
+    await outbox.guiDurableOutbound({
+      outbox: { ...workerClaim, __claimedHere: true }, conversationGeneration: null,
+      send: async (hooks = {}) => {
+        providerCalls += 1;
+        providerOrder.push(0);
+        const result = { id: "c2-6-slot-0" };
+        hooks.onProviderSuccess?.(result);
+        return result;
+      },
+    });
+    await outbox.guiDurableOutbound({
+      outbox: rows[1], conversationGeneration: activeGeneration,
+      send: async (hooks = {}) => {
+        providerCalls += 1;
+        providerOrder.push(1);
+        const result = { id: "c2-6-slot-1" };
+        hooks.onProviderSuccess?.(result);
+        return result;
+      },
+    });
+    const durable = await db.listOutbox({ generationKey: activeGeneration.durableGenerationKey });
+    assert.equal(providerCalls, 2);
+    assert.deepEqual(providerOrder, [0, 1]);
+    assert.deepEqual(durable.map((item) => item.status), ["SENT", "SENT"]);
+  });
+
+  await regression(109, "C2_7_HANDOFF_AND_SWEEPER_SETTLE_GENERATION", async () => {
+    const activeGeneration = await realDurableGeneration({
+      db, queue, taoDieuPhoiHoiThoai,
+      accountId: "owner", conversationId: "C2-7", sourceMessageId: "c2-7-in",
+    });
+    const [row] = await outbox.chuanBiDurableOutbox(activeGeneration, [
+      { outboundKind: "TEXT", payload: { text: "race" } },
+    ]);
+    await rawRun(
+      "UPDATE outbound_outbox SET next_attempt_at=9007199254740991, lease_until=NULL WHERE generation_key <> ? AND status <> 'SENT'",
+      [activeGeneration.durableGenerationKey]
+    );
+    let enteredResolve;
+    let releaseResolve;
+    const entered = new Promise((resolve) => { enteredResolve = resolve; });
+    const release = new Promise((resolve) => { releaseResolve = resolve; });
+    let sweeperProviderCalls = 0;
+    outbox.capHinhOutboundOutbox({
+      layAuthority: async () => ({ originToken: { ownerUid: "owner" } }),
+      gui: async (_claimed, _authority, hooks = {}) => {
+        sweeperProviderCalls += 1;
+        enteredResolve();
+        await release;
+        const result = { id: "c2-7-provider" };
+        hooks.onProviderSuccess?.(result);
+        return result;
+      },
+    });
+    const sweepPromise = outbox.quetOutboundNgay({ max: 1 });
+    await entered;
+    const handoff = await outbox.guiDurableOutbound({
+      outbox: row, conversationGeneration: activeGeneration,
+      send: async () => assert.fail("immediate provider must not run"),
+    });
+    assert.equal(handoff.outboundHandedOff, true);
+    assert.equal(handoff.durableStatus, "SENDING");
+    releaseResolve();
+    assert.equal(await sweepPromise, 1);
+    const job = await db.getDurableMessageJob(activeGeneration.durableJobIds[0]);
+    assert.equal(sweeperProviderCalls, 1);
+    assert.equal(job.status, "DONE");
+  });
+
+  await regression(110, "C2_8_EXPIRED_LEASE_RECOVERS_AND_DELIVERS_ONCE", async () => {
+    const row = await db.ensureOutboundIntent({
+      generationKey: "c2-8-generation", accountId: "owner", conversationId: "C2-8",
+      outboundKind: "TEXT", outboundSlot: 0, requiredOutboundCount: 1, payload: { text: "recover" },
+    });
+    const now = Date.now();
+    await rawRun("UPDATE outbound_outbox SET status='SENDING', lease_until=? WHERE id=?", [now - 1, row.id]);
+    await db.recoverExpiredOutboundIntents(now);
+    await rawRun("UPDATE outbound_outbox SET next_attempt_at=0 WHERE id=?", [row.id]);
+    let providerCalls = 0;
+    await outbox.guiDurableOutbound({
+      outbox: row,
+      conversationGeneration: generation("owner", "C2-8"),
+      send: async (hooks = {}) => {
+        providerCalls += 1;
+        const result = { id: "c2-8-provider" };
+        hooks.onProviderSuccess?.(result);
+        return result;
+      },
+    });
+    const current = (await db.listOutbox({ generationKey: "c2-8-generation" }))[0];
+    assert.equal(providerCalls, 1);
+    assert.equal(current.status, "SENT");
+  });
+
+  await regression(111, "C2_9_BLOCKED_CLAIM_MISS_IS_HANDOFF_NOT_LEASE_BUSY", async () => {
+    const row = await db.ensureOutboundIntent({
+      generationKey: "c2-9-generation", accountId: "owner", conversationId: "C2-9",
+      outboundKind: "TEXT", outboundSlot: 0, requiredOutboundCount: 1, payload: { text: "blocked" },
+    });
+    await rawRun(
+      "UPDATE outbound_outbox SET status='BLOCKED', next_attempt_at=? WHERE id=?",
+      [Date.now() + 60_000, row.id]
+    );
+    const result = await outbox.guiDurableOutbound({
+      outbox: row,
+      conversationGeneration: generation("owner", "C2-9"),
+      send: async () => assert.fail("provider must not run"),
+    });
+    assert.deepEqual(result, { outboundHandedOff: true, durableStatus: "BLOCKED", outboxId: row.id });
+  });
+
+  await regression(112, "B19_SWEEPER_PRECLAIM_SKIPS_RECONCILE_AND_SECOND_CLAIM", async () => {
+    const outboxSource = source("lib/outbound-outbox.js");
+    const guiStart = outboxSource.indexOf("export async function guiDurableOutbound");
+    const guiEnd = outboxSource.indexOf("\nexport async function quetOutboundNgay", guiStart);
+    assert.ok(guiStart >= 0 && guiEnd > guiStart);
+    const compiledSource = [
+      extractFunction(outboxSource, "function durableStateError"),
+      extractFunction(outboxSource, "function reconcileImmediateCaller"),
+      outboxSource.slice(guiStart, guiEnd).replace("export ", ""),
+    ].join("\n");
+    let claimCalls = 0;
+    let rereadCalls = 0;
+    let providerCalls = 0;
+    let recorded = 0;
+    const names = [
+      "claimOutboundIntent", "durableRow", "releaseWithoutProvider", "ghiNhanThatBai",
+      "recordPhysicalDelivery", "OUTBOX_LEASE_MS",
+    ];
+    const values = [
+      async () => { claimCalls += 1; throw new Error("second claim forbidden"); },
+      async () => { rereadCalls += 1; throw new Error("reconcile forbidden"); },
+      async () => assert.fail("release forbidden"),
+      async () => assert.fail("failure record forbidden"),
+      async () => { recorded += 1; },
+      120_000,
+    ];
+    const gui = Function(...names, `"use strict"; ${compiledSource}; return guiDurableOutbound;`)(...values);
+    const sent = await gui({
+      outbox: { id: 112, generationKey: "b19", status: "SENDING", __claimedHere: true },
+      conversationGeneration: null,
+      send: async (hooks = {}) => {
+        providerCalls += 1;
+        const result = { id: "b19-provider" };
+        hooks.onProviderSuccess?.(result);
+        return result;
+      },
+    });
+    assert.equal(sent.id, "b19-provider");
+    assert.equal(providerCalls, 1);
+    assert.equal(recorded, 1);
+    assert.equal(claimCalls, 0);
+    assert.equal(rereadCalls, 0);
+  });
+
   assert.equal(regressionFailures.length, 0, `Regression failures: ${regressionFailures.map(({ number }) => number).join(",")}`);
-  assert.equal(passed.length, 102);
-  assert.ok(Array.from({ length: 55 }, (_, index) => index + 41).every((number) => passed.includes(number)));
-  console.log("DURABLE_QUEUE_OUTBOX_P1 = 102/102 PASS");
+  assert.equal(passed.length, 112);
+  assert.ok(Array.from({ length: 72 }, (_, index) => index + 41).every((number) => passed.includes(number)));
+  console.log("DURABLE_QUEUE_OUTBOX_P1 = 112/112 PASS");
   console.log("REAL_ZALO_CALL = 0");
   console.log("REAL_LLM_CALL = 0");
   console.log("PRODUCTION_DB_TOUCHED = NO");

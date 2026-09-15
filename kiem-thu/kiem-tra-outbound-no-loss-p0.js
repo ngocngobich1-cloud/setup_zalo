@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ZaloApiError } from "zca-js";
 import { taoDieuPhoiHoiThoai } from "../lib/conversation-inflight.js";
+import { locRuotGan } from "../lib/loc-ruot-gan.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ZALO = fs.readFileSync(path.join(ROOT, "lib", "zalo-service.js"), "utf8")
@@ -47,9 +48,15 @@ const phanLoaiLoiGuiProvider = compileNamed(
   "phanLoaiLoiGuiProvider",
   { ZaloApiError, OUTBOUND_OUTCOME, loiClientZcaChacChan }
 );
-function ganOutcomeChoLoi(error, outcome) {
-  if (error && typeof error === "object") error[OUTBOUND_OUTCOME_FIELD] = outcome;
-}
+const outcomeStampSource = extract(
+  "function ganOutcomeChoLoi(",
+  "\nasync function thongBaoAdminLoiOutbound"
+);
+const ganOutcomeChoLoi = compileNamed(
+  outcomeStampSource,
+  "ganOutcomeChoLoi",
+  { OUTBOUND_OUTCOME_FIELD }
+);
 
 function fakeGeneration() {
   const state = {
@@ -91,6 +98,7 @@ function fakeGeneration() {
     outboundContextDaTienLen() {
       return state.outboundContextAdvanced;
     },
+    danhDauProviderHistory() {},
   };
 }
 
@@ -252,6 +260,38 @@ async function testFailureClassificationAndRelease() {
   }
 }
 
+async function testProviderFailureStampWrapsPrimitiveAndFrozenErrors() {
+  const fixtures = [
+    { thrown: "primitive provider failure", expectedMessage: "primitive provider failure", expectedCode: undefined },
+    {
+      thrown: Object.freeze(Object.assign(new Error("frozen provider failure"), { code: "ECONNRESET" })),
+      expectedMessage: "frozen provider failure",
+      expectedCode: "ECONNRESET",
+    },
+  ];
+  for (const fixture of fixtures) {
+    const generation = fakeGeneration();
+    const send = compileSend({
+      sendMessage: async () => { throw fixture.thrown; },
+      sendLink: async () => assert.fail("wrong branch"),
+    }, []);
+    let caught = null;
+    try {
+      await send(
+        { threadId: "THREAD", text: "x", threadType: 0 },
+        { conversationGeneration: generation }
+      );
+    } catch (error) {
+      caught = error;
+    }
+    assert.ok(caught instanceof Error);
+    assert.equal(caught.message, fixture.expectedMessage);
+    assert.equal(caught.code, fixture.expectedCode);
+    assert.equal(caught.vizenOutboundOutcome, "SEND_UNKNOWN");
+    assert.equal(generation.state.sendUnknown, true);
+  }
+}
+
 function compileReply(sendChatMessage, bubbles, logs, counters, overrides = {}) {
   const source = extract(
     "async function traLoiCumTin(",
@@ -277,13 +317,17 @@ function compileReply(sendChatMessage, bubbles, logs, counters, overrides = {}) 
     },
     ownerCredentials: { withCurrentOwnerCredentialRead: async (_owner, _config, work) => work() },
     chuHienTai: () => "OWNER",
+    api: {},
     ThreadType: { User: 0, Group: 1 },
     splitIntoBubbles: () => bubbles,
+    locRuotGan,
     doi: async () => {},
     nghiTruocBubble: () => 0,
     dungTrichDan: () => null,
     dungTheNhacTen: async (text) => ({ text, mentions: [] }),
     sendChatMessage,
+    chuanBiDurableOutbox: async () => [],
+    guiDurableOutbound: async ({ send }) => send(),
     completeAdminClarificationAck: async () => {},
     thuGuiSticker: async () => {},
     thongBaoAdminLoiOutbound: async () => { counters.notifications += 1; },
@@ -1058,9 +1102,182 @@ async function testNotificationRecursionGuard() {
   assert.equal(outboundFailureNotifications.size, 0);
 }
 
+function compileFinalOutboundFilter(logs) {
+  const source = extract(
+    "async function locTruocKhiGui(",
+    "\n/**\n * @param {object} p"
+  );
+  return compileNamed(source, "locTruocKhiGui", {
+    locRuotGan,
+    addLog: async (entry) => { logs.push(entry); },
+  });
+}
+
+async function testDecisionMarkerFilterEveryPositionAndSafeFinalLog() {
+  const cases = [
+    ["[[VIZEN_DECISION:ANSWERABLE]] đầu", "đầu", 1],
+    ["giữa [[VIZEN_DECISION:NEED_ADMIN]] câu", "giữa  câu", 1],
+    ["cuối [[VIZEN_DECISION:OUT_OF_SCOPE]]", "cuối", 1],
+    ["a [[VIZEN_DECISION:FOO]] b [[VIZEN_DECISION:ANSWERABLE]] c", "a  b  c", 2],
+    ["[[VIZEN_DECISION:FOO]]", "", 1],
+  ];
+  for (const [input, expected, count] of cases) {
+    const filtered = locRuotGan(input);
+    assert.equal(filtered.sach, expected);
+    assert.equal(filtered.soMarkerQuyetDinhCat, count);
+    assert.equal(filtered.daCat, true);
+  }
+
+  const logs = [];
+  const filter = compileFinalOutboundFilter(logs);
+  assert.equal(
+    await filter("xin [[VIZEN_DECISION:FOO]] chào", "THREAD"),
+    "xin  chào"
+  );
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].event, "chan_decision_marker");
+  assert.equal(logs[0].detail.markerCount, 1);
+  assert.equal(Object.hasOwn(logs[0].detail, "goc"), false);
+  assert.equal(Object.hasOwn(logs[0].detail, "conLai"), false);
+  assert.doesNotMatch(JSON.stringify(logs[0]), /xin|chào|FOO/);
+}
+
+async function testDecisionMarkerRemovedBeforeMentionsAndDurablePrepare() {
+  const logs = [];
+  const counters = { llm: 0, notifications: 0 };
+  const prepared = [];
+  const providerPayloads = [];
+  const generation = Object.assign(fakeGeneration(), {
+    durableGenerationKey: "GEN-C1",
+    ownerUid: "OWNER",
+    threadId: "T",
+  });
+  const reply = compileReply(async (payload) => {
+    providerPayloads.push(payload);
+    return { id: "sent" };
+  }, [], logs, counters, {
+    aiChat: {
+      getConfig: () => ({ botEnabled: true }),
+      tryReply: async () => "Xin [[VIZEN_DECISION:FOO]] Mai Anh",
+    },
+    splitIntoBubbles: (text) => text.trim() ? [text.trim()] : [],
+    dungTheNhacTen: async (text) => {
+      assert.doesNotMatch(text, /VIZEN_DECISION/);
+      return { text: `@Khách ${text}`, mentions: [{ uid: "C", pos: 0, len: 6 }] };
+    },
+    chuanBiDurableOutbox: async (_generation, intents) => {
+      prepared.push(...intents);
+      return [{ id: "O-1", generationKey: "GEN-C1", status: "PENDING" }];
+    },
+    guiDurableOutbound: async ({ send }) => send(),
+  });
+  await reply([
+    { id: "IN", senderId: "C", senderName: "Khách", threadId: "T", threadType: 1, content: "hello" },
+  ], null, generation);
+  assert.equal(prepared.length, 1);
+  assert.equal(providerPayloads.length, 1);
+  assert.doesNotMatch(prepared[0].payload.text, /VIZEN_DECISION/);
+  assert.doesNotMatch(providerPayloads[0].text, /VIZEN_DECISION/);
+  assert.deepEqual(prepared[0].payload.mentions, [{ uid: "C", pos: 0, len: 6 }]);
+  assert.equal(logs.filter((entry) => entry.event === "chan_decision_marker").length, 1);
+}
+
+async function testAllMarkerReplyStopsBeforeDurableAndProvider() {
+  const logs = [];
+  const counters = { llm: 0, notifications: 0 };
+  let prepared = 0;
+  let sent = 0;
+  const generation = Object.assign(fakeGeneration(), {
+    durableGenerationKey: "GEN-EMPTY",
+    ownerUid: "OWNER",
+    threadId: "T",
+  });
+  const reply = compileReply(async () => { sent += 1; }, [], logs, counters, {
+    aiChat: {
+      getConfig: () => ({ botEnabled: true }),
+      tryReply: async () => "[[VIZEN_DECISION:FOO]]",
+    },
+    splitIntoBubbles: (text) => text.trim() ? [text.trim()] : [],
+    chuanBiDurableOutbox: async () => { prepared += 1; return []; },
+  });
+  await reply([{ id: "IN", senderId: "C", threadId: "T", threadType: 0, content: "hello" }], null, generation);
+  assert.equal(prepared, 0);
+  assert.equal(sent, 0);
+  assert.equal(counters.notifications, 0);
+  const emptyLog = logs.find((entry) => entry.event === "ai_skip");
+  assert.ok(emptyLog);
+  assert.equal(Object.hasOwn(emptyLog.detail, "reply"), false);
+}
+
+async function testUnstampedReplyFailureIsPreProvider() {
+  const run = async (error) => {
+    const logs = [];
+    const counters = { llm: 0, notifications: 0 };
+    const reply = compileReply(async () => { throw error; }, ["bubble"], logs, counters);
+    await reply([{ id: "IN", senderId: "C", threadId: "T", threadType: 0, content: "hello" }]);
+    return {
+      outcome: logs.find((entry) => entry.event === "outbound_terminal_failure")?.detail?.outcome,
+      notifications: counters.notifications,
+    };
+  };
+  assert.deepEqual(await run(new Error("local guard failed")), {
+    outcome: "PRE_PROVIDER_FAILURE",
+    notifications: 1,
+  });
+  assert.deepEqual(await run(Object.assign(new Error("provider unknown"), {
+    vizenOutboundOutcome: "SEND_UNKNOWN",
+  })), {
+    outcome: "SEND_UNKNOWN",
+    notifications: 1,
+  });
+  assert.deepEqual(await run(Object.assign(new Error("provider delivered then local failed"), {
+    providerSucceeded: true,
+  })), {
+    outcome: "SEND_UNKNOWN",
+    notifications: 1,
+  });
+}
+
+async function testDurableHandoffReturnsWithoutSentCountOrAckCompletion() {
+  const logs = [];
+  const counters = { llm: 0, notifications: 0 };
+  const ackCompletions = [];
+  let providerCalls = 0;
+  const generation = Object.assign(fakeGeneration(), {
+    durableGenerationKey: "GEN-HANDOFF",
+    ownerUid: "OWNER",
+    threadId: "T",
+  });
+  const reply = compileReply(async () => { providerCalls += 1; }, [], logs, counters, {
+    aiChat: {
+      getConfig: () => ({ botEnabled: true }),
+      tryReply: async (_text, message) => {
+        message.__adminClarificationAckId = "ACK-1";
+        return "reply";
+      },
+    },
+    splitIntoBubbles: () => ["reply"],
+    chuanBiDurableOutbox: async () => [{ id: "O-H", generationKey: "GEN-HANDOFF", status: "PENDING" }],
+    guiDurableOutbound: async () => ({
+      outboundHandedOff: true,
+      durableStatus: "SENDING",
+      outboxId: "O-H",
+    }),
+    completeAdminClarificationAck: async (...args) => { ackCompletions.push(args); },
+  });
+  await reply([{ id: "IN", senderId: "C", threadId: "T", threadType: 0, content: "hello" }], null, generation);
+  assert.equal(providerCalls, 0);
+  assert.deepEqual(ackCompletions, []);
+  const handoff = logs.find((entry) => entry.event === "outbound_claim_handoff");
+  assert.equal(handoff?.detail?.sentBubbleCount, 0);
+  assert.equal(handoff?.detail?.durableStatus, "SENDING");
+  assert.equal(logs.some((entry) => entry.event === "send_ok"), false);
+}
+
 const tests = [
   ["PROVIDER_BOUNDARY_ALL_BRANCHES", testProviderBoundary],
   ["FAILURE_CLASSIFICATION_RELEASE_UNKNOWN", testFailureClassificationAndRelease],
+  ["PROVIDER_FAILURE_STAMP_PRIMITIVE_FROZEN", testProviderFailureStampWrapsPrimitiveAndFrozenErrors],
   ["BUBBLE_RETRY_RESUME_NULL_UNKNOWN", testBubbleRetry],
   ["DEFERRED_STALE_SUCCESS_REJECT_UNKNOWN", testDeferredStale],
   ["DEFERRED_STALE_BUBBLE_INTEGRATION", testDeferredStaleThroughBubbleLoop],
@@ -1083,6 +1300,11 @@ const tests = [
   ["Q6_PHYSICAL_SUCCESS_SIGNAL_ORDERING", testQ6PhysicalSuccessSignalOrdering],
   ["ORDER_AND_CROSS_CONVERSATION", testOrderAndCrossConversation],
   ["ADMIN_NOTIFICATION_RECURSION_GUARD", testNotificationRecursionGuard],
+  ["C1_MARKER_FILTER_POSITIONS_SAFE_FINAL_LOG", testDecisionMarkerFilterEveryPositionAndSafeFinalLog],
+  ["C1_PREOUTBOX_FILTER_PROTECTS_MENTIONS", testDecisionMarkerRemovedBeforeMentionsAndDurablePrepare],
+  ["C1_ALL_MARKER_EMPTY_STOPS_BEFORE_OUTBOX", testAllMarkerReplyStopsBeforeDurableAndProvider],
+  ["C2_PRE_PROVIDER_CLASSIFICATION", testUnstampedReplyFailureIsPreProvider],
+  ["C2_HANDOFF_PRESERVES_SENT_COUNT_AND_ACK", testDurableHandoffReturnsWithoutSentCountOrAckCompletion],
 ];
 
 let failed = 0;

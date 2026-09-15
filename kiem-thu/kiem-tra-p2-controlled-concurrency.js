@@ -320,7 +320,7 @@ await test("P2-26 standalone summary uses idle gate and 10-skip warning", async 
 });
 
 await test("P2-27 conversation-inflight remains unchanged", async () => {
-  const digest = createHash("sha256").update(source("lib/conversation-inflight.js")).digest("hex");
+  const digest = createHash("sha256").update(source("lib/conversation-inflight.js").replace(/\r\n/g, "\n")).digest("hex");
   assert.equal(digest, "c2192ec484fe92b212d35967b50aa1af212711e0422c72d782f168ff8f347420");
 });
 
