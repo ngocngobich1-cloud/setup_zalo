@@ -53,6 +53,46 @@ function coherent(text) {
   for (const step of steps) { const at = text.indexOf(step); assert.ok(at > previous, `Missing/out-of-order: ${step}`); previous = at; }
 }
 
+const focusedPrimaryScheduleId = 901;
+const focusedSecondaryScheduleId = 902;
+const focusedNoZoomScheduleId = 903;
+const focusedPrimarySchedule = file(focusedPrimaryScheduleId, `# Phiên Aster
+Buổi 1
+03/11/2031
+20:15–21:45
+
+Buổi 2
+05/11/2031
+20:15–21:45
+
+Hình thức: Zoom`);
+const focusedSecondarySchedule = file(focusedSecondaryScheduleId, `# Phiên Boreal
+Khai giảng 04/12/2031 lúc 19:30
+Phiên tiếp theo 06/12/2031 lúc 19:30
+Hình thức: Zoom`);
+const focusedNoZoomSchedule = file(focusedNoZoomScheduleId, `# Phiên Cygnus
+Buổi 1
+07/01/2032
+18:45–20:15
+
+Buổi 2
+09/01/2032
+18:45–20:15
+
+Hình thức: Trực tuyến`);
+const focusedLongDetail = "Ghi nhận ngữ cảnh, kiểm tra dữ kiện và chuyển tiếp đúng quy trình nội bộ. ".repeat(14);
+const focusedProceduralDistractors = Array.from({ length: 16 }, (_, i) => {
+  const generic = "Em cần hỗ trợ khách và chờ trả lời. Sau đó em cần chuyển tiếp đúng bộ phận. Hỏi Coach khi thiếu dữ kiện.";
+  return file(920 + i, `# Quy trình chăm sóc ${i}\n${generic}\n${focusedLongDetail}Mã synthetic ${i}.`);
+});
+const focusedNoise = Array.from({ length: 20 }, (_, i) => file(960 + i,
+  `# Chủ đề độc lập ${i}\n${"Tư liệu nền về cây cối, thiên văn, địa chất và phương pháp phân tích. ".repeat(14)}Mã nền ${i}.`));
+const focusedCorpus = [focusedPrimarySchedule, focusedSecondarySchedule,
+  ...focusedProceduralDistractors, ...focusedNoise];
+const focusedResult = (query, corpus = focusedCorpus) => get(query, corpus);
+const focusedRank = (result, fileId) => result.units.findIndex((unit) => unit.fileId === fileId) + 1;
+const focusedSelected = (result, fileId) => focusedRank(result, fileId) > 0;
+
 function harness(initialRows = baseCorpus) {
   let rows = initialRows;
   let reads = 0; let nextSession = 0;
@@ -374,6 +414,90 @@ await test("K26", "flat long document retrieves final numbered procedure with al
   coherent(texts(result));
   assert.ok(result.stats.selectedCharCount <= 12000);
   console.log(`K26_DOCUMENT_CHARS=${document.length} K26_SELECTED_CHARS=${result.stats.selectedCharCount}`);
+});
+
+await test("K27", "Incident B schedule evidence wins real candidate and 12K budget pressure", () => {
+  const result = focusedResult("Em cần hỏi lịch học ạ");
+  const competingChars = [focusedPrimarySchedule, focusedSecondarySchedule, ...focusedProceduralDistractors]
+    .reduce((sum, row) => sum + row.contentMd.length, 0);
+  assert.equal(result.stats.corpusChunkCount, 38);
+  assert.equal(result.stats.candidateCount, 18);
+  assert.ok(competingChars > 12000);
+  assert.equal(focusedRank(result, focusedPrimaryScheduleId), 1);
+  assert.ok(focusedSelected(result, focusedPrimaryScheduleId));
+  assert.ok(result.stats.selectedCharCount > 10000);
+  assert.ok(result.stats.selectedCharCount <= 12000);
+  console.log(`T1_CANDIDATES=${result.stats.candidateCount} T1_RANK=${focusedRank(result, focusedPrimaryScheduleId)} T1_SELECTED_CHARS=${result.stats.selectedCharCount} T1_COMPETING_CHARS=${competingChars}`);
+});
+
+await test("K28", "compound schedule intents retrieve the primary evidence", () => {
+  const cases = [
+    ["T2", "lịch học thế nào"],
+    ["T3", "bao giờ học"],
+    ["T4", "học ngày nào"],
+    ["T5", "mấy giờ học"],
+  ];
+  for (const [id, query] of cases) {
+    const result = focusedResult(query);
+    assert.ok(focusedSelected(result, focusedPrimaryScheduleId), id);
+    console.log(`${id}_CANDIDATES=${result.stats.candidateCount} ${id}_RANK=${focusedRank(result, focusedPrimaryScheduleId)} ${id}_SELECTED_CHARS=${result.stats.selectedCharCount}`);
+  }
+});
+
+await test("K29", "non-vacuous lich_zoom and buoi_hoc bridges retrieve alternate schedules", () => {
+  assert.doesNotMatch(focusedNoZoomSchedule.contentMd, /zoom/i);
+  const t6 = focusedResult("lịch Zoom", [focusedNoZoomSchedule,
+    ...focusedProceduralDistractors, ...focusedNoise]);
+  assert.ok(focusedSelected(t6, focusedNoZoomScheduleId));
+  assert.doesNotMatch(focusedSecondarySchedule.contentMd, /buổi/i);
+  const t7 = focusedResult("buổi học khi nào");
+  assert.ok(focusedSelected(t7, focusedSecondaryScheduleId));
+  console.log(`T6_CANDIDATES=${t6.stats.candidateCount} T6_RANK=${focusedRank(t6, focusedNoZoomScheduleId)} T6_SELECTED_CHARS=${t6.stats.selectedCharCount}`);
+  console.log(`T7_CANDIDATES=${t7.stats.candidateCount} T7_RANK=${focusedRank(t7, focusedSecondaryScheduleId)} T7_SELECTED_CHARS=${t7.stats.selectedCharCount}`);
+});
+
+await test("K30", "new compound aliases do not create broad day, time or Zoom bias", () => {
+  for (const [id, query] of [["N1", "ngày nghỉ lễ có hỗ trợ không"], ["N2", "giờ hỗ trợ của bên mình thế nào"]]) {
+    const result = focusedResult(query);
+    assert.ok(!focusedSelected(result, focusedPrimaryScheduleId), id);
+    assert.ok(!focusedSelected(result, focusedSecondaryScheduleId), id);
+    console.log(`${id}_CANDIDATES=${result.stats.candidateCount} ${id}_SCHEDULE_SELECTED=NO`);
+  }
+  const n3 = focusedResult("Zoom bị lỗi âm thanh phải làm sao",
+    [focusedPrimarySchedule, focusedSecondarySchedule, focusedNoZoomSchedule, ...focusedNoise]);
+  assert.ok(focusedSelected(n3, focusedPrimaryScheduleId));
+  assert.ok(focusedSelected(n3, focusedSecondaryScheduleId));
+  assert.ok(!focusedSelected(n3, focusedNoZoomScheduleId));
+  console.log(`N3_CANDIDATES=${n3.stats.candidateCount} N3_NON_ZOOM_SCHEDULE_SELECTED=NO`);
+});
+
+await test("K31", "closed email lane stays intact and hoc_ngay residual is bounded", () => {
+  coherent(texts(focusedResult("Đã đăng ký nhưng chưa nhận email", baseCorpus)));
+  // Reviewed residual: baseline was 10 generic/procedural units / 11,790 chars;
+  // patched behavior is 2 schedule units / 190 chars, accepted and pinned here
+  // to prevent future uncontrolled broadening from hoc_ngay.
+  const residual = focusedResult("em học ngày mai được không ạ");
+  assert.ok(focusedSelected(residual, focusedPrimaryScheduleId));
+  assert.equal(residual.units.length, 2);
+  assert.equal(residual.stats.selectedCharCount, 190);
+  console.log(`N4_EMAIL_RETRIEVED=YES N5_CANDIDATES=${residual.stats.candidateCount} N5_SCHEDULE_SELECTED=${focusedSelected(residual, focusedPrimaryScheduleId) ? "YES" : "NO"} N5_SELECTED_CHARS=${residual.stats.selectedCharCount}`);
+});
+
+await test("K32", "new keys do not amplify the pre-existing khoa-luan projection hazard", () => {
+  const retrievalSource = source("lib/knowledge-retrieval.js");
+  for (const key of ["gio_hoc", "hoc_ngay", "lich_zoom", "buoi_hoc"]) {
+    const entry = retrievalSource.match(new RegExp(`${key}:\\s*\\[([^\\]]*)\\]`));
+    assert.ok(entry, key);
+    assert.doesNotMatch(entry[1], /thoi_khoa_bieu/);
+  }
+  const hazardNoise = Array.from({ length: 6 }, (_, i) => file(600 + i,
+    `# Chủ đề độc lập ${i}\nCây cối thiên văn địa chất ${i}.`));
+  const thesis = file(701, "# Nghiên cứu độc lập\nKhoá luận chuyên đề.");
+  const result = focusedResult("lịch học", [thesis, ...hazardNoise]);
+  const unit = result.units.find((item) => item.fileId === thesis.id);
+  assert.ok(unit);
+  assert.ok(Math.abs(unit.score - 0.8776467907313266) < 1e-12);
+  console.log(`N6_THESIS_SELECTED=YES N6_SCORE=${unit.score} N6_CANDIDATES=${result.stats.candidateCount}`);
 });
 
 await test("T14", "normal generateReply preserves baseline decision/retrieval prompt", async () => {
