@@ -60,6 +60,7 @@ function harness(initialRows = baseCorpus) {
   let attachment = "";
   let rejectMessage = false;
   let inferenceError = false;
+  let aiReply = null;
   const sessions = new Map(); const remote = new Set(); const prompts = []; const logs = []; const order = [];
   // Owner and selected IDs are enforced at the canonical SQL seam as in db.js.
   const dbSource = source("lib/db.js");
@@ -105,8 +106,8 @@ function harness(initialRows = baseCorpus) {
       if (inferenceError && !text.startsWith("# SOUL") && body.model?.modelID !== "secondary") {
         return Response.json({ info: { error: { name: "APIError", data: { message: "Rate limit", statusCode: 429 } } } });
       }
-      return Response.json({ parts: [{ type: "text", text: config.adminClarificationDecisionEnabled
-        ? "[[VIZEN_DECISION:ANSWERABLE]]\nTrả lời mô phỏng" : "Trả lời mô phỏng" }], info: {} });
+      return Response.json({ parts: [{ type: "text", text: aiReply ?? (config.adminClarificationDecisionEnabled
+        ? "[[VIZEN_DECISION:ANSWERABLE]]\nTrả lời mô phỏng" : "Trả lời mô phỏng") }], info: {} });
     },
   }, ["knowledgeLedger", "ensureSession", "buildBootstrapMessage", "markCredentialPlaneReady", "deleteSessions", "call", "sendPrompt"]);
   opencode.markCredentialPlaneReady("owner-A", ["fixture"], "fixture-directory");
@@ -130,7 +131,10 @@ function harness(initialRows = baseCorpus) {
     setHistory: (value) => { history = value; }, setAttachment: (value) => { attachment = value; },
     setRejectMessage: (value) => { rejectMessage = value; },
     setInferenceError: (value) => { inferenceError = value; },
-    turn: (query, threadId = "thread") => ai.generateReply(query, { threadId, threadType: 0, id: randomUUID() }, "owner-A", config),
+    setAiReply: (value) => { aiReply = value; },
+    turn: (query, threadId = "thread", options) => options === undefined
+      ? ai.generateReply(query, { threadId, threadType: 0, id: randomUUID() }, "owner-A", config)
+      : ai.generateReply(query, { threadId, threadType: 0, id: randomUUID() }, "owner-A", config, options),
   };
 }
 
@@ -371,7 +375,61 @@ await test("K26", "flat long document retrieves final numbered procedure with al
   assert.ok(result.stats.selectedCharCount <= 12000);
   console.log(`K26_DOCUMENT_CHARS=${document.length} K26_SELECTED_CHARS=${result.stats.selectedCharCount}`);
 });
-console.log(`K_TESTS = ${results.filter((result) => result.pass).length}/26`);
+
+await test("T14", "normal generateReply preserves baseline decision/retrieval prompt", async () => {
+  const baseline = harness();
+  const explicitEmptyOptions = harness();
+  baseline.config.adminClarificationDecisionEnabled = true;
+  explicitEmptyOptions.config.adminClarificationDecisionEnabled = true;
+  const baselineResult = await baseline.turn(query5764);
+  const comparisonResult = await explicitEmptyOptions.turn(query5764, "thread", {});
+  assert.equal(baselineResult.decisionReason, null);
+  assert.equal(comparisonResult.decisionReason, null);
+  const baselinePrompt = baseline.prompts.at(-1).text;
+  const comparisonPrompt = explicitEmptyOptions.prompts.at(-1).text;
+  assert.equal(baselinePrompt, comparisonPrompt);
+  assert.ok(baselinePrompt.startsWith("# VIZENBOT DECISION PROTOCOL"));
+  assert.doesNotMatch(baselinePrompt, /# SỬA ĐỊNH DẠNG/);
+  assert.match(baselinePrompt, /<BEGIN_KNOWLEDGE>/);
+  assert.match(baselinePrompt, /Đã đăng ký nhưng chưa nhận email/);
+  assert.deepEqual(
+    baseline.logs.find((log) => log.event === "knowledge_retrieval").detail.selectedFileIds,
+    explicitEmptyOptions.logs.find((log) => log.event === "knowledge_retrieval").detail.selectedFileIds
+  );
+});
+
+await test("T15", "corrective generateReply prepends complete mapped contract on the same session", async () => {
+  const h = harness();
+  h.config.adminClarificationDecisionEnabled = true;
+  const rawMalformedOutput = "RAW_MALFORMED_OUTPUT_MUST_NOT_APPEAR";
+  h.setAiReply(rawMalformedOutput);
+  const malformedResult = await h.turn(query5764);
+  assert.equal(malformedResult.malformedDecision, true);
+  assert.equal(malformedResult.decisionReason, "MISSING_OR_INVALID_TOKEN");
+  const firstTurnPrompt = h.prompts.at(-1);
+  h.setAiReply("[[VIZEN_DECISION:ANSWERABLE]]\nTrả lời sau khi sửa định dạng");
+  await h.turn(query5764, "thread", {
+    correctiveDecisionRetry: true,
+    decisionReason: "MISSING_OR_INVALID_TOKEN",
+  });
+  const correctiveTurnPrompt = h.prompts.at(-1);
+  const prompt = correctiveTurnPrompt.text;
+  assert.equal(correctiveTurnPrompt.sessionId, firstTurnPrompt.sessionId);
+  const ordered = ["# SỬA ĐỊNH DẠNG", "Khách CHƯA nhận được gì", "Lỗi: câu trả lời trước thiếu token quyết định ở dòng đầu tiên.",
+    "1. Dòng đầu tiên phải là CHÍNH XÁC", "2. Toàn bộ câu trả lời chỉ được có ĐÚNG MỘT token", "3. Nếu chọn ANSWERABLE",
+    "4. Nếu chọn NEED_ADMIN", "5. Giữ nguyên quyết định và nội dung", "6. KHÔNG nhắc tới lỗi định dạng",
+    "Giao thức đầy đủ được nhắc lại ngay bên dưới.", "# VIZENBOT DECISION PROTOCOL", "[TRI THỨC LIÊN QUAN", "# TIN KHÁCH HIỆN TẠI"];
+  let previous = -1;
+  for (const part of ordered) { const next = prompt.indexOf(part); assert.ok(next > previous, part); previous = next; }
+  assert.doesNotMatch(prompt, new RegExp(rawMalformedOutput));
+  assert.match(prompt, /\[\[VIZEN_DECISION:ANSWERABLE\]\]/);
+  assert.match(prompt, /Tài liệu liên quan cho câu hỏi này đã được cung cấp ở phần trước trong phiên\./);
+  const retrievalLogs = h.logs.filter((log) => log.event === "knowledge_retrieval");
+  assert.equal(retrievalLogs.length, 2);
+  assert.deepEqual(retrievalLogs[1].detail.selectedFileIds, retrievalLogs[0].detail.selectedFileIds);
+});
+
+console.log(`K_TESTS = ${results.filter((result) => result.pass).length}/${results.length}`);
 console.log(`K_TEST_FAILURES = ${results.filter((result) => !result.pass).map((result) => result.id).join(", ") || "NONE"}`);
 console.log("LIVE_AI_CALLS = 0; ZALO_SENDS = 0; NATIVE_SQLITE_REQUIRED = NO");
 if (results.some((result) => !result.pass)) process.exitCode = 1;

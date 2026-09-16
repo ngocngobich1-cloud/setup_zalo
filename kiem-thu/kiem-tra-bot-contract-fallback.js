@@ -75,14 +75,27 @@ const valid = (reply = "Trả lời bình thường") => ({
   model: "fixture/model",
   tokens: null,
 });
-const malformed = (suffix = "one") => ({
+const malformed = (suffix = "one", decisionReason = "MISSING_OR_INVALID_TOKEN") => ({
   reply: null,
   raw: `malformed-${suffix}`,
   decision: null,
+  decisionReason,
   malformedDecision: true,
   needAdmin: false,
   skipped: false,
   error: "AI decision protocol malformed: MISSING_OR_INVALID_TOKEN",
+  sessionId: "session-fixture",
+  model: "fixture/model",
+  tokens: null,
+});
+const needAdmin = () => ({
+  reply: null,
+  raw: "[[VIZEN_DECISION:NEED_ADMIN]]",
+  decision: "NEED_ADMIN",
+  malformedDecision: false,
+  needAdmin: true,
+  skipped: false,
+  error: null,
   sessionId: "session-fixture",
   model: "fixture/model",
   tokens: null,
@@ -132,8 +145,8 @@ function harness(sequence, options = {}) {
     shouldProcessCalls += 1;
     return productionShouldProcessMessage(...args);
   };
-  const generateReply = async (userMessage, messageObj, ownerUid, config) => {
-    calls.push({ userMessage, messageObj, ownerUid, config });
+  const generateReply = async (userMessage, messageObj, ownerUid, config, options) => {
+    calls.push({ userMessage, messageObj, ownerUid, config, options });
     const next = outcomes.shift();
     if (next instanceof Error) throw next;
     if (!next) throw new Error("Unexpected extra generation attempt");
@@ -164,7 +177,7 @@ function harness(sequence, options = {}) {
     }),
     MAX_AI_RETRY: 1,
     MALFORMED_DECISION_FALLBACK: FALLBACK,
-    openAdminClarification: async () => null,
+    openAdminClarification: async () => options.openAdminResult || null,
     customerMemory: {
       ducKetNeuDenLuot: async (...args) => { memory.push(args); },
     },
@@ -326,6 +339,121 @@ await test("B17", "valid config preserves normal path and deferred accounting", 
   assert.equal(fixture.calls[0].config.__deferDecisionProtocolOutcome, true);
   assert.equal(fixture.sourceConfig.__deferDecisionProtocolOutcome, undefined);
   assert.deepEqual(fixture.protocolOutcomes.map((entry) => entry.malformed), [false]);
+});
+
+await test("T1", "first valid ANSWERABLE has one call and no corrective options", async () => {
+  const fixture = harness([valid("accepted first")]);
+  assert.equal(await fixture.run(), "accepted first");
+  assert.equal(fixture.calls.length, 1);
+  assert.equal(fixture.calls[0].options, undefined);
+  assert.equal(fixture.logs.some((entry) => entry.event === "ai_output_contract_retry"), false);
+});
+
+await test("T2", "missing token retry receives structured corrective options", async () => {
+  const fixture = harness([malformed(), valid("corrected")]);
+  await fixture.run();
+  assert.deepEqual(fixture.calls[1].options, {
+    correctiveDecisionRetry: true,
+    decisionReason: "MISSING_OR_INVALID_TOKEN",
+  });
+});
+
+await test("T3", "malformed then valid ANSWERABLE returns corrected reply", async () => {
+  const fixture = harness([malformed(), valid("corrected answer")]);
+  assert.equal(await fixture.run(), "corrected answer");
+});
+
+await test("T4", "two malformed responses use existing fallback after exactly two calls", async () => {
+  const fixture = harness([malformed("first"), malformed("second")]);
+  assert.equal(await fixture.run(), FALLBACK);
+  assert.equal(fixture.calls.length, 2);
+});
+
+await test("T5", "extra marker reason is mapped and valid retry is accepted", async () => {
+  const fixture = harness([malformed("extra", "EXTRA_DECISION_MARKER_IN_BODY"), valid("accepted extra repair")]);
+  assert.equal(await fixture.run(), "accepted extra repair");
+  assert.equal(fixture.calls[1].options.decisionReason, "EXTRA_DECISION_MARKER_IN_BODY");
+  assert.match(aiSource, /Lỗi: câu trả lời trước có thêm token quyết định nằm trong phần nội dung\./);
+});
+
+await test("T6", "empty ANSWERABLE reason is mapped and valid retry is accepted", async () => {
+  const fixture = harness([malformed("empty", "ANSWERABLE_BODY_EMPTY"), valid("accepted empty repair")]);
+  assert.equal(await fixture.run(), "accepted empty repair");
+  assert.equal(fixture.calls[1].options.decisionReason, "ANSWERABLE_BODY_EMPTY");
+  assert.match(aiSource, /Lỗi: câu trả lời trước chọn ANSWERABLE nhưng không có nội dung trả lời cho khách\./);
+});
+
+await test("T7", "retry exception stops after the single corrective retry", async () => {
+  const fixture = harness([malformed(), new Error("retry failed")]);
+  assert.equal(await fixture.run(), FALLBACK);
+  assert.equal(fixture.calls.length, 2);
+  assert.equal(fixture.logs.filter((entry) => entry.event === "ai_output_contract_retry").length, 1);
+});
+
+await test("T8", "retry event is metadata-only and excludes malformed output/customer content", async () => {
+  const fixture = harness([malformed("SECRET_RAW_AI_OUTPUT"), valid()]);
+  await fixture.run("SECRET_NEW_CUSTOMER_CONTENT");
+  const retryLog = fixture.logs.find((entry) => entry.event === "ai_output_contract_retry");
+  assert.ok(retryLog);
+  assert.deepEqual({ level: retryLog.level, attempt: retryLog.detail.attempt, corrective: retryLog.detail.corrective },
+    { level: "info", attempt: 1, corrective: true });
+  assert.equal("raw" in retryLog.detail, false);
+  assert.equal("userMessage" in retryLog.detail, false);
+  assert.doesNotMatch(JSON.stringify(retryLog), /SECRET_RAW_AI_OUTPUT|SECRET_NEW_CUSTOMER_CONTENT/);
+});
+
+await test("T9", "first malformed attempt exposes no outbound-visible value", async () => {
+  const fixture = harness([malformed(), valid("only final reply")]);
+  const returned = await fixture.run();
+  assert.equal(returned, "only final reply");
+  assert.equal(fixture.logs.filter((entry) => entry.event === "ai_response").length, 1);
+});
+
+await test("T10", "only accepted retry or fallback is final and no decision marker leaks", async () => {
+  const corrected = harness([malformed(), valid("customer-safe")]);
+  const failed = harness([malformed(), malformed("again")]);
+  const correctedValue = await corrected.run();
+  const failedValue = await failed.run();
+  assert.equal(correctedValue, "customer-safe");
+  assert.equal(failedValue, FALLBACK);
+  for (const value of [correctedValue, failedValue]) {
+    assert.doesNotMatch(value, /\[\[VIZEN_DECISION:/);
+  }
+});
+
+await test("T11", "NEED_ADMIN path remains unchanged", async () => {
+  const fixture = harness([needAdmin()], { openAdminResult: { acknowledgement: "admin acknowledgement", row: { id: 7 }, opened: true } });
+  assert.equal(await fixture.run(), "admin acknowledgement");
+  assert.equal(fixture.calls.length, 1);
+  assert.equal(fixture.logs.some((entry) => entry.event === "ai_output_contract_retry"), false);
+});
+
+await test("T12", "OUT_OF_SCOPE path remains unchanged", async () => {
+  const fixture = harness([outOfScope()]);
+  assert.equal(await fixture.run(), null);
+  assert.equal(fixture.calls.length, 1);
+  assert.equal(fixture.calls[0].options, undefined);
+});
+
+await test("T13", "undefined decisionReason uses generic corrective contract without throwing", async () => {
+  const first = malformed();
+  delete first.decisionReason;
+  const fixture = harness([first, valid("generic repaired")]);
+  assert.equal(await fixture.run(), "generic repaired");
+  assert.deepEqual(fixture.calls[1].options, { correctiveDecisionRetry: true, decisionReason: undefined });
+  assert.match(aiSource, /Lỗi: câu trả lời trước không đúng khuôn dạng quyết định bắt buộc\./);
+});
+
+await test("T13b", "prototype-looking decisionReason uses generic corrective sentence", () => {
+  const constantsStart = aiSource.indexOf("const CORRECTIVE_DECISION_REASONS");
+  const builderStart = aiSource.indexOf("function buildCorrectiveRetryInstruction");
+  assert.ok(constantsStart >= 0 && builderStart > constantsStart);
+  const buildCorrectiveRetryInstruction = Function(
+    `"use strict";\n${aiSource.slice(constantsStart, builderStart)}\n${extractFunction(aiSource, "function buildCorrectiveRetryInstruction")}\nreturn buildCorrectiveRetryInstruction;`
+  )();
+  const instruction = buildCorrectiveRetryInstruction("toString");
+  assert.match(instruction, /Lỗi: câu trả lời trước không đúng khuôn dạng quyết định bắt buộc\./);
+  assert.doesNotMatch(instruction, /native code|function toString|function Object/i);
 });
 
 const failed = results.filter((result) => !result.pass);
