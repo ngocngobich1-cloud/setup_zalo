@@ -1,5 +1,5 @@
 /**
- * BOT EMAIL STATUS LOOKUP V1 — focused mock/local acceptance T1-T37 and deferred mode.
+ * BOT EMAIL STATUS LOOKUP V1 — focused mock/local acceptance T1-T45 and deferred mode.
  * No live Website, Zoho, Zalo or AI calls.
  */
 import assert from "node:assert/strict";
@@ -10,6 +10,7 @@ import * as website from "../lib/website.js";
 const aiSource = fs.readFileSync(new URL("../lib/ai-chat.js", import.meta.url), "utf8");
 const emailCheckSource = fs.readFileSync(new URL("../lib/email-check.js", import.meta.url), "utf8");
 const knowledgeSource = fs.readFileSync(new URL("../lib/knowledge-retrieval.js", import.meta.url), "utf8");
+const websiteDataSource = fs.readFileSync(new URL("../lib/website-data.js", import.meta.url), "utf8");
 const websiteEmailStatusSource = fs.readFileSync(new URL("../lib/website-email-status.js", import.meta.url), "utf8");
 const results = [];
 const websiteCalls = [];
@@ -20,6 +21,7 @@ const emailCheck = {
   capHinhTimThuZohoChoKiemThu: () => undefined,
 };
 const normalizeFixture = compileFunction(knowledgeSource, "export function normalize", {});
+const normalizePhoneFixture = compileFunction(websiteDataSource, "export function normalizePhone", {});
 const websiteEmailStatus = compileWebsiteEmailStatusModule();
 
 const secrets = new Map([
@@ -62,13 +64,15 @@ function compileWebsiteEmailStatusModule() {
     "normalize",
     "fetchWebsiteCustomerStatus",
     "getSafeWebsiteConfig",
-    `"use strict";\n${body}\nreturn { TRA_EMAIL_STATUS_MOI_GIO, capHinhLogChoKiemThu, laYKiemTraEmail, phanLoaiCustomerStatus, lookupCustomerEmailStatus };`
+    "normalizePhone",
+    `"use strict";\n${body}\nreturn { TRA_EMAIL_STATUS_MOI_GIO, capHinhLogChoKiemThu, laYKiemTraEmail, timSoDienThoaiTrongTin, phanLoaiCustomerStatus, lookupCustomerEmailStatus };`
   )(
     async (entry) => entry,
     emailCheck,
     normalizeFixture,
     website.fetchWebsiteCustomerStatus,
-    website.getSafeWebsiteConfig
+    website.getSafeWebsiteConfig,
+    normalizePhoneFixture
   );
 }
 
@@ -743,6 +747,146 @@ await test("D3", "only exact 1 enables lookup and disabled path does not parse e
   }
   assert.equal(websiteCalls.length, beforeWebsite);
 }, { lookupEnabled: false });
+
+await test("T38", "email-only request preserves the legacy string call", async () => {
+  useResponse(sentPayload());
+  const before = websiteCalls.length;
+  const result = await lookup("kiểm tra mail giúp mình abc@gmail.com", "t38");
+  assert.equal(result.outcome, "SENT");
+  assert.equal(websiteCalls.length - before, 1);
+  const url = new URL(websiteCalls.at(-1).url);
+  assert.equal(url.searchParams.get("email"), "abc@gmail.com");
+  assert.equal(url.searchParams.has("phone"), false);
+});
+
+await test("T39", "phone-only intent uses current batch and canonical 84 wire format", async () => {
+  useResponse(sentPayload());
+  for (const candidate of ["0912345678", "84912345678", "+84912345678", "0912.345.678", "0912-345-678"]) {
+    assert.deepEqual([...websiteEmailStatus.timSoDienThoaiTrongTin(`SĐT ${candidate}`)], ["84912345678"]);
+  }
+  const before = websiteCalls.length;
+  const message = privateMessage("t39", "SĐT +84 912 345 678, kiểm tra mail giúp mình");
+  message.previousHistory = "0987654321";
+  const result = await websiteEmailStatus.lookupCustomerEmailStatus({
+    userMessage: message.content, messageObj: message, ownerUid: "owner-focused", privateOneToOne: true,
+  });
+  assert.equal(result.outcome, "SENT");
+  assert.equal(websiteCalls.length - before, 1);
+  const url = new URL(websiteCalls.at(-1).url);
+  assert.equal(url.searchParams.get("phone"), "84912345678");
+  assert.equal(url.searchParams.has("email"), false);
+});
+
+await test("T40", "phone and email share one Website request with phone first", async () => {
+  useResponse(sentPayload());
+  const before = websiteCalls.length;
+  const result = await lookup("kiểm tra mail wrong@example.com SĐT 0912345678", "t40");
+  assert.equal(result.outcome, "SENT");
+  assert.equal(websiteCalls.length - before, 1);
+  const url = new URL(websiteCalls.at(-1).url);
+  assert.equal(url.search, "?phone=84912345678&email=wrong%40example.com");
+});
+
+await test("T41", "Website registered_email is the only narrow PII exception", async () => {
+  const payload = {
+    found: true,
+    customer: { id: 41, email: "must-not-leak@example.com" },
+    registered_email: "correct@example.com",
+    email_status: {
+      status: "sent",
+      sent_at: "2026-09-15T10:00:00Z",
+      delivered_at: null,
+      email_type: "confirmation",
+      template_key: null,
+      provider: null,
+      brevo_message_id: null,
+      message_id: null,
+      failure_reason_code: null,
+      tracking_started_at: null,
+    },
+  };
+  useResponse(payload);
+  const result = await lookup("wrong@example.com SĐT 0912345678 kiểm tra mail giúp mình", "t41");
+  assert.equal(result.outcome, "SENT");
+  assert.equal(result.registered_email, "correct@example.com");
+  assert.match(result.aiContext, /registered_email: correct@example\.com/);
+  for (const forbidden of ["wrong@example.com", "must-not-leak@example.com", "customer", "orders", "phone", "0912345678", "84912345678"]) {
+    assert.equal(result.aiContext.includes(forbidden), false, forbidden);
+  }
+  const harness = tryReplyHarness({ senderId: "t41-reply" });
+  harness.message.content = "wrong@example.com SĐT 0912345678 kiểm tra mail giúp mình";
+  await harness.run(harness.message.content);
+  assert.match(harness.message.__emailStatusContext, /registered_email: correct@example\.com/);
+  assert.equal(harness.generationCalls.length, 1);
+});
+
+await test("T42", "missing registered_email preserves old SENT behavior", async () => {
+  useResponse(sentPayload());
+  const result = await lookup("abc@gmail.com kiểm tra mail", "t42");
+  assert.equal(result.outcome, "SENT");
+  assert.equal(result.registered_email, undefined);
+  assert.equal(result.aiContext.includes("registered_email"), false);
+});
+
+await test("T42b", "phone-only SENT without registered_email fabricates no destination", async () => {
+  useResponse(sentPayload());
+  const result = await lookup("SĐT 0912345678 kiểm tra mail giúp mình", "t42b");
+  assert.equal(result.outcome, "SENT");
+  assert.equal(result.registered_email, undefined);
+  assert.equal(result.aiContext.includes("registered_email"), false);
+  assert.equal(result.aiContext.includes("@"), false);
+});
+
+await test("T43", "malformed or unsafe registered_email is omitted", async () => {
+  for (const value of ["bad\n@example.com", "foo@example.com#INJECTED", "foo@example.com<script>", "x".repeat(255), 42]) {
+    const payload = sentPayload();
+    payload.registered_email = value;
+    const result = websiteEmailStatus.phanLoaiCustomerStatus(payload, "abc@gmail.com");
+    assert.equal(result.outcome, "SENT");
+    assert.equal(result.registered_email, undefined);
+    assert.equal(result.aiContext.includes("registered_email"), false);
+    assert.equal(result.aiContext.includes("must-not-leak@example.com"), false);
+  }
+});
+
+await test("T44", "fragmented, long and non-phone numeric runs never trigger lookup", async () => {
+  const cases = [
+    "đơn 0912 mã 345678 kiểm tra mail giúp mình",
+    "đơn 0912 345678 kiểm tra mail giúp mình",
+    "chuyển 0912345678912 kiểm tra mail giúp mình",
+    "giá 1.500.000 kiểm tra mail giúp mình",
+    "mã đơn 0912345678912 kiểm tra mail giúp mình",
+    "ngày 09-12-2026 kiểm tra mail giúp mình",
+    "MST 0912345678 kiểm tra mail giúp mình",
+    "transaction ID: 0912345678 kiểm tra mail giúp mình",
+  ];
+  const before = websiteCalls.length;
+  for (let index = 0; index < cases.length; index += 1) {
+    const result = await lookup(cases[index], `t44-${index}`);
+    assert.equal(result.outcome, "NO_MATCH", cases[index]);
+  }
+  assert.equal(websiteCalls.length, before);
+});
+
+await test("T45", "two distinct phones need Admin without choosing either", async () => {
+  const text = "SĐT 0912345678, 0987654321 kiểm tra mail giúp mình";
+  const before = websiteCalls.length;
+  const result = await lookup(text, "t45");
+  assert.equal(result.classification, "AMBIGUOUS_PHONE");
+  assert.equal(result.outcome, "NEEDS_ADMIN");
+  assert.equal(result.adminReasonText.includes("0912345678"), false);
+  assert.equal(websiteCalls.length, before);
+  const harness = tryReplyHarness({ senderId: "t45-reply", openedResult: { opened: true, row: { id: 45 }, acknowledgement: "ACK" } });
+  harness.message.content = text;
+  assert.equal(await harness.run(text), "ACK");
+  assert.equal(harness.clarificationCalls.length, 1);
+  assert.equal(harness.generationCalls.length, 0);
+  assert.equal(websiteCalls.length, before);
+  useResponse(sentPayload());
+  const samePhone = await lookup("SĐT 0912345678 và +84912345678 kiểm tra mail", "t45-same");
+  assert.equal(samePhone.outcome, "SENT");
+  assert.equal(websiteCalls.length, before + 1);
+});
 
 const passed = results.filter((result) => result.pass).length;
 console.log(`\nBOT EMAIL STATUS LOOKUP V1: ${passed}/${results.length} PASS`);
