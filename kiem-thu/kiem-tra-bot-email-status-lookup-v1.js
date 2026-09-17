@@ -888,6 +888,51 @@ await test("T45", "two distinct phones need Admin without choosing either", asyn
   assert.equal(websiteCalls.length, before + 1);
 });
 
+await test("T46", "Website ambiguous phone response gives Admin the accurate reason", async () => {
+  const payload = {
+    found: false,
+    ambiguous: true,
+    reason: "multiple_registered_emails",
+    match_count: 3,
+    registered_email: null,
+    customer: null,
+    orders: [],
+    email_status: null,
+  };
+  useResponse(payload);
+  const text = "SĐT 0912345678 kiểm tra mail giúp mình";
+  const result = await lookup(text, "t46");
+  assert.equal(result.outcome, "NEEDS_ADMIN");
+  assert.equal(result.classification, "AMBIGUOUS_REGISTERED_EMAILS");
+  assert.equal(result.reason, "multiple_registered_emails");
+  assert.equal(result.registered_email, undefined);
+  assert.equal(result.aiContext, undefined);
+  assert.match(result.adminReasonText, /nhiều email đăng ký khác nhau/);
+  assert.doesNotMatch(result.adminReasonText, /không tìm thấy customer|0912345678|84912345678|match_count|\b3\b/);
+
+  const harness = tryReplyHarness({
+    senderId: "t46-reply",
+    openedResult: { opened: true, row: { id: 46 }, acknowledgement: "ACK" },
+  });
+  harness.message.content = text;
+  assert.equal(await harness.run(text), "ACK");
+  assert.equal(harness.clarificationCalls.length, 1);
+  assert.equal(harness.generationCalls.length, 0);
+  assert.match(harness.clarificationCalls[0].message.content, /nhiều email đăng ký khác nhau/);
+  assert.doesNotMatch(harness.clarificationCalls[0].message.content, /không tìm thấy customer/);
+
+  for (const ordinary of [
+    { found: false, ambiguous: false, email_status: null },
+    { found: false, email_status: null },
+    { found: false, ambiguous: true, reason: "unexpected", email_status: null },
+  ]) {
+    const fallback = websiteEmailStatus.phanLoaiCustomerStatus(ordinary, null, "84912345678");
+    assert.equal(fallback.outcome, "NEEDS_ADMIN");
+    assert.equal(fallback.classification, "FOUND_FALSE");
+    assert.match(fallback.adminReasonText, /không tìm thấy customer/);
+  }
+});
+
 const passed = results.filter((result) => result.pass).length;
 console.log(`\nBOT EMAIL STATUS LOOKUP V1: ${passed}/${results.length} PASS`);
 if (passed !== results.length) process.exitCode = 1;
