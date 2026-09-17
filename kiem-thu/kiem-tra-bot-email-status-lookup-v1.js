@@ -1,5 +1,5 @@
 /**
- * BOT EMAIL STATUS LOOKUP V1 — focused mock/local acceptance T1-T37.
+ * BOT EMAIL STATUS LOOKUP V1 — focused mock/local acceptance T1-T37 and deferred mode.
  * No live Website, Zoho, Zalo or AI calls.
  */
 import assert from "node:assert/strict";
@@ -297,14 +297,20 @@ function generateReplyHarness() {
   return { generateReply, config, prompt: () => prompt };
 }
 
-async function test(id, description, operation) {
+async function test(id, description, operation, { lookupEnabled = true } = {}) {
+  const previous = process.env.VIZEN_EMAIL_STATUS_LOOKUP_ENABLED;
   try {
+    if (lookupEnabled) process.env.VIZEN_EMAIL_STATUS_LOOKUP_ENABLED = "1";
+    else delete process.env.VIZEN_EMAIL_STATUS_LOOKUP_ENABLED;
     await operation();
     results.push({ id, pass: true });
     console.log(`PASS ${id} ${description}`);
   } catch (error) {
     results.push({ id, pass: false });
     console.error(`FAIL ${id} ${description}\n${error.stack || error.message}`);
+  } finally {
+    if (previous === undefined) delete process.env.VIZEN_EMAIL_STATUS_LOOKUP_ENABLED;
+    else process.env.VIZEN_EMAIL_STATUS_LOOKUP_ENABLED = previous;
   }
 }
 
@@ -697,6 +703,46 @@ await test("T37", "contradictory not_tracked plus sent_at fails safe as SOURCE_E
   assert.equal(harness.generationCalls.length, 0);
   assert.equal(harness.message.__emailStatusContext, undefined);
 });
+
+await test("D1", "default disabled email intent continues canonical AI without Website or Admin", async () => {
+  useResponse(sentPayload());
+  const beforeWebsite = websiteCalls.length;
+  assert.deepEqual(await lookup("kiểm tra email abc@gmail.com", "d1-direct"),
+    { outcome: "NO_MATCH", reason: "DEFERRED" });
+  const harness = tryReplyHarness({ senderId: "d1", generatedResult: validReply("AI bình thường") });
+  assert.equal(await harness.run(), "AI bình thường");
+  assert.equal(websiteCalls.length, beforeWebsite);
+  assert.equal(harness.clarificationCalls.length, 0);
+  assert.equal(harness.generationCalls.length, 1);
+  assert.equal(harness.message.__emailStatusContext, undefined);
+}, { lookupEnabled: false });
+
+await test("D2", "configured but unverified Website has zero Email effect while disabled", async () => {
+  const previousVerified = secrets.get("website_connection_verified");
+  secrets.set("website_connection_verified", "");
+  try {
+    const beforeWebsite = websiteCalls.length;
+    const harness = tryReplyHarness({ senderId: "d2", generatedResult: validReply("AI bình thường") });
+    assert.equal(await harness.run(), "AI bình thường");
+    assert.equal(websiteCalls.length, beforeWebsite);
+    assert.equal(harness.clarificationCalls.length, 0);
+    assert.equal(harness.generationCalls.length, 1);
+    assert.equal(harness.message.__emailStatusContext, undefined);
+  } finally {
+    secrets.set("website_connection_verified", previousVerified);
+  }
+}, { lookupEnabled: false });
+
+await test("D3", "only exact 1 enables lookup and disabled path does not parse email", async () => {
+  const beforeWebsite = websiteCalls.length;
+  for (const value of [undefined, "", "0", "false", "true", " 1 "]) {
+    if (value === undefined) delete process.env.VIZEN_EMAIL_STATUS_LOOKUP_ENABLED;
+    else process.env.VIZEN_EMAIL_STATUS_LOOKUP_ENABLED = value;
+    assert.deepEqual(await lookup(undefined, `d3-${value}`),
+      { outcome: "NO_MATCH", reason: "DEFERRED" });
+  }
+  assert.equal(websiteCalls.length, beforeWebsite);
+}, { lookupEnabled: false });
 
 const passed = results.filter((result) => result.pass).length;
 console.log(`\nBOT EMAIL STATUS LOOKUP V1: ${passed}/${results.length} PASS`);
