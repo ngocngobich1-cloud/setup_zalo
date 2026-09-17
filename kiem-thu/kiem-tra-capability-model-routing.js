@@ -857,6 +857,10 @@ await test("F3-ADMIN-GUARD", "Admin parser executes inside the primary-provider 
     resolveEffectiveModelConfig: async (saved) => saved,
     phanTichLenhAdminGia: null,
     splitModel: opencode.splitModel,
+    withGlobalAiSlot: async (_options, operation) => operation(),
+    isAiSlotTimeoutError: () => false,
+    ADMIN_AI_SLOT_WAIT_MS: 60_000,
+    ADMIN_AI_BUSY_RESPONSE: "busy",
     withOwnerCredentialReadSet: async (ownerUid, providers, operation) => {
       guardCalls += 1;
       assert.equal(ownerUid, "owner-a");

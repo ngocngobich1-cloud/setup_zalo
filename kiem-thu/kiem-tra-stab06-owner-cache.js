@@ -236,6 +236,7 @@ async function createCustomerHarness() {
         return control.runOneShot(...args);
       },
     },
+    runBackgroundAiTask: async (work) => ({ ran: true, value: await work() }),
     addLog: async () => undefined,
   };
   const importsEnd = customerSource.indexOf("/** Tran do dai ho so.");

@@ -77,6 +77,7 @@ import {
   validateRoutingConfig,
 } from "./lib/ai-model-router.js";
 import { classifyProviderFailure } from "./lib/provider-failure.js";
+import { getOwnerAiRuntimePhases } from "./lib/global-ai-limiter.js";
 import {
   clearPendingPdfConfirmationsForRule,
   parsePdfEnabled,
@@ -2057,8 +2058,16 @@ app.delete("/api/logs", async (_req, res) => {
 });
 
 io.on("connection", async (socket) => {
+  const ownerUid = String(chuHienTai() || "").trim();
   socket.emit("state", getPublicState());
-  socket.emit("threads", await listThreads(chuHienTai(), { recentOnly: true }));
+  socket.emit("threads", await listThreads(ownerUid, { recentOnly: true }));
+  for (const phase of getOwnerAiRuntimePhases(ownerUid)) {
+    socket.emit("bot_typing_status", {
+      ...phase,
+      typing: true,
+      waitingCount: phase.normalWaitingCount,
+    });
+  }
 
   // Chi vua mo app -> kiem tra duong day Zalo con song khong. Day la luoi
   // an toan cho truong hop laptop ngu day: luc dut thi app dang dong bang nen
@@ -2112,6 +2121,7 @@ server.listen(port, "0.0.0.0", async () => {
   // khong: dang nhap hong ma bo hen gio cung khong chay thi lich cua chi im lang
   // ca ngay, tren VPS thi khong ai nhin thay.
   const { batDauScheduler, capHinhScheduler } = await import("./lib/scheduler.js");
+  const { batDauDurableDispatcher } = await import("./lib/durable-message-queue.js");
   const { capHinhBaoAdmin } = await import("./lib/email-check.js");
   const { getAdminZalo } = await import("./lib/db.js");
   // Bao rieng cho nick admin. Khong dat admin thi im lang - van con tab LOG.
@@ -2156,4 +2166,7 @@ server.listen(port, "0.0.0.0", async () => {
   const { capHinhGanNhan } = await import("./lib/ai-chat.js");
   capHinhGanNhan(ganNhanZalo);
   batDauScheduler();
+  // Quet ngay sau startup, roi safety sweep 30 giay. Khong await backlog de
+  // HTTP readiness khong bi giu boi luong durable cu.
+  batDauDurableDispatcher();
 });

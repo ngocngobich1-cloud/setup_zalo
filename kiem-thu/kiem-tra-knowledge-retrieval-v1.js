@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as retrieval from "../lib/knowledge-retrieval.js";
 import * as router from "../lib/ai-model-router.js";
 import * as failure from "../lib/provider-failure.js";
@@ -53,6 +53,85 @@ function coherent(text) {
   for (const step of steps) { const at = text.indexOf(step); assert.ok(at > previous, `Missing/out-of-order: ${step}`); previous = at; }
 }
 
+const focusedPrimaryScheduleId = 901;
+const focusedSecondaryScheduleId = 902;
+const focusedNoZoomScheduleId = 903;
+const focusedPrimarySchedule = file(focusedPrimaryScheduleId, `# Phiên Aster
+Buổi 1
+03/11/2031
+20:15–21:45
+
+Buổi 2
+05/11/2031
+20:15–21:45
+
+Hình thức: Zoom`);
+const focusedSecondarySchedule = file(focusedSecondaryScheduleId, `# Phiên Boreal
+Khai giảng 04/12/2031 lúc 19:30
+Phiên tiếp theo 06/12/2031 lúc 19:30
+Hình thức: Zoom`);
+const focusedNoZoomSchedule = file(focusedNoZoomScheduleId, `# Phiên Cygnus
+Buổi 1
+07/01/2032
+18:45–20:15
+
+Buổi 2
+09/01/2032
+18:45–20:15
+
+Hình thức: Trực tuyến`);
+const focusedLongDetail = "Ghi nhận ngữ cảnh, kiểm tra dữ kiện và chuyển tiếp đúng quy trình nội bộ. ".repeat(14);
+const focusedProceduralDistractors = Array.from({ length: 16 }, (_, i) => {
+  const generic = "Em cần hỗ trợ khách và chờ trả lời. Sau đó em cần chuyển tiếp đúng bộ phận. Hỏi Coach khi thiếu dữ kiện.";
+  return file(920 + i, `# Quy trình chăm sóc ${i}\n${generic}\n${focusedLongDetail}Mã synthetic ${i}.`);
+});
+const focusedNoise = Array.from({ length: 20 }, (_, i) => file(960 + i,
+  `# Chủ đề độc lập ${i}\n${"Tư liệu nền về cây cối, thiên văn, địa chất và phương pháp phân tích. ".repeat(14)}Mã nền ${i}.`));
+const focusedCorpus = [focusedPrimarySchedule, focusedSecondarySchedule,
+  ...focusedProceduralDistractors, ...focusedNoise];
+const focusedResult = (query, corpus = focusedCorpus) => get(query, corpus);
+const focusedRank = (result, fileId) => result.units.findIndex((unit) => unit.fileId === fileId) + 1;
+const focusedSelected = (result, fileId) => focusedRank(result, fileId) > 0;
+
+// Round 2B pressure corpus: synthetic identities and timetable details only.
+const pressureScheduleId = 3001;
+const pressurePolicyId = 3002;
+const pressureDetail = "Ghi nhận nội dung trao đổi và chuyển thông tin tới bộ phận phụ trách theo quy trình. ";
+const pressureSchedule = file(pressureScheduleId, `# Phiên Orion
+Buổi 1: 08/04/2033, 19:15–20:45.
+Buổi 2: 10/04/2033, 19:15–20:45.
+Hình thức: Zoom.
+${"Nội dung minh họa về tài liệu tổng quan và chủ đề nghiên cứu. ".repeat(8)}`.trim());
+const pressurePolicy = file(pressurePolicyId, `# Hướng dẫn hỏi lịch học
+Khi khách hỏi lịch học, cần ghi nhận câu hỏi về buổi tham dự và chuyển cho nhân sự phụ trách. ${pressureDetail.repeat(9)}`);
+const pressureCompetitors = Array.from({ length: 13 }, (_, i) => file(3010 + i,
+  `# Tư vấn lịch học ${i}
+Khi khách hỏi lịch học, ghi nhận nhu cầu và chuyển thông tin cho nhân sự phụ trách. Buổi tham dự sẽ được giải thích theo quy trình. ${pressureDetail.repeat(9)}Mã ${i}.`));
+const pressureWeak = Array.from({ length: 50 }, (_, i) => file(3100 + i,
+  `# Ghi chú chủ đề ${i}\n${["Cần", "Hỏi", "Lịch"][i % 3]} ghi nhận nội dung và chuyển tiếp. ${pressureDetail.repeat(5)}Mã ${i}.`));
+const pressureNoise = Array.from({ length: 35 }, (_, i) => file(3200 + i,
+  `# Chủ đề độc lập ${i}\nCây tre phát triển trên đất phù sa và sao chổi bay quanh mặt trời.`));
+const pressureFiles = [pressurePolicy, ...pressureCompetitors, pressureSchedule, ...pressureWeak, ...pressureNoise];
+const pressureChunks = pressureFiles.flatMap(retrieval.chunkFile);
+const pressureIndex = retrieval.buildCorpusStats(pressureChunks);
+const pressureCorpus = { files: pressureFiles, chunks: pressureChunks, index: pressureIndex };
+const pressureResult = (query) => retrieval.retrieveKnowledge({ query, corpus: pressureCorpus });
+const pressureScore = (query, chunk) => retrieval.retrieveKnowledge({ query,
+  corpus: { files: pressureFiles, chunks: [chunk], index: pressureIndex } }).stats.topScore;
+const pressureScores = (query) => pressureChunks.map((chunk) => ({ chunk, score: pressureScore(query, chunk) }));
+const pressureScoreRank = (scores, target) => 1 + scores.filter((row) => row.score > target).length;
+const multiMixed = file(3301, "# Mục hỗn hợp\nBuổi thử nghiệm dùng chuyển khoản cho giao dịch mẫu.");
+const multiScheduleCapable = file(3302, "# Phiên thử nghiệm\nBuổi 1, buổi 2. Hình thức: Zoom.");
+const multiPaymentCapable = file(3303, "# Giao dịch mẫu\nChuyển khoản, CK và payment đều là phương thức mẫu.");
+const multiFiles = [multiMixed, multiScheduleCapable, multiPaymentCapable,
+  ...Array.from({ length: 7 }, (_, i) => file(3310 + i, `# Chủ đề rời ${i}\nCây tre và sao chổi là ví dụ ${i}.`))];
+const multiChunks = multiFiles.flatMap(retrieval.chunkFile);
+const multiIndex = retrieval.buildCorpusStats(multiChunks);
+const multiQuery = "lịch học thanh toán";
+const multiScore = () => retrieval.retrieveKnowledge({ query: multiQuery,
+  corpus: { files: multiFiles, chunks: [multiChunks[0]], index: multiIndex } }).stats.topScore;
+const resultFingerprint = (result) => createHash("sha256").update(JSON.stringify(result)).digest("hex");
+
 function harness(initialRows = baseCorpus) {
   let rows = initialRows;
   let reads = 0; let nextSession = 0;
@@ -60,6 +139,7 @@ function harness(initialRows = baseCorpus) {
   let attachment = "";
   let rejectMessage = false;
   let inferenceError = false;
+  let aiReply = null;
   const sessions = new Map(); const remote = new Set(); const prompts = []; const logs = []; const order = [];
   // Owner and selected IDs are enforced at the canonical SQL seam as in db.js.
   const dbSource = source("lib/db.js");
@@ -105,8 +185,8 @@ function harness(initialRows = baseCorpus) {
       if (inferenceError && !text.startsWith("# SOUL") && body.model?.modelID !== "secondary") {
         return Response.json({ info: { error: { name: "APIError", data: { message: "Rate limit", statusCode: 429 } } } });
       }
-      return Response.json({ parts: [{ type: "text", text: config.adminClarificationDecisionEnabled
-        ? "[[VIZEN_DECISION:ANSWERABLE]]\nTrả lời mô phỏng" : "Trả lời mô phỏng" }], info: {} });
+      return Response.json({ parts: [{ type: "text", text: aiReply ?? (config.adminClarificationDecisionEnabled
+        ? "[[VIZEN_DECISION:ANSWERABLE]]\nTrả lời mô phỏng" : "Trả lời mô phỏng") }], info: {} });
     },
   }, ["knowledgeLedger", "ensureSession", "buildBootstrapMessage", "markCredentialPlaneReady", "deleteSessions", "call", "sendPrompt"]);
   opencode.markCredentialPlaneReady("owner-A", ["fixture"], "fixture-directory");
@@ -130,9 +210,224 @@ function harness(initialRows = baseCorpus) {
     setHistory: (value) => { history = value; }, setAttachment: (value) => { attachment = value; },
     setRejectMessage: (value) => { rejectMessage = value; },
     setInferenceError: (value) => { inferenceError = value; },
-    turn: (query, threadId = "thread") => ai.generateReply(query, { threadId, threadType: 0, id: randomUUID(), __emailStatusContext: "EMAIL_STATUS\n" }, "owner-A", config),
+    setAiReply: (value) => { aiReply = value; },
+    turn: (query, threadId = "thread", options) => {
+      const message = { threadId, threadType: 0, id: randomUUID(), __emailStatusContext: "EMAIL_STATUS\n" };
+      return options === undefined
+        ? ai.generateReply(query, message, "owner-A", config)
+        : ai.generateReply(query, message, "owner-A", config, options);
+    },
   };
 }
+
+let baselineRetrieval; let beforeCutoffRetrieval;
+await test("R3", "Round 2B preserves baseline selections when the boosted alias chunk becomes rank 1", () => {
+  let beforeCutoffSource = source("lib/knowledge-retrieval.js").replace(/\r\n/g, "\n");
+  const undoCutoff = (repaired, previous) => {
+    assert.equal(beforeCutoffSource.split(repaired).length, 2, "cutoff repair source drift");
+    beforeCutoffSource = beforeCutoffSource.replace(repaired, previous);
+  };
+  undoCutoff(`    const baseRawScore = score;
+    const covered = original.filter((term) => chunk.tf.has(term) || queryAliases(term).some((alias) => chunk.tf.has(alias))).length;
+    const coverage = 0.5 + 0.5 * covered / (original.length || 1);
+    const baseScore = baseRawScore * coverage;
+`, "");
+  undoCutoff("    ranked.push({ chunk, score: score * coverage, baseScore });",
+    "    const covered = original.filter((term) => chunk.tf.has(term) || queryAliases(term).some((alias) => chunk.tf.has(alias))).length;\n    ranked.push({ chunk, score: score * (0.5 + 0.5 * covered / (original.length || 1)) });");
+  undoCutoff("  const cutoffReferenceScore = ranked.reduce((max, candidate) => Math.max(max, candidate.baseScore), 0);\n  const cutoffScore = cutoffReferenceScore * 0.25;",
+    "  const cutoffScore = topScore * 0.25;");
+  undoCutoff("    topScore, cutoffReferenceScore, cutoffScore, selectedUnitCount: units.length,",
+    "    topScore, cutoffScore, selectedUnitCount: units.length,");
+  const beforeCutoffBody = beforeCutoffSource.replace(/^import\s[\s\S]*?;\r?\n/gm, "").replace(/^export\s+/gm, "");
+  beforeCutoffRetrieval = Function("createHash", `"use strict";\n${beforeCutoffBody}\nreturn { retrieveKnowledge };`)(createHash);
+  // Undo only the candidate diff in memory, then prove the result is the exact HEAD blob.
+  let baselineSource = beforeCutoffSource;
+  const undo = (candidate, head) => {
+    assert.equal(baselineSource.split(candidate).length, 2, "candidate source drift");
+    baselineSource = baselineSource.replace(candidate, head);
+  };
+  undo("const ALIAS_EVIDENCE_MIN_HITS = 2;\nconst ALIAS_EVIDENCE_SCORE_MULTIPLIER = 2.0;\n", "");
+  undo("  const originalTerms = new Set(original);\n", "");
+  undo(`  const safeEvidenceByIntent = original.map((term) => {
+    const evidence = new Set();
+    for (const alias of ALIASES[term] || []) {
+      const longerPhrase = alias.split("_").length > 2;
+      for (const derived of longerPhrase ? terms(alias.replace(/_/g, " ")) : [alias]) {
+        if (!originalTerms.has(derived) && (!longerPhrase || derived.includes("_"))) evidence.add(derived);
+      }
+    }
+    return evidence;
+  }).filter((evidence) => evidence.size >= ALIAS_EVIDENCE_MIN_HITS);
+`, "");
+  undo("    let score = 0; let aliasScore = 0; let rareMatch = false;", "    let score = 0; let rareMatch = false;");
+  undo('      const contribution = weight * idf * (term.includes("_") ? BIGRAM_IDF_MULTIPLIER : 1)',
+    '      score += weight * idf * (term.includes("_") ? BIGRAM_IDF_MULTIPLIER : 1)');
+  undo("      score += contribution;\n      if (!originalTerms.has(term)) aliasScore += contribution;\n", "");
+  undo(`    if (safeEvidenceByIntent.some((evidence) => {
+      let hits = 0;
+      for (const term of evidence) if (chunk.tf.has(term) && ++hits >= ALIAS_EVIDENCE_MIN_HITS) return true;
+      return false;
+    })) score += aliasScore * (ALIAS_EVIDENCE_SCORE_MULTIPLIER - 1.0);
+`, "");
+  const gitBlob = createHash("sha1").update(`blob ${Buffer.byteLength(baselineSource)}\0`)
+    .update(baselineSource).digest("hex");
+  assert.equal(gitBlob, "beec8767afbbf30dbef8820c578c1d30f73108bd", "HEAD baseline blob mismatch");
+  const baselineBody = baselineSource.replace(/^import\s[\s\S]*?;\r?\n/gm, "").replace(/^export\s+/gm, "");
+  baselineRetrieval = Function("createHash", `"use strict";\n${baselineBody}\nreturn { retrieveKnowledge };`)(createHash);
+
+  const boostedId = 3404;
+  const query = "lịch học";
+  const rows = [
+    file(3401, `# Thông báo\nLịch học mẫu được thông báo khi học viên đăng ký. ${"Thông tin ghi nhận quy trình tư vấn theo mẫu. ".repeat(2)}`),
+    file(3402, "# Kế hoạch học\nHọc viên cần xác nhận lịch tham gia lớp thử nghiệm."),
+    file(boostedId, "# Thông tin buổi thử nghiệm\nBuổi 1: 08/04/2033 lúc 19:15. Buổi 2: 10/04/2033 lúc 19:15. Hình thức: Zoom."),
+    file(3405, "# Lịch đăng ký\nLịch tiếp nhận sẽ gửi tới người đăng ký."),
+    file(3406, "# Nội dung học\nHọc liệu được mở theo giai đoạn."),
+    ...Array.from({ length: 8 }, (_, i) => file(3410 + i,
+      `# Ghi chú ${i}\nCây tre phát triển trên đất phù sa và sao chổi quay quanh mặt trời.`)),
+  ];
+  const chunks = rows.flatMap(retrieval.chunkFile);
+  const index = retrieval.buildCorpusStats(chunks);
+  const corpus = { files: rows, chunks, index };
+  const baselineResult = baselineRetrieval.retrieveKnowledge({ query, corpus });
+  const patchedResult = retrieval.retrieveKnowledge({ query, corpus });
+  const score = (engine, chunk) => engine.retrieveKnowledge({ query,
+    corpus: { files: rows, chunks: [chunk], index } }).stats.topScore;
+  const scores = chunks.map((chunk) => ({ id: chunk.fileId,
+    before: score(baselineRetrieval, chunk), after: score(retrieval, chunk) }));
+  const boosted = scores.find((row) => row.id === boostedId);
+  const baselineRank = 1 + scores.filter((row) => row.before > boosted.before).length;
+  const patchedRank = 1 + scores.filter((row) => row.after > boosted.after).length;
+  const baselineIds = baselineResult.units.map((unit) => unit.fileId);
+  const patchedIds = patchedResult.units.map((unit) => unit.fileId);
+  assert.ok(rows.reduce((total, row) => total + row.contentMd.length, 0) < 12000, "no 12K displacement");
+  assert.ok(baselineIds.length > 1, "baseline must select multiple units");
+  assert.ok(baselineRank > 1 && patchedRank === 1, "boosted chunk must become score rank 1");
+  assert.ok(boosted.after > boosted.before, "Round 2B gate must activate");
+  assert.equal(patchedResult.stats.cutoffReferenceScore, baselineResult.stats.topScore);
+  assert.equal(patchedResult.stats.cutoffScore, baselineResult.stats.cutoffScore);
+  for (const id of baselineIds.filter((id) => id !== boostedId)) {
+    const row = scores.find((item) => item.id === id);
+    assert.equal(row.after, row.before, `unchanged relevance for ${id}`);
+    assert.ok(row.before >= baselineResult.stats.cutoffScore, `baseline relevance for ${id}`);
+  }
+  console.log(`R3_BASELINE_TOP_SCORE=${baselineResult.stats.topScore} BASELINE_CUTOFF=${baselineResult.stats.cutoffScore} BASELINE_SELECTED_IDS=${JSON.stringify(baselineIds)}`);
+  console.log(`R3_PATCHED_TOP_SCORE=${patchedResult.stats.topScore} CUTOFF_REFERENCE_SCORE=${patchedResult.stats.cutoffReferenceScore} PATCHED_CUTOFF=${patchedResult.stats.cutoffScore} PATCHED_SELECTED_IDS=${JSON.stringify(patchedIds)}`);
+  console.log(`R3_BOOSTED_BASELINE_RANK=${baselineRank} BOOSTED_PATCHED_RANK=${patchedRank} TOTAL_CORPUS_CHARS=${rows.reduce((total, row) => total + row.contentMd.length, 0)}`);
+  assert.ok(baselineIds.every((id) => patchedIds.includes(id)), "CUTOFF_COUPLING_REGRESSION");
+});
+if (!results.at(-1).pass) { console.log("CUTOFF_COUPLING_REGRESSION"); process.exit(1); }
+
+const cutoffCase = (scheduleDetailCount) => {
+  const policy = file(3500, `# Hướng dẫn hỏi lịch học
+Khi khách hỏi lịch học, cần ghi nhận câu hỏi về buổi tham dự và chuyển cho nhân sự phụ trách. ${pressureDetail.repeat(9)}`);
+  const schedule = file(3501, `# Phiên Orion
+Buổi 1: 08/04/2033, 19:15–20:45.
+Buổi 2: 10/04/2033, 19:15–20:45.
+Hình thức: Zoom.
+${"Nội dung minh họa về tài liệu tổng quan và chủ đề nghiên cứu. ".repeat(scheduleDetailCount)}`);
+  const noise = Array.from({ length: 25 }, (_, i) => file(3600 + i,
+    `# Chủ đề độc lập ${i}\nCây tre phát triển trên đất phù sa và sao chổi bay quanh mặt trời.`));
+  const files = [policy, schedule, ...noise];
+  const chunks = files.flatMap(retrieval.chunkFile);
+  return { files, chunks, index: retrieval.buildCorpusStats(chunks) };
+};
+const isolatedScore = (engine, query, corpus, fileId) => engine.retrieveKnowledge({ query,
+  corpus: { files: corpus.files, chunks: [corpus.chunks.find((chunk) => chunk.fileId === fileId)], index: corpus.index } }).stats.topScore;
+
+await test("T1_NO_BOOST", "cutoff repair leaves unboosted output and scores unchanged", () => {
+  const rows = [file(3510, "# Lịch học\nLịch học dự kiến được thông báo sau khi đăng ký."),
+    file(3511, "# Lịch đăng ký\nLịch tiếp nhận sẽ gửi cho người đăng ký."),
+    noise(3512)];
+  const query = "lịch học";
+  const baseline = baselineRetrieval.retrieveKnowledge({ query, corpus: rows });
+  const repaired = retrieval.retrieveKnowledge({ query, corpus: rows });
+  const { cutoffReferenceScore, ...repairedStats } = repaired.stats;
+  assert.deepEqual(repaired.units, baseline.units);
+  assert.deepEqual(repairedStats, baseline.stats);
+  assert.equal(cutoffReferenceScore, baseline.stats.topScore);
+  assert.equal(repaired.stats.cutoffScore, baseline.stats.cutoffScore);
+  console.log(`T1_OUTPUT_IDENTICAL=YES TOP_SCORE=${repaired.stats.topScore} CUTOFF=${repaired.stats.cutoffScore}`);
+});
+
+await test("T2_BOOST_TOP1_UNCHANGED", "policy stays top while schedule boost keeps baseline cutoff", () => {
+  const query = "chị cần hỏi lịch học"; const corpus = cutoffCase(8);
+  const baseline = baselineRetrieval.retrieveKnowledge({ query, corpus });
+  const repaired = retrieval.retrieveKnowledge({ query, corpus });
+  const scheduleBefore = isolatedScore(baselineRetrieval, query, corpus, 3501);
+  const scheduleAfter = isolatedScore(retrieval, query, corpus, 3501);
+  assert.equal(baseline.units[0].fileId, 3500);
+  assert.equal(repaired.units[0].fileId, 3500);
+  assert.equal(repaired.stats.topScore, baseline.stats.topScore);
+  assert.equal(repaired.stats.cutoffReferenceScore, baseline.stats.topScore);
+  assert.equal(repaired.stats.cutoffScore, baseline.stats.cutoffScore);
+  assert.ok(scheduleAfter > scheduleBefore);
+  assert.ok(repaired.units.some((unit) => unit.fileId === 3501));
+  console.log(`T2_TOP_SCORE=${repaired.stats.topScore} CUTOFF=${repaired.stats.cutoffScore} SCHEDULE_BEFORE=${scheduleBefore} AFTER=${scheduleAfter}`);
+});
+
+await test("T4_OWN_UPLIFT", "candidate crosses baseline cutoff using its own approved boost", () => {
+  const query = "chị cần hỏi lịch học"; const corpus = cutoffCase(8);
+  const baseline = baselineRetrieval.retrieveKnowledge({ query, corpus });
+  const repaired = retrieval.retrieveKnowledge({ query, corpus });
+  const baseScore = isolatedScore(baselineRetrieval, query, corpus, 3501);
+  const rankingScore = isolatedScore(retrieval, query, corpus, 3501);
+  assert.ok(baseScore < baseline.stats.cutoffScore);
+  assert.ok(rankingScore >= baseline.stats.cutoffScore);
+  assert.ok(!baseline.units.some((unit) => unit.fileId === 3501));
+  assert.ok(repaired.units.some((unit) => unit.fileId === 3501));
+  console.log(`T4_BASE_SCORE=${baseScore} RANKING_SCORE=${rankingScore} BASELINE_CUTOFF=${baseline.stats.cutoffScore} CROSSES_CUTOFF=YES SELECTED=YES`);
+});
+
+await test("T5_STILL_BELOW", "approved boost below baseline cutoff remains excluded", () => {
+  const query = "chị cần hỏi lịch học"; const corpus = cutoffCase(12);
+  const baseline = baselineRetrieval.retrieveKnowledge({ query, corpus });
+  const repaired = retrieval.retrieveKnowledge({ query, corpus });
+  const baseScore = isolatedScore(baselineRetrieval, query, corpus, 3501);
+  const rankingScore = isolatedScore(retrieval, query, corpus, 3501);
+  assert.ok(rankingScore > baseScore);
+  assert.ok(rankingScore < baseline.stats.cutoffScore);
+  assert.equal(repaired.stats.cutoffScore, baseline.stats.cutoffScore);
+  assert.ok(!repaired.units.some((unit) => unit.fileId === 3501));
+  console.log(`T5_BASE_SCORE=${baseScore} RANKING_SCORE=${rankingScore} CUTOFF=${repaired.stats.cutoffScore} EXCLUDED=YES`);
+});
+
+await test("T6_BUDGET", "ranking can displace units at the unchanged 12K ceiling", () => {
+  const filler = "Thông tin ghi nhận quy trình tư vấn theo mẫu. ";
+  const relevant = Array.from({ length: 15 }, (_, i) => file(3800 + i,
+    `# Lịch học ${i}\nLịch học mẫu được thông báo khi học viên đăng ký. ${filler.repeat(20)}Mã ${i}.`));
+  const schedule = file(3404, `# Thông tin buổi thử nghiệm
+Buổi 1: 08/04/2033 lúc 19:15. Buổi 2: 10/04/2033 lúc 19:15. Hình thức: Zoom. ${"Nội dung minh họa về tài liệu tổng quan và chủ đề nghiên cứu. ".repeat(18)}`);
+  const unrelated = Array.from({ length: 20 }, (_, i) => file(3700 + i,
+    `# Ghi chú ${i}\nCây tre phát triển trên đất phù sa và sao chổi quay quanh mặt trời.`));
+  const files = [...relevant, schedule, ...unrelated];
+  const chunks = files.flatMap(retrieval.chunkFile);
+  const corpus = { files, chunks, index: retrieval.buildCorpusStats(chunks) };
+  const query = "lịch học";
+  const baseline = baselineRetrieval.retrieveKnowledge({ query, corpus });
+  const repaired = retrieval.retrieveKnowledge({ query, corpus });
+  const baselineIds = baseline.units.map((unit) => unit.fileId);
+  const repairedIds = repaired.units.map((unit) => unit.fileId);
+  assert.equal(repaired.stats.cutoffReferenceScore, baseline.stats.topScore);
+  assert.equal(repaired.stats.cutoffScore, baseline.stats.cutoffScore);
+  assert.ok(repaired.stats.selectedCharCount >= 11000 && repaired.stats.selectedCharCount <= 12000);
+  assert.notDeepEqual(repairedIds, baselineIds);
+  assert.equal(repairedIds[0], 3404);
+  assert.ok(baselineIds.some((id) => !repairedIds.includes(id)), "budget displacement fixture");
+  console.log(`T6_BASELINE_IDS=${JSON.stringify(baselineIds)} REPAIRED_IDS=${JSON.stringify(repairedIds)} CUTOFF=${repaired.stats.cutoffScore} SELECTED_CHARS=${repaired.stats.selectedCharCount}`);
+});
+
+await test("T7_RANKING_INVARIANT", "schedule ranking score and alias ratio survive cutoff repair", () => {
+  const query = "chị cần hỏi lịch học";
+  const schedule = pressureChunks.find((chunk) => chunk.fileId === pressureScheduleId);
+  const corpus = { files: pressureFiles, chunks: [schedule], index: pressureIndex };
+  const before = beforeCutoffRetrieval.retrieveKnowledge({ query, corpus }).stats.topScore;
+  const after = retrieval.retrieveKnowledge({ query, corpus }).stats.topScore;
+  const ratio = after / 5.082540331318378;
+  assert.equal(after, before);
+  assert.ok(Math.abs(ratio - 2.0) < 1e-9);
+  console.log(`T7_SCHEDULE_SCORE_BEFORE=${before} AFTER=${after} ALIAS_ONLY_RATIO=${ratio}`);
+});
 
 await test("K1", "production-derived regression simulation for case 5764", () => {
   assert.ok(procedureStart > 5000);
@@ -371,7 +666,202 @@ await test("K26", "flat long document retrieves final numbered procedure with al
   assert.ok(result.stats.selectedCharCount <= 12000);
   console.log(`K26_DOCUMENT_CHARS=${document.length} K26_SELECTED_CHARS=${result.stats.selectedCharCount}`);
 });
-console.log(`K_TESTS = ${results.filter((result) => result.pass).length}/26`);
+
+await test("K27", "Incident B schedule evidence wins real candidate and 12K budget pressure", () => {
+  const result = focusedResult("Em cần hỏi lịch học ạ");
+  const competingChars = [focusedPrimarySchedule, focusedSecondarySchedule, ...focusedProceduralDistractors]
+    .reduce((sum, row) => sum + row.contentMd.length, 0);
+  assert.equal(result.stats.corpusChunkCount, 38);
+  assert.equal(result.stats.candidateCount, 18);
+  assert.ok(competingChars > 12000);
+  assert.equal(focusedRank(result, focusedPrimaryScheduleId), 1);
+  assert.ok(focusedSelected(result, focusedPrimaryScheduleId));
+  assert.ok(result.stats.selectedCharCount > 10000);
+  assert.ok(result.stats.selectedCharCount <= 12000);
+  console.log(`T1_CANDIDATES=${result.stats.candidateCount} T1_RANK=${focusedRank(result, focusedPrimaryScheduleId)} T1_SELECTED_CHARS=${result.stats.selectedCharCount} T1_COMPETING_CHARS=${competingChars}`);
+});
+
+await test("K28", "compound schedule intents retrieve the primary evidence", () => {
+  const cases = [
+    ["T2", "lịch học thế nào"],
+    ["T3", "bao giờ học"],
+    ["T4", "học ngày nào"],
+    ["T5", "mấy giờ học"],
+  ];
+  for (const [id, query] of cases) {
+    const result = focusedResult(query);
+    assert.ok(focusedSelected(result, focusedPrimaryScheduleId), id);
+    console.log(`${id}_CANDIDATES=${result.stats.candidateCount} ${id}_RANK=${focusedRank(result, focusedPrimaryScheduleId)} ${id}_SELECTED_CHARS=${result.stats.selectedCharCount}`);
+  }
+});
+
+await test("K29", "non-vacuous lich_zoom and buoi_hoc bridges retrieve alternate schedules", () => {
+  assert.doesNotMatch(focusedNoZoomSchedule.contentMd, /zoom/i);
+  const t6 = focusedResult("lịch Zoom", [focusedNoZoomSchedule,
+    ...focusedProceduralDistractors, ...focusedNoise]);
+  assert.ok(focusedSelected(t6, focusedNoZoomScheduleId));
+  assert.doesNotMatch(focusedSecondarySchedule.contentMd, /buổi/i);
+  const t7 = focusedResult("buổi học khi nào");
+  assert.ok(focusedSelected(t7, focusedSecondaryScheduleId));
+  console.log(`T6_CANDIDATES=${t6.stats.candidateCount} T6_RANK=${focusedRank(t6, focusedNoZoomScheduleId)} T6_SELECTED_CHARS=${t6.stats.selectedCharCount}`);
+  console.log(`T7_CANDIDATES=${t7.stats.candidateCount} T7_RANK=${focusedRank(t7, focusedSecondaryScheduleId)} T7_SELECTED_CHARS=${t7.stats.selectedCharCount}`);
+});
+
+await test("K30", "new compound aliases do not create broad day, time or Zoom bias", () => {
+  for (const [id, query] of [["N1", "ngày nghỉ lễ có hỗ trợ không"], ["N2", "giờ hỗ trợ của bên mình thế nào"]]) {
+    const result = focusedResult(query);
+    assert.ok(!focusedSelected(result, focusedPrimaryScheduleId), id);
+    assert.ok(!focusedSelected(result, focusedSecondaryScheduleId), id);
+    console.log(`${id}_CANDIDATES=${result.stats.candidateCount} ${id}_SCHEDULE_SELECTED=NO`);
+  }
+  const n3 = focusedResult("Zoom bị lỗi âm thanh phải làm sao",
+    [focusedPrimarySchedule, focusedSecondarySchedule, focusedNoZoomSchedule, ...focusedNoise]);
+  assert.ok(focusedSelected(n3, focusedPrimaryScheduleId));
+  assert.ok(focusedSelected(n3, focusedSecondaryScheduleId));
+  assert.ok(!focusedSelected(n3, focusedNoZoomScheduleId));
+  console.log(`N3_CANDIDATES=${n3.stats.candidateCount} N3_NON_ZOOM_SCHEDULE_SELECTED=NO`);
+});
+
+await test("K31", "closed email lane stays intact and hoc_ngay residual is bounded", () => {
+  coherent(texts(focusedResult("Đã đăng ký nhưng chưa nhận email", baseCorpus)));
+  // Reviewed residual: baseline was 10 generic/procedural units / 11,790 chars;
+  // patched behavior is 2 schedule units / 190 chars, accepted and pinned here
+  // to prevent future uncontrolled broadening from hoc_ngay.
+  const residual = focusedResult("em học ngày mai được không ạ");
+  assert.ok(focusedSelected(residual, focusedPrimaryScheduleId));
+  assert.equal(residual.units.length, 2);
+  assert.equal(residual.stats.selectedCharCount, 190);
+  console.log(`N4_EMAIL_RETRIEVED=YES N5_CANDIDATES=${residual.stats.candidateCount} N5_SCHEDULE_SELECTED=${focusedSelected(residual, focusedPrimaryScheduleId) ? "YES" : "NO"} N5_SELECTED_CHARS=${residual.stats.selectedCharCount}`);
+});
+
+await test("K32", "new keys do not amplify the pre-existing khoa-luan projection hazard", () => {
+  const retrievalSource = source("lib/knowledge-retrieval.js");
+  for (const key of ["gio_hoc", "hoc_ngay", "lich_zoom", "buoi_hoc"]) {
+    const entry = retrievalSource.match(new RegExp(`${key}:\\s*\\[([^\\]]*)\\]`));
+    assert.ok(entry, key);
+    assert.doesNotMatch(entry[1], /thoi_khoa_bieu/);
+  }
+  const hazardNoise = Array.from({ length: 6 }, (_, i) => file(600 + i,
+    `# Chủ đề độc lập ${i}\nCây cối thiên văn địa chất ${i}.`));
+  const thesis = file(701, "# Nghiên cứu độc lập\nKhoá luận chuyên đề.");
+  const result = focusedResult("lịch học", [thesis, ...hazardNoise]);
+  const unit = result.units.find((item) => item.fileId === thesis.id);
+  assert.ok(unit);
+  assert.ok(Math.abs(unit.score - 0.8776467907313266) < 1e-12);
+  console.log(`N6_THESIS_SELECTED=YES N6_SCORE=${unit.score} N6_CANDIDATES=${result.stats.candidateCount}`);
+});
+
+const pressurePrepatch = Object.freeze({
+  policyScore: 16.296751738353475,
+  rank2Score: 11.112834894528271,
+  scheduleScore: 5.082540331318378,
+  scheduleRank: 15,
+  selectedChars: 11952,
+  multiScore: 2.051161867279502,
+  fixtureHash: "d6f44a786bedaa2d7cd5b45bec69697074a7b633060f9d3bf020c1507cde3b5d",
+});
+
+await test("K33", "Round 2B evidence gate liveness on frozen fixture", () => {
+  const query = "chị cần hỏi lịch học";
+  assert.equal(resultFingerprint(pressureFiles.map((row) => [row.id, row.contentMd])), pressurePrepatch.fixtureHash);
+  const policy = pressureChunks.find((chunk) => chunk.fileId === pressurePolicyId);
+  const schedule = pressureChunks.find((chunk) => chunk.fileId === pressureScheduleId);
+  const policyPost = pressureScore(query, policy);
+  const schedulePost = pressureScore(query, schedule);
+  const multiPost = multiScore();
+  assert.equal(policyPost, pressurePrepatch.policyScore);
+  assert.ok(Math.abs(schedulePost / pressurePrepatch.scheduleScore - 2.0) < 1e-9);
+  assert.equal(multiPost, pressurePrepatch.multiScore);
+  for (const term of [...retrieval.tokenize(query).words, ...retrieval.tokenize(query).bigrams]) {
+    assert.ok(!schedule.tf.has(term), `schedule literal term ${term}`);
+  }
+  for (const term of ["buoi", "hinh_thuc"]) assert.ok(multiChunks[1].tf.has(term));
+  for (const term of ["chuyen_khoan", "ck"]) assert.ok(multiChunks[2].tf.has(term));
+  for (const term of ["buoi", "chuyen_khoan"]) assert.ok(multiChunks[0].tf.has(term));
+  for (const term of ["hinh_thuc", "zoom", "ck", "payment"]) assert.ok(!multiChunks[0].tf.has(term));
+  console.log(`K33_POLICY_PRE=${pressurePrepatch.policyScore} POST=${policyPost} DELTA=${policyPost - pressurePrepatch.policyScore}`);
+  console.log(`K33_SCHEDULE_PRE=${pressurePrepatch.scheduleScore} POST=${schedulePost} RATIO=${schedulePost / pressurePrepatch.scheduleScore}`);
+  console.log(`K33_MULTI_PRE=${pressurePrepatch.multiScore} POST=${multiPost} DELTA=${multiPost - pressurePrepatch.multiScore}`);
+});
+
+await test("K34", "Round 2B frozen pressure fixture characterizes the competitor plateau", () => {
+  const query = "chị cần hỏi lịch học";
+  assert.equal(resultFingerprint(pressureFiles.map((row) => [row.id, row.contentMd])), pressurePrepatch.fixtureHash);
+  const result = pressureResult(query);
+  const scores = pressureScores(query);
+  const policy = scores.find((row) => row.chunk.fileId === pressurePolicyId);
+  const schedule = scores.find((row) => row.chunk.fileId === pressureScheduleId);
+  const competitors = scores.filter((row) => row.chunk.fileId >= 3010 && row.chunk.fileId <= 3022);
+  const plateau = competitors.filter((row) => row.score === pressurePrepatch.rank2Score);
+  const policyRank = pressureScoreRank(scores, policy.score);
+  const scheduleRank = pressureScoreRank(scores, schedule.score);
+  const scheduleSelectedIndex = result.units.findIndex((unit) => unit.fileId === pressureScheduleId);
+  // The 13-way plateau implies alpha > 2.186472545 for this fixture only.
+  // The exact production shadow has a different distribution and does not set alpha.
+  const crossingAlpha = pressurePrepatch.rank2Score / pressurePrepatch.scheduleScore;
+  console.log(`K34_POLICY_RANK=${policyRank} COMPETITOR_TIE_COUNT=${plateau.length} CROSSING_ALPHA=${crossingAlpha} SCHEDULE_SCORE_RANK=${scheduleRank} SCHEDULE_SELECTED_INDEX=${scheduleSelectedIndex} SELECTED_CHARS=${result.stats.selectedCharCount}`);
+  assert.equal(policyRank, 1);
+  assert.equal(plateau.length, 13);
+  assert.ok(Math.abs(crossingAlpha - 2.186473) < 1e-6);
+  assert.ok(Math.abs(schedule.score / pressurePrepatch.scheduleScore - 2.0) < 1e-9);
+  assert.equal(scheduleRank, 15);
+  assert.equal(scheduleSelectedIndex, -1);
+});
+
+await test("T14", "normal generateReply preserves baseline decision/retrieval prompt", async () => {
+  const baseline = harness();
+  const explicitEmptyOptions = harness();
+  baseline.config.adminClarificationDecisionEnabled = true;
+  explicitEmptyOptions.config.adminClarificationDecisionEnabled = true;
+  const baselineResult = await baseline.turn(query5764);
+  const comparisonResult = await explicitEmptyOptions.turn(query5764, "thread", {});
+  assert.equal(baselineResult.decisionReason, null);
+  assert.equal(comparisonResult.decisionReason, null);
+  const baselinePrompt = baseline.prompts.at(-1).text;
+  const comparisonPrompt = explicitEmptyOptions.prompts.at(-1).text;
+  assert.equal(baselinePrompt, comparisonPrompt);
+  assert.ok(baselinePrompt.startsWith("# VIZENBOT DECISION PROTOCOL"));
+  assert.doesNotMatch(baselinePrompt, /# SỬA ĐỊNH DẠNG/);
+  assert.match(baselinePrompt, /<BEGIN_KNOWLEDGE>/);
+  assert.match(baselinePrompt, /Đã đăng ký nhưng chưa nhận email/);
+  assert.deepEqual(
+    baseline.logs.find((log) => log.event === "knowledge_retrieval").detail.selectedFileIds,
+    explicitEmptyOptions.logs.find((log) => log.event === "knowledge_retrieval").detail.selectedFileIds
+  );
+});
+
+await test("T15", "corrective generateReply prepends complete mapped contract on the same session", async () => {
+  const h = harness();
+  h.config.adminClarificationDecisionEnabled = true;
+  const rawMalformedOutput = "RAW_MALFORMED_OUTPUT_MUST_NOT_APPEAR";
+  h.setAiReply(rawMalformedOutput);
+  const malformedResult = await h.turn(query5764);
+  assert.equal(malformedResult.malformedDecision, true);
+  assert.equal(malformedResult.decisionReason, "MISSING_OR_INVALID_TOKEN");
+  const firstTurnPrompt = h.prompts.at(-1);
+  h.setAiReply("[[VIZEN_DECISION:ANSWERABLE]]\nTrả lời sau khi sửa định dạng");
+  await h.turn(query5764, "thread", {
+    correctiveDecisionRetry: true,
+    decisionReason: "MISSING_OR_INVALID_TOKEN",
+  });
+  const correctiveTurnPrompt = h.prompts.at(-1);
+  const prompt = correctiveTurnPrompt.text;
+  assert.equal(correctiveTurnPrompt.sessionId, firstTurnPrompt.sessionId);
+  const ordered = ["# SỬA ĐỊNH DẠNG", "Khách CHƯA nhận được gì", "Lỗi: câu trả lời trước thiếu token quyết định ở dòng đầu tiên.",
+    "1. Dòng đầu tiên phải là CHÍNH XÁC", "2. Toàn bộ câu trả lời chỉ được có ĐÚNG MỘT token", "3. Nếu chọn ANSWERABLE",
+    "4. Nếu chọn NEED_ADMIN", "5. Giữ nguyên quyết định và nội dung", "6. KHÔNG nhắc tới lỗi định dạng",
+    "Giao thức đầy đủ được nhắc lại ngay bên dưới.", "# VIZENBOT DECISION PROTOCOL", "[TRI THỨC LIÊN QUAN", "# TIN KHÁCH HIỆN TẠI"];
+  let previous = -1;
+  for (const part of ordered) { const next = prompt.indexOf(part); assert.ok(next > previous, part); previous = next; }
+  assert.doesNotMatch(prompt, new RegExp(rawMalformedOutput));
+  assert.match(prompt, /\[\[VIZEN_DECISION:ANSWERABLE\]\]/);
+  assert.match(prompt, /Tài liệu liên quan cho câu hỏi này đã được cung cấp ở phần trước trong phiên\./);
+  const retrievalLogs = h.logs.filter((log) => log.event === "knowledge_retrieval");
+  assert.equal(retrievalLogs.length, 2);
+  assert.deepEqual(retrievalLogs[1].detail.selectedFileIds, retrievalLogs[0].detail.selectedFileIds);
+});
+
+console.log(`K_TESTS = ${results.filter((result) => result.pass).length}/${results.length}`);
 console.log(`K_TEST_FAILURES = ${results.filter((result) => !result.pass).map((result) => result.id).join(", ") || "NONE"}`);
 console.log("LIVE_AI_CALLS = 0; ZALO_SENDS = 0; NATIVE_SQLITE_REQUIRED = NO");
 if (results.some((result) => !result.pass)) process.exitCode = 1;

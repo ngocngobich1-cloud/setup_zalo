@@ -104,6 +104,7 @@ function createRuntime({ ownerUid = "owner-A", globalEnabled = true, persisted =
       return clearPendingPdfConfirmationsForThread(owner, thread);
     },
     persistAndBroadcastMessage: async (message) => message,
+    ghiNhanDurableAdmission: async ({ message }) => message,
     originConHieuLuc: () => true,
     sendChatMessage: async (payload, options) => { sends.push({ payload, options }); return { id: "auto" }; },
     sendResolvedPrivateMessage: async () => null,

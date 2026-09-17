@@ -676,7 +676,9 @@ function caseJAndIntegration() {
   assert.match(ZALO, /khiHuyTheoThread:[\s\S]*dieuPhoiHoiThoai\.huyTheoThread\(/);
   assert.match(ZALO, /khiHuyTatCa: \(\) => dieuPhoiHoiThoai\.huyTatCa\(/);
   assert.match(ZALO, /boGom\.dangBan\?\.\(/);
-  assert.match(ZALO, /conversationGeneration\.chapNhanOutbound\(\)/);
+  assert.match(ZALO, /conversationGeneration && !conversationGeneration\.giuChoOutbound\(\)/);
+  assert.match(ZALO, /conversationGeneration\?\.xacNhanOutbound\(\)/);
+  assert.match(ZALO, /conversationGeneration\?\.traLaiOutbound\(\)/);
   assert.match(ZALO, /event: "stale_outbound_skipped"/);
   assert.match(ZALO, /segment\.preAiDone = true/);
   assert.match(ZALO, /workOrTins\.staleProviderHistory/);
@@ -823,6 +825,11 @@ async function runNonPdfStaleReplayScenario({ secondId, secondSender }) {
     guiDaXemChoTins: () => {},
     thuThaCamXuc: async () => false,
     batDauGoPhim: () => () => {},
+    batDauWebTyping: () => Object.assign(() => {}, { setPhase: () => {} }),
+    durableIds: () => [],
+    giaHanLeaseDurableGeneration: async () => true,
+    cancelGlobalAiWaiter: () => false,
+    withGlobalAiSlot: async (_options, operation) => operation(),
     aiChat: {
       getConfig: () => ({ botEnabled: true }),
       tryReply: async (_content, message) => {
@@ -959,6 +966,11 @@ async function runPdfServiceScenario({ content, pending = false, staleAttempts =
     guiDaXemChoTins: () => {},
     thuThaCamXuc: async () => false,
     batDauGoPhim: () => () => {},
+    batDauWebTyping: () => Object.assign(() => {}, { setPhase: () => {} }),
+    durableIds: () => [],
+    giaHanLeaseDurableGeneration: async () => true,
+    cancelGlobalAiWaiter: () => false,
+    withGlobalAiSlot: async (_options, operation) => operation(),
     aiChat: {
       getConfig: () => ({ botEnabled: true }),
       tryReply: async () => {
