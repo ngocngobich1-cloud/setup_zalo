@@ -320,6 +320,7 @@ await test("S16", "real tryReply corrective retry reuses one visual result", asy
     layChuTaiKhoan: () => "owner-a", getConfig: () => f.config,
     shouldProcessMessage: () => true, isAiChatReady: () => true,
     describeMessage: () => ({}), addLog: async (entry) => { f.calls.logs.push(entry); },
+    websiteEmailStatus: { lookupCustomerEmailStatus: async () => ({ outcome: "NO_MATCH", reason: "DEFERRED" }) },
     generateReply: async (...args) => {
       const result = await f.generateReply(...args);
       generationCount += 1;
