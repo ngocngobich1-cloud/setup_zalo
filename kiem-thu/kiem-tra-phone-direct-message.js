@@ -939,6 +939,177 @@ async function main() {
     }), false);
   });
 
+  // --- Repair B: friend-accept bi xep nham la su kien he thong --------------
+  // Mot NEN DUY NHAT cho ca nhom action-list rieng. Moi case chi doi `params`
+  // (hoac ruot cua params); threadType/at/msgType/action/href giu nguyen, de su
+  // khac nhau ve ket qua chac chan den tu guard cua params chu khong tu luat
+  // khac nhu group.*/event.*.
+  const taoActionListRieng = (params, at = 7) => ({
+    id: "provider-msg-redacted",
+    threadId: "friend-user-redacted",
+    threadType: 0,
+    msgType: "webchat",
+    rawJson: {
+      data: {
+        at,
+        msgType: "webchat",
+        content: { action: "msginfo.actionlist", href: "", params },
+      },
+    },
+  });
+  const SIMPLE_INFOS_REDACTED = [{ uid: "friend-user-redacted", dpn: "friend-name-redacted" }];
+  const MSG_KET_BAN = {
+    vi: "%1$s đã đồng ý kết bạn với bạn.",
+    en: "%1$s is now your friend.",
+  };
+  const MSG_NHAC_VIEC = {
+    vi: "%1$s đã tạo một lời nhắc cho cuộc trò chuyện.",
+    en: "%1$s created a reminder for this conversation.",
+  };
+  // Moi fixture N8 phai chay qua day: khong duoc throw, du guard nao truot.
+  const phanLoaiAnToan = (message) => {
+    let ketQua;
+    assert.doesNotThrow(() => { ketQua = tinHeThong.laTinHeThong(message); });
+    return ketQua;
+  };
+
+  await bai("RB-P1", "friend chat.ecard CÓ href vẫn là non-system", async () => {
+    assert.equal(tinHeThong.laTinHeThong({
+      threadType: 0,
+      msgType: "chat.ecard",
+      rawJson: {
+        data: {
+          at: 0,
+          content: {
+            action: "show.profile",
+            href: "https://zalo.me/friend-user-redacted",
+            params: "{}",
+          },
+        },
+      },
+    }), false);
+  });
+
+  await bai("RB-P2", "friend-accept action-list KHÔNG href là non-system", async () => {
+    const tin = taoActionListRieng(JSON.stringify({
+      simpleInfos: SIMPLE_INFOS_REDACTED,
+      msg: MSG_KET_BAN,
+    }));
+    assert.equal(tinHeThong.laTinHeThong(tin), false);
+  });
+
+  await bai("RB-N1", "group poll vẫn là system", async () => {
+    assert.equal(tinHeThong.laTinHeThong({ msgType: "group.poll" }), true);
+  });
+
+  await bai("RB-N4", "private reminder action-list vẫn là system", async () => {
+    // Phong bi do duoc: threadType 0, msgType webchat, at 9, st 3, cmd 501.
+    const tin = taoActionListRieng(JSON.stringify({
+      msg: MSG_NHAC_VIEC,
+      highLightsV2: [],
+      iconUrl: "https://example.invalid/icon-redacted.png",
+      actions: [],
+      totalUpdateMem: 0,
+    }), 9);
+    tin.rawJson.data.st = 3;
+    tin.rawJson.data.cmd = 501;
+    assert.equal(tinHeThong.laTinHeThong(tin), true);
+  });
+
+  await bai("RB-N5", "chat.recommended vẫn là system", async () => {
+    assert.equal(tinHeThong.laTinHeThong({ msgType: "chat.recommended" }), true);
+  });
+
+  await bai("RB-N6", "tin chữ bình thường vẫn là non-system", async () => {
+    assert.equal(tinHeThong.laTinHeThong({
+      threadType: 0,
+      msgType: "chat.text",
+      content: "Chào shop, cho em hỏi giá ạ",
+    }), false);
+  });
+
+  await bai("RB-N8A", "params không phải string: giữ nguyên baseline non-system", async () => {
+    const tin = taoActionListRieng({ simpleInfos: SIMPLE_INFOS_REDACTED, msg: MSG_KET_BAN });
+    assert.equal(phanLoaiAnToan(tin), false);
+  });
+
+  await bai("RB-N8B", "params là JSON hỏng vẫn là system", async () => {
+    assert.equal(phanLoaiAnToan(taoActionListRieng('{"simpleInfos":[')), true);
+  });
+
+  await bai("RB-N8C", "params parse ra null vẫn là system", async () => {
+    assert.equal(phanLoaiAnToan(taoActionListRieng("null")), true);
+  });
+
+  await bai("RB-N8D", "params parse ra array vẫn là system", async () => {
+    assert.equal(phanLoaiAnToan(taoActionListRieng(JSON.stringify([
+      { simpleInfos: SIMPLE_INFOS_REDACTED, msg: MSG_KET_BAN },
+    ]))), true);
+  });
+
+  await bai("RB-N8E", "params thiếu msg vẫn là system", async () => {
+    assert.equal(phanLoaiAnToan(taoActionListRieng(JSON.stringify({
+      simpleInfos: SIMPLE_INFOS_REDACTED,
+    }))), true);
+  });
+
+  await bai("RB-N8F", "simpleInfos rỗng vẫn là system", async () => {
+    assert.equal(phanLoaiAnToan(taoActionListRieng(JSON.stringify({
+      simpleInfos: [],
+      msg: MSG_KET_BAN,
+    }))), true);
+  });
+
+  await bai("RB-N8G", "simpleInfos vắng mặt vẫn là system", async () => {
+    assert.equal(phanLoaiAnToan(taoActionListRieng(JSON.stringify({
+      msg: MSG_KET_BAN,
+    }))), true);
+  });
+
+  await bai("RB-N8H", "wording không phải kết bạn vẫn là system", async () => {
+    assert.equal(phanLoaiAnToan(taoActionListRieng(JSON.stringify({
+      simpleInfos: SIMPLE_INFOS_REDACTED,
+      msg: MSG_NHAC_VIEC,
+    }))), true);
+  });
+
+  await bai("RB-N8I", "msg / locale sai kiểu vẫn là system", async () => {
+    const bang = [
+      { simpleInfos: SIMPLE_INFOS_REDACTED, msg: null },
+      { simpleInfos: SIMPLE_INFOS_REDACTED, msg: "đã đồng ý kết bạn" },
+      { simpleInfos: SIMPLE_INFOS_REDACTED, msg: [MSG_KET_BAN] },
+      { simpleInfos: SIMPLE_INFOS_REDACTED, msg: { vi: 123, en: null } },
+      { simpleInfos: SIMPLE_INFOS_REDACTED, msg: { vi: {}, en: ["is now your friend"] } },
+    ];
+    for (const params of bang) {
+      assert.equal(phanLoaiAnToan(taoActionListRieng(JSON.stringify(params))), true);
+    }
+  });
+
+  await bai("RB-LOG", "đúng một dòng chẩn đoán cho mỗi lần khớp, không log nhánh trượt", async () => {
+    const goc = console.info;
+    const dong = [];
+    console.info = (...doiSo) => { dong.push(doiSo); };
+    try {
+      tinHeThong.laTinHeThong(taoActionListRieng(JSON.stringify({
+        simpleInfos: SIMPLE_INFOS_REDACTED,
+        msg: MSG_KET_BAN,
+      })));
+      assert.equal(dong.length, 1);
+      assert.equal(dong[0][0], "[tin-he-thong] friend_accept_exception");
+      assert.deepEqual(dong[0][1], { threadType: 0, at: 7 });
+      // Khong dinh danh nao lot vao chan doan.
+      assert.equal(JSON.stringify(dong).includes("redacted"), false);
+
+      dong.length = 0;
+      tinHeThong.laTinHeThong(taoActionListRieng("null"));
+      tinHeThong.laTinHeThong(taoActionListRieng(JSON.stringify({ msg: MSG_KET_BAN })));
+      assert.equal(dong.length, 0);
+    } finally {
+      console.info = goc;
+    }
+  });
+
   await bai("SE10", "phone-direct command qua boundary vẫn tạo đúng một preview", async () => {
     const thread = threadMoi("se10");
     const truoc = lookupCount;

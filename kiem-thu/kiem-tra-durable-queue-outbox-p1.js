@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import "./sqlite3-arm64-test-shim.js";
+import { normalizeIncomingMessage } from "../lib/message-utils.js";
+import { laTinHeThong as realLaTinHeThong } from "../lib/tin-he-thong.js";
 
 const THIS_FILE = fileURLToPath(import.meta.url);
 const REPO = path.resolve(path.dirname(THIS_FILE), "..");
@@ -40,7 +42,11 @@ function extractFunction(moduleSource, signature) {
   assert.fail(`Function khong dong: ${signature}`);
 }
 
-function handlerHarness({ globalEnabled = true, threadEnabled = true } = {}) {
+function handlerHarness({
+  globalEnabled = true,
+  threadEnabled = true,
+  useRealClassifier = false,
+} = {}) {
   const zalo = source("lib/zalo-service.js");
   const events = [];
   const helpers = [
@@ -68,7 +74,9 @@ function handlerHarness({ globalEnabled = true, threadEnabled = true } = {}) {
     sendResolvedPrivateMessage: async () => null,
     chuHienTai: () => "owner",
     addLog: async () => {},
-    laTinHeThong: () => false,
+    // Mac dinh giu stub cu cho cac case san co. Bat len la cam THANG classifier
+    // production vao pipeline - khong co ban sao predicate nao trong test.
+    laTinHeThong: useRealClassifier ? realLaTinHeThong : () => false,
     moTaSuKien: () => "event",
     laLenhAdmin: async () => false,
     xuLyLenh: async () => null,
@@ -2070,10 +2078,71 @@ async function worker(tempRoot) {
     assert.equal(rereadCalls, 0);
   });
 
+  // --- Repair B: classifier THAT trong pipeline, khong stub -----------------
+  // `inbound()` khong dung rawJson, ma predicate ket ban doc dung duong raw cua
+  // provider. Nen hai case duoi phai di qua normalizeIncomingMessage y nhu
+  // listener production.
+  const rawRieng = (at, params, them = {}) => ({
+    type: 0,
+    threadId: "friend-user-redacted",
+    data: {
+      at,
+      msgType: "webchat",
+      msgId: `provider-msg-redacted-${at}`,
+      uidFrom: "friend-user-redacted",
+      idTo: "owner-redacted",
+      dName: "friend-name-redacted",
+      ts: 1_700_000_000_000,
+      content: { action: "msginfo.actionlist", href: "", params },
+      ...them,
+    },
+  });
+  const demSuKien = (events, ten) => events.filter(([event]) => event === ten).length;
+
+  await regression(113, "REAL_CLASSIFIER_FRIEND_NO_HREF_REACHES_DURABLE", async () => {
+    const normalized = normalizeIncomingMessage(rawRieng(7, JSON.stringify({
+      simpleInfos: [{ uid: "friend-user-redacted", dpn: "friend-name-redacted" }],
+      msg: { vi: "%1$s đã đồng ý kết bạn với bạn.", en: "%1$s is now your friend." },
+    })));
+    // Duong raw phai song qua normalization, neu khong predicate se vo nghia.
+    assert.equal(normalized.rawJson.data.at, 7);
+    assert.equal(normalized.rawJson.data.content.href, "");
+    assert.equal(realLaTinHeThong(normalized), false);
+
+    const harness = handlerHarness({ useRealClassifier: true });
+    await harness.handle(normalized);
+    assert.deepEqual(harness.events.map(([event]) => event), ["persist", "durable", "gom"]);
+    assert.equal(demSuKien(harness.events, "persist"), 1);
+    assert.equal(demSuKien(harness.events, "durable"), 1);
+    assert.equal(demSuKien(harness.events, "gom"), 1);
+  });
+
+  await regression(114, "REAL_CLASSIFIER_PRIVATE_REMINDER_STAYS_NON_DURABLE", async () => {
+    const normalized = normalizeIncomingMessage(rawRieng(9, JSON.stringify({
+      msg: {
+        vi: "%1$s đã tạo một lời nhắc cho cuộc trò chuyện.",
+        en: "%1$s created a reminder for this conversation.",
+      },
+      highLightsV2: [],
+      iconUrl: "https://example.invalid/icon-redacted.png",
+      actions: [],
+      totalUpdateMem: 0,
+    }), { st: 3, cmd: 501 }));
+    assert.equal(realLaTinHeThong(normalized), true);
+
+    const harness = handlerHarness({ useRealClassifier: true });
+    await harness.handle(normalized);
+    // Persist van xay ra TRUOC classifier; chi durable/gom bi chan.
+    assert.deepEqual(harness.events.map(([event]) => event), ["persist"]);
+    assert.equal(demSuKien(harness.events, "persist"), 1);
+    assert.equal(demSuKien(harness.events, "durable"), 0);
+    assert.equal(demSuKien(harness.events, "gom"), 0);
+  });
+
   assert.equal(regressionFailures.length, 0, `Regression failures: ${regressionFailures.map(({ number }) => number).join(",")}`);
-  assert.equal(passed.length, 112);
-  assert.ok(Array.from({ length: 72 }, (_, index) => index + 41).every((number) => passed.includes(number)));
-  console.log("DURABLE_QUEUE_OUTBOX_P1 = 112/112 PASS");
+  assert.equal(passed.length, 114);
+  assert.ok(Array.from({ length: 74 }, (_, index) => index + 41).every((number) => passed.includes(number)));
+  console.log("DURABLE_QUEUE_OUTBOX_P1 = 114/114 PASS");
   console.log("REAL_ZALO_CALL = 0");
   console.log("REAL_LLM_CALL = 0");
   console.log("PRODUCTION_DB_TOUCHED = NO");

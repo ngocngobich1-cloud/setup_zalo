@@ -1031,6 +1031,15 @@ await test("A30", "P1 case 38: generation khong loi van settle DONE nhu cu", asy
 // Locked files + locked behaviour.
 // ---------------------------------------------------------------------------
 
+// Repair A DA commit tu truoc. Hai guard duoi do SCOPE LICH SU cua chinh Repair
+// A, khong phai working tree hien tai: doc working tree thi moi repair duoc
+// duyet VE SAU (vi du Repair B sua lib/tin-he-thong.js) deu bi bao nham la
+// Repair A pham scope. Range co dinh nen ket qua khong doi theo branch tip hay
+// theo file dang do trong may.
+const REPAIR_A_COMMIT = "c85e5d721f996f1a06dde141a594c4baac83fbf8";
+// Git tu xac dinh parent; commit nay chi co mot parent nen `^` la xac dinh.
+const REPAIR_A_PARENT = `${REPAIR_A_COMMIT}^`;
+
 await test("L1", "khong mot locked production file nao bi sua", () => {
   const locked = [
     "lib/db.js",
@@ -1043,7 +1052,7 @@ await test("L1", "khong mot locked production file nao bi sua", () => {
     "lib/gom-tin.js",
     "lib/admin-clarification.js",
   ];
-  const changed = execFileSync("git", ["diff", "--name-only", "HEAD", "--", ...locked], {
+  const changed = execFileSync("git", ["diff", "--name-only", REPAIR_A_PARENT, REPAIR_A_COMMIT, "--", ...locked], {
     cwd: REPO,
     encoding: "utf8",
   }).trim();
@@ -1051,7 +1060,7 @@ await test("L1", "khong mot locked production file nao bi sua", () => {
 });
 
 await test("L2", "production diff chi nam trong 3 file duoc phep", () => {
-  const changed = execFileSync("git", ["diff", "--name-only", "HEAD", "--", "lib", "server.js", "public"], {
+  const changed = execFileSync("git", ["diff", "--name-only", REPAIR_A_PARENT, REPAIR_A_COMMIT, "--", "lib", "server.js", "public"], {
     cwd: REPO,
     encoding: "utf8",
   }).split("\n").map((line) => line.trim()).filter(Boolean);
