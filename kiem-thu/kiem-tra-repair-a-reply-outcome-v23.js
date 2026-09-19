@@ -984,19 +984,47 @@ await test("A20d", "FAILED cua Repair A khong bao gio settle DONE", async () => 
 
 await test("A30", "P1 case 38: generation khong loi van settle DONE nhu cu", async () => {
   await withTempDb(async ({ db, queue }) => {
+    // A. Completion generic: khong failure, khong outbox -> van DONE y nhu truoc Repair A.
     const row = await durableGeneration(db, "DONE", "g-done");
     const generation = { durableGenerationKey: "g-done", durableJobIds: [row.id] };
     assert.equal(await queue.hoanTatDurableGeneration({}, generation), true);
-    assert.equal((await db.getDurableMessageJob(row.id)).status, "DONE");
+    const done = await db.getDurableMessageJob(row.id);
+    assert.equal(done.status, "DONE");
+    assert.equal(done.lastErrorCode, null, "completion sach khong duoc ghi lai error code nao");
+    assert.ok(Number(done.completedAt) > 0, "phai di dung nhanh settle DONE, khong phai nhanh khac");
+
+    // B. Field moi cua Repair A KHONG tu no bien completion hop le thanh FAILED:
+    //    co durableFailureCode nhung khong co error that -> van phai DONE.
+    //    Gate cua nhanh failure phai la error, khong phai su hien dien cua code.
+    const codeOnlyRow = await durableGeneration(db, "DONE_CODE_ONLY", "g-done-code-only");
+    const codeOnly = {
+      durableGenerationKey: "g-done-code-only",
+      durableJobIds: [codeOnlyRow.id],
+      durableFailureCode: FAILURE_CODES.INVALID_KEY,
+    };
+    assert.equal(await queue.hoanTatDurableGeneration({}, codeOnly), true);
+    const codeOnlyAfter = await db.getDurableMessageJob(codeOnlyRow.id);
+    assert.equal(codeOnlyAfter.status, "DONE", "durableFailureCode tran khong duoc chan completion hop le");
+    assert.equal(codeOnlyAfter.lastErrorCode, null, "khong co error that thi khong duoc ghi failure");
+
+    // C. allowNoOutbound VAN gate that, khong phai hang so: cung mot DB state
+    //    (khong co outbox row nao), durableOutboxPrepared = true -> KHONG duoc DONE.
+    const pendingRow = await durableGeneration(db, "OUTBOX_PENDING", "g-outbox-pending");
+    const pending = {
+      durableGenerationKey: "g-outbox-pending",
+      durableJobIds: [pendingRow.id],
+      durableOutboxPrepared: true,
+    };
+    assert.equal(await queue.hoanTatDurableGeneration({}, pending), false);
+    assert.equal(
+      (await db.getDurableMessageJob(pendingRow.id)).status,
+      "WAITING_OUTBOX",
+      "settle khong duoc bo qua bang chung outbound khi outbox da duoc chuan bi"
+    );
   });
-  // allowNoOutbound va settle semantics khong doi.
+  // Supplement tren SOURCE HIEN TAI (khong so voi HEAD/parent commit): flag settle
+  // van duoc tinh tu durableOutboxPrepared + error chu khong bi hard-code.
   assert.match(QUEUE, /allowNoOutbound: !generation\.durableOutboxPrepared && !error,/);
-  const headQueue = headSource("lib/durable-message-queue.js");
-  const chiKhacCode = QUEUE.replace(
-    /\s*\/\/ Machine code tuong minh thang viec classify lai human-readable error text\.\r?\n\s*const explicitCode = String\(generation\.durableFailureCode \|\| ""\)\.trim\(\);\r?\n\s*const code = explicitCode \|\| classifyProviderFailure\(error\);/,
-    "\n    const code = classifyProviderFailure(error);"
-  );
-  assert.ok(chuanHoaDong(chiKhacCode) === headQueue, "durable queue chi duoc khac dung mot cho");
 });
 
 // ---------------------------------------------------------------------------
