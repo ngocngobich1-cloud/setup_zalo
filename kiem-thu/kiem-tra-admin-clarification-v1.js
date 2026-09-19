@@ -186,10 +186,19 @@ async function hotfixOutbound(opened, mode = "confirmed", complete = async () =>
   const branchStart = aiChatSource.indexOf("  if (result.needAdmin) {");
   const branchEnd = aiChatSource.indexOf("\n  if (result.skipped)", branchStart);
   assert.ok(branchStart >= 0 && branchEnd > branchStart);
+  // Repair A: nhanh nay ket thuc bang bo ghi outcome cua tryReply. Slice o day
+  // chi kiem tra hanh vi outbound, nen recorder duoc thay bang dung legacy
+  // contract cu (acknowledgement hoac null) de y nghia test khong doi.
   const replyBranch = Function("openAdminClarification", "addLog", "canonicalDecisionResultLog",
+    "ketQuaAdminClarification",
     `return async (messageObj) => { const ownerUid = "owner"; const result = { needAdmin: true };
       ${aiChatSource.slice(branchStart, branchEnd)} };`
-  )(async () => opened, async (entry) => logs.push(entry), canonicalDecisionResultLog);
+  )(
+    async () => opened,
+    async (entry) => logs.push(entry),
+    canonicalDecisionResultLog,
+    (row) => row?.acknowledgement || null
+  );
   const zalo = fs.readFileSync(new URL("../lib/zalo-service.js", import.meta.url), "utf8");
   const start = zalo.indexOf("async function traLoiCumTin(");
   const end = zalo.indexOf("\nasync function handleNewIncomingMessage", start);
