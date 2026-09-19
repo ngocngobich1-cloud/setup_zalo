@@ -88,10 +88,24 @@ const khopTenTrongCau = compileFunction(ZALO, "export function khopTenTrongCau",
 });
 const chenDauA = compileFunction(ZALO, "export function chenDauA");
 
-function createHarness(members = [{ uid: "mai-anh", ten: "Mai Anh" }]) {
+const canonicalizeLeadingSpeakerMention = compileFunction(
+  ZALO,
+  "function canonicalizeLeadingSpeakerMention"
+);
+
+/**
+ * `tuyChon` cho phep doi nguoi noi / bubble dau ma khong dung toi cac case cu:
+ * mac dinh giu nguyen "Bich Ngoc" + speaker-1 + laBubbleDau=false.
+ */
+function createHarness(members = [{ uid: "mai-anh", ten: "Mai Anh" }], tuyChon = {}) {
   const filterCalls = [];
   const logs = [];
   const transports = [];
+  // Moi lan goi layThanhVien tra ve mot the `__snapshot` rieng. Nho vay co the
+  // chung minh ca hai ben (chan nhap nhang + khop ten) dung CHUNG mot ban chup,
+  // chu khong chi dem duoc so lan goi.
+  const memberLookups = [];
+  const snapshotSeenBy = { canonicalizer: [], matcher: [] };
   const baseFilter = compileFunction(ZALO, "async function locTruocKhiGui", {
     locRuotGan,
     addLog: async (entry) => {
@@ -106,12 +120,28 @@ function createHarness(members = [{ uid: "mai-anh", ten: "Mai Anh" }]) {
     return call.output;
   };
 
+  const observedLayThanhVien = async (...args) => {
+    const snapshotId = memberLookups.length + 1;
+    const snapshot = members.map((member) => ({ ...member, __snapshot: snapshotId }));
+    memberLookups.push({ args, snapshotId, snapshot });
+    return snapshot;
+  };
+  const observedCanonicalizer = (body, tenNguoiNoi, uidNguoiNoi, thanhVien) => {
+    snapshotSeenBy.canonicalizer.push(...(thanhVien || []).map((tv) => tv.__snapshot));
+    return canonicalizeLeadingSpeakerMention(body, tenNguoiNoi, uidNguoiNoi, thanhVien);
+  };
+  const observedKhopTenTrongCau = (text, ds, mentionsCoSan) => {
+    snapshotSeenBy.matcher.push(...(ds || []).map((tv) => tv.__snapshot));
+    return khopTenTrongCau(text, ds, mentionsCoSan);
+  };
+
   const prepareGroupMention = compileFunction(ZALO, "async function dungTheNhacTen", {
     chuHienTai: () => "owner-1",
     api: {},
     locTruocKhiGui: observedFilter,
-    layThanhVien: async () => members.map((member) => ({ ...member })),
-    khopTenTrongCau,
+    layThanhVien: observedLayThanhVien,
+    canonicalizeLeadingSpeakerMention: observedCanonicalizer,
+    khopTenTrongCau: observedKhopTenTrongCau,
     chenDauA,
   });
 
@@ -158,15 +188,18 @@ function createHarness(members = [{ uid: "mai-anh", ten: "Mai Anh" }]) {
   const tin = {
     threadId: "group-1",
     threadType: 1,
-    senderId: "speaker-1",
-    senderName: "Bich Ngoc",
+    senderId: tuyChon.senderId ?? "speaker-1",
+    senderName: tuyChon.senderName ?? "Bich Ngoc",
   };
   return {
     filterCalls,
     logs,
     transports,
     observedFilter,
-    prepare: (bubble, laBubbleDau = false) =>
+    tin,
+    memberLookups,
+    snapshotSeenBy,
+    prepare: (bubble, laBubbleDau = tuyChon.laBubbleDau ?? false) =>
       prepareGroupMention(bubble, tin, laBubbleDau, "owner-1", fakeApi),
     send: (payload) => sendChatMessage({
       threadId: "group-1",
@@ -274,6 +307,9 @@ test("F01-T09", "empty canonical text has no mentions and preserves empty-send f
   const harness = createHarness();
   const result = await harness.prepare(" [tool_call: bash]\n[thinking] ");
   assert.deepEqual(result, { text: "", mentions: [] });
+  // Return som phai xay ra TRUOC khi hoi danh sach thanh vien.
+  assert.equal(harness.memberLookups.length, 0);
+  console.log(`F01-T09 LAY_THANH_VIEN_CALL_COUNT=${harness.memberLookups.length}`);
   await assert.rejects(
     harness.send({ text: result.text, mentions: result.mentions }),
     /Thieu cuoc chat hoac noi dung/
@@ -364,6 +400,321 @@ test("F01-T15", "send safety gate removes internal tool lines before fake transp
   assert.doesNotMatch(finalText, /\[tool_call\b/i);
   assert.equal(harness.filterCalls.length, 1);
   console.log("F01-T15 INTERNAL_LINE_LEAK=NO");
+});
+
+/* --- BU DUPLICATE @MENTION --- */
+
+const NGUOI_KHAC = [{ uid: "khac-1", ten: "Nguyen Van B" }];
+const NOI_NGUOI_NOI = { senderId: "speaker-5", senderName: "Tran Mai Anh" };
+const NHOM_TACH_AN_TOAN = [
+  { uid: "speaker-5", ten: "Tran Mai Anh" },
+  { uid: "khac-1", ten: "Nguyen Van B" },
+];
+// Cung mot nhom, nhung cho cac case goi THANG helper voi uid nguoi noi UID-A.
+// Nguoi noi VAN nam trong danh sach de chung minh ho khong tu chan chinh minh.
+const NHOM_HELPER = [
+  { uid: "UID-A", ten: "Tran Mai Anh" },
+  { uid: "khac-1", ten: "Nguyen Van B" },
+];
+
+function goiTrucTiep(body, ten, uid, members) {
+  return canonicalizeLeadingSpeakerMention(body, ten, uid, members);
+}
+
+function proveHelper(code, body, ketQua, mongDoi) {
+  console.log(`${code} HELPER_BODY=${JSON.stringify(body)}`);
+  console.log(`${code} HELPER_RESULT=${JSON.stringify(ketQua)}`);
+  console.log(`${code} HELPER_EXPECTED=${JSON.stringify(mongDoi)}`);
+  assert.equal(ketQua, mongDoi);
+}
+
+test("DUP-P1", "baseline auto-mention is unchanged when AI writes no @", async () => {
+  const harness = createHarness(NGUOI_KHAC, { senderId: "speaker-5", senderName: "Sender" });
+  const result = await harness.prepare("Xin chào", true);
+  assert.equal(result.text, "@Sender Xin chào");
+  assert.equal(result.mentions.length, 1);
+  assert.equal(result.mentions[0].uid, "speaker-5");
+  proveMention("DUP-P1", "Xin chào", result, result.mentions[0], "@Sender");
+});
+
+test("DUP-P2", "exact AI speaker mention is not duplicated", async () => {
+  const harness = createHarness(NGUOI_KHAC, { senderId: "speaker-5", senderName: "Sender" });
+  const result = await harness.prepare("@Sender", true);
+  assert.equal(result.text, "@Sender");
+  assert.notEqual(result.text, "@Sender @Sender");
+  assert.equal(result.mentions.length, 1);
+  assert.equal(result.mentions[0].uid, "speaker-5");
+  proveMention("DUP-P2", "@Sender", result, result.mentions[0], "@Sender");
+});
+
+test("DUP-P3", "repeated exact speaker run collapses to one mention", async () => {
+  const harness = createHarness(NGUOI_KHAC, { senderId: "speaker-5", senderName: "Sender" });
+  const result = await harness.prepare("@Sender @Sender", true);
+  assert.equal(result.text, "@Sender");
+  assert.equal(result.mentions.length, 1);
+  proveMention("DUP-P3", "@Sender @Sender", result, result.mentions[0], "@Sender");
+});
+
+test("DUP-P4", "repeated speaker run keeps the remaining body intact", async () => {
+  const harness = createHarness(NGUOI_KHAC, { senderId: "speaker-5", senderName: "Sender" });
+  const result = await harness.prepare("@Sender @Sender Nội dung", true);
+  assert.equal(result.text, "@Sender Nội dung");
+  assert.equal(result.mentions.length, 1);
+  proveMention("DUP-P4", "@Sender @Sender Nội dung", result, result.mentions[0], "@Sender");
+});
+
+test("DUP-P5", "safe split representation collapses to one full canonical mention", async () => {
+  const harness = createHarness(NHOM_TACH_AN_TOAN, NOI_NGUOI_NOI);
+  const result = await harness.prepare("@Tran @Mai Anh", true);
+  assert.equal(result.text, "@Tran Mai Anh");
+  assert.equal(result.mentions.length, 1);
+  assert.equal(result.mentions[0].uid, "speaker-5");
+  proveMention("DUP-P5", "@Tran @Mai Anh", result, result.mentions[0], "@Tran Mai Anh");
+});
+
+test("DUP-P6", "split representation plus body keeps the body intact", async () => {
+  const harness = createHarness(NHOM_TACH_AN_TOAN, NOI_NGUOI_NOI);
+  const result = await harness.prepare("@Tran @Mai Anh Nội dung", true);
+  assert.equal(result.text, "@Tran Mai Anh Nội dung");
+  assert.equal(result.mentions.length, 1);
+  assert.equal(result.mentions[0].uid, "speaker-5");
+  proveMention("DUP-P6", "@Tran @Mai Anh Nội dung", result, result.mentions[0], "@Tran Mai Anh");
+});
+
+test("DUP-A1", "duplicate full display name fails narrow", () => {
+  const body = "@Tran Mai Anh Nội dung";
+  const nhapNhang = [
+    { uid: "UID-A", ten: "Tran Mai Anh" },
+    { uid: "UID-B", ten: "Tran Mai Anh" },
+  ];
+  proveHelper("DUP-A1", body, goiTrucTiep(body, "Tran Mai Anh", "UID-A", nhapNhang), body);
+
+  // Khong nhap nhang thi VAN phai don - neu khong, A1 se xanh vi ly do sai.
+  const roRang = [
+    { uid: "UID-A", ten: "Tran Mai Anh" },
+    { uid: "UID-B", ten: "Nguyen Van B" },
+  ];
+  proveHelper("DUP-A1.CTRL", body, goiTrucTiep(body, "Tran Mai Anh", "UID-A", roRang), "Nội dung");
+});
+
+test("DUP-A2", "split chunk matching another member fails narrow", () => {
+  const body = "@Tran @Mai Anh Nội dung";
+  const trungManhDau = [
+    { uid: "UID-A", ten: "Tran Mai Anh" },
+    { uid: "UID-C", ten: "Tran" },
+  ];
+  proveHelper("DUP-A2.1", body, goiTrucTiep(body, "Tran Mai Anh", "UID-A", trungManhDau), body);
+
+  const trungManhSau = [
+    { uid: "UID-A", ten: "Tran Mai Anh" },
+    { uid: "UID-D", ten: "Mai Anh" },
+  ];
+  proveHelper("DUP-A2.2", body, goiTrucTiep(body, "Tran Mai Anh", "UID-A", trungManhSau), body);
+
+  const trungTenDayDu = [
+    { uid: "UID-A", ten: "Tran Mai Anh" },
+    { uid: "UID-B", ten: "Tran Mai Anh" },
+  ];
+  proveHelper("DUP-A2.3", body, goiTrucTiep(body, "Tran Mai Anh", "UID-A", trungTenDayDu), body);
+
+  proveHelper(
+    "DUP-A2.CTRL",
+    body,
+    goiTrucTiep(body, "Tran Mai Anh", "UID-A", NHOM_HELPER),
+    "Nội dung"
+  );
+});
+
+test("DUP-N1", "leading mention of another person is never consumed", () => {
+  const body = "@Nguyen Van B Nội dung";
+  const nhom = [
+    { uid: "UID-A", ten: "Tran Mai Anh" },
+    { uid: "UID-B", ten: "Nguyen Van B" },
+  ];
+  proveHelper("DUP-N1", body, goiTrucTiep(body, "Tran Mai Anh", "UID-A", nhom), body);
+});
+
+test("DUP-N2", "mid-body speaker text is untouched", () => {
+  const body = "Nội dung @Tran Mai Anh";
+  proveHelper("DUP-N2", body, goiTrucTiep(body, "Tran Mai Anh", "UID-A", NHOM_HELPER), body);
+});
+
+test("DUP-N3", "partial split does not reconstruct the full name", () => {
+  const body = "@Tran @Mai";
+  proveHelper("DUP-N3", body, goiTrucTiep(body, "Tran Mai Anh", "UID-A", NHOM_HELPER), body);
+  proveHelper(
+    "DUP-N3.CTRL",
+    "@Tran @Mai Anh",
+    goiTrucTiep("@Tran @Mai Anh", "Tran Mai Anh", "UID-A", NHOM_HELPER),
+    ""
+  );
+});
+
+test("DUP-N4", "wrong split chunk does not reconstruct the full name", () => {
+  const body = "@Tran @Other";
+  proveHelper("DUP-N4", body, goiTrucTiep(body, "Tran Mai Anh", "UID-A", NHOM_HELPER), body);
+});
+
+test("DUP-N5", "punctuation variant is not consumed in V1", () => {
+  const body = "@Sender,";
+  const nhom = [{ uid: "UID-A", ten: "Sender" }, { uid: "UID-B", ten: "Nguyen Van B" }];
+  proveHelper("DUP-N5", body, goiTrucTiep(body, "Sender", "UID-A", nhom), body);
+  proveHelper("DUP-N5.CTRL", "@Sender", goiTrucTiep("@Sender", "Sender", "UID-A", nhom), "");
+});
+
+test("DUP-NFC", "NFD leading text matches the NFC sender name and emits the original name", async () => {
+  const tenNFC = "Nguyễn Thị Hồng";
+  const body = `${"@Nguyễn Thị Hồng".normalize("NFD")} Noi dung`;
+  assert.notEqual(body, body.normalize("NFC")); // chung minh dau vao THUC SU la NFD
+  const harness = createHarness(NGUOI_KHAC, { senderId: "speaker-nfc", senderName: tenNFC });
+  const result = await harness.prepare(body, true);
+  assert.equal(result.text, `@${tenNFC} Noi dung`);
+  assert.equal(result.text.slice(1, 1 + tenNFC.length), tenNFC); // ten goc, khong phai byte cua AI
+  assert.equal(result.mentions.length, 1);
+  assert.equal(result.mentions[0].uid, "speaker-nfc");
+  proveMention("DUP-NFC", body, result, result.mentions[0], `@${tenNFC}`);
+});
+
+test("DUP-M1", "non-empty path looks members up exactly once and reuses that snapshot", async () => {
+  const harness = createHarness(NHOM_TACH_AN_TOAN, NOI_NGUOI_NOI);
+  const result = await harness.prepare("@Tran @Mai Anh Nguyen Van B oi", true);
+  assert.equal(harness.memberLookups.length, 1);
+  console.log(`DUP-M1 LAY_THANH_VIEN_CALL_COUNT=${harness.memberLookups.length}`);
+
+  // Ca hai ben phai NHIN THAY thanh vien, va phai la CUNG mot ban chup.
+  assert.ok(harness.snapshotSeenBy.canonicalizer.length > 0);
+  assert.ok(harness.snapshotSeenBy.matcher.length > 0);
+  const banChup = new Set([
+    ...harness.snapshotSeenBy.canonicalizer,
+    ...harness.snapshotSeenBy.matcher,
+  ]);
+  console.log(`DUP-M1 SNAPSHOT_IDS=${JSON.stringify([...banChup])}`);
+  assert.deepEqual([...banChup], [1]);
+
+  assert.equal(result.text, "@Tran Mai Anh @Nguyen Van B oi");
+  assert.deepEqual(result.mentions.map((m) => m.uid), ["speaker-5", "khac-1"]);
+  proveMention("DUP-M1.1", "@Tran @Mai Anh Nguyen Van B oi", result, result.mentions[0], "@Tran Mai Anh");
+  proveMention("DUP-M1.2", "@Tran @Mai Anh Nguyen Van B oi", result, result.mentions[1], "@Nguyen Van B");
+});
+
+test("DUP-M2", "empty body returns before any member lookup", async () => {
+  const harness = createHarness(NHOM_TACH_AN_TOAN, NOI_NGUOI_NOI);
+  const result = await harness.prepare(" [tool_call: bash]\n[thinking] ", true);
+  assert.deepEqual(result, { text: "", mentions: [] });
+  assert.equal(harness.memberLookups.length, 0);
+  console.log(`DUP-M2 LAY_THANH_VIEN_CALL_COUNT=${harness.memberLookups.length}`);
+});
+
+test("DUP-N678", "trim, emoji UTF-16 and multi-target ordering survive on the bubble-dau path", async () => {
+  const harness = createHarness([
+    { uid: "mai-anh", ten: "Mai Anh" },
+    { uid: "bao-tran", ten: "Bảo Trân" },
+  ]);
+  const raw = "  🙂 Chào Mai Anh và Bảo Trân  ";
+  const result = await harness.prepare(raw, true);
+  assert.equal(result.text, "@Bich Ngoc 🙂 Chào @Mai Anh và @Bảo Trân");
+  assert.deepEqual(result.mentions.map((m) => m.uid), ["speaker-1", "mai-anh", "bao-tran"]);
+  proveMention("DUP-N678.1", raw, result, result.mentions[0], "@Bich Ngoc");
+  proveMention("DUP-N678.2", raw, result, result.mentions[1], "@Mai Anh");
+  proveMention("DUP-N678.3", raw, result, result.mentions[2], "@Bảo Trân");
+});
+
+test("DUP-X1", "fake provider receives the canonical collapsed text and one speaker mention", async () => {
+  const harness = createHarness(NHOM_TACH_AN_TOAN, NOI_NGUOI_NOI);
+  const prepared = await harness.prepare("@Tran @Mai Anh Nội dung", true);
+  await harness.send({ text: prepared.text, mentions: prepared.mentions });
+
+  const transport = harness.transports.at(-1);
+  const msg = transport.payload.msg;
+  console.log(`DUP-X1 TRANSPORT_MSG=${JSON.stringify(msg)}`);
+  console.log(`DUP-X1 TRANSPORT_MENTIONS=${JSON.stringify(transport.payload.mentions)}`);
+  assert.equal(msg, "@Tran Mai Anh Nội dung");
+  assert.equal(transport.payload.mentions.length, 1);
+  assert.equal(transport.payload.mentions[0].uid, "speaker-5");
+  const span = msg.slice(
+    transport.payload.mentions[0].pos,
+    transport.payload.mentions[0].pos + transport.payload.mentions[0].len
+  );
+  console.log(`DUP-X1 TRANSPORT_SPAN=${JSON.stringify(span)}`);
+  assert.equal(span, "@Tran Mai Anh");
+});
+
+/* --- CHO NOI: DUNG MOT U+0020 --- */
+
+// Viet bang   de so luong dau cach khong the bi mat khi format lai file.
+const SP = " ";
+const SP3 = SP + SP + SP;
+const NHOM_SENDER = [
+  { uid: "UID-A", ten: "Sender" },
+  { uid: "khac-1", ten: "Nguyen Van B" },
+];
+
+test("DUP-W1", "only the first U+0020 is consumed; extra spaces stay in the body", async () => {
+  const body = `@Sender${SP3}Nội dung`;
+
+  // Goi thang helper: chung minh DUNG MOT code unit bi an di.
+  const conLai = goiTrucTiep(body, "Sender", "UID-A", NHOM_SENDER);
+  proveHelper("DUP-W1.HELPER", body, conLai, `${SP}${SP}Nội dung`);
+  assert.equal(body.length - conLai.length, "@Sender".length + 1);
+  console.log(`DUP-W1 CONNECTOR_CODE_UNITS_CONSUMED=${body.length - conLai.length - "@Sender".length}`);
+
+  const harness = createHarness(NGUOI_KHAC, { senderId: "speaker-5", senderName: "Sender" });
+  const result = await harness.prepare(body, true);
+  assert.equal(result.text, `@Sender${SP3}Nội dung`);
+  assert.equal(result.mentions.length, 1);
+  proveMention("DUP-W1", body, result, result.mentions[0], "@Sender");
+});
+
+test("DUP-W2", "repeated run keeps the extra spaces after the final representation", async () => {
+  const body = `@Sender${SP}@Sender${SP3}Nội dung`;
+  const harness = createHarness(NGUOI_KHAC, { senderId: "speaker-5", senderName: "Sender" });
+  const result = await harness.prepare(body, true);
+  assert.equal(result.text, `@Sender${SP3}Nội dung`);
+  assert.equal(result.mentions.length, 1);
+  proveMention("DUP-W2", body, result, result.mentions[0], "@Sender");
+});
+
+test("DUP-W3", "split form keeps the extra spaces after the final chunk", async () => {
+  const body = `@Tran${SP}@Mai Anh${SP3}Nội dung`;
+  const harness = createHarness(NHOM_TACH_AN_TOAN, NOI_NGUOI_NOI);
+  const result = await harness.prepare(body, true);
+  assert.equal(result.text, `@Tran Mai Anh${SP3}Nội dung`);
+  assert.equal(result.mentions.length, 1);
+  proveMention("DUP-W3", body, result, result.mentions[0], "@Tran Mai Anh");
+});
+
+test("DUP-W4", "tab is not a connector - representation is not consumed", () => {
+  const body = "@Sender\tNội dung";
+  proveHelper("DUP-W4", body, goiTrucTiep(body, "Sender", "UID-A", NHOM_SENDER), body);
+});
+
+test("DUP-W5", "newline is not a connector - representation is not consumed", () => {
+  const body = "@Sender\nNội dung";
+  proveHelper("DUP-W5", body, goiTrucTiep(body, "Sender", "UID-A", NHOM_SENDER), body);
+});
+
+test("DUP-W6", "carriage return is not a connector - representation is not consumed", () => {
+  const body = "@Sender\rNội dung";
+  proveHelper("DUP-W6", body, goiTrucTiep(body, "Sender", "UID-A", NHOM_SENDER), body);
+});
+
+test("DUP-W7", "double space between repeated representations fails narrow", async () => {
+  const body = `@Sender${SP}${SP}@Sender${SP}Nội dung`;
+
+  // Bieu dien DAU van hop le nen van duoc nuot; cho noi la mot dau cach. Den
+  // dau cach thu hai thi hop dong khong con thoa -> dung lai NGAY tai do.
+  const conLai = goiTrucTiep(body, "Sender", "UID-A", NHOM_SENDER);
+  proveHelper("DUP-W7.HELPER", body, conLai, `${SP}@Sender${SP}Nội dung`);
+  assert.equal(conLai.includes(`${SP}${SP}`), false); // khong con dau cach doi bi nuot nham
+
+  // Toan tuyen: ung dung dat lai tien to cua minh, ket qua TRUNG KHIT dau vao.
+  // Khong nhan doi, khong gop hai dau cach thanh mot.
+  const harness = createHarness(NGUOI_KHAC, { senderId: "speaker-5", senderName: "Sender" });
+  const result = await harness.prepare(body, true);
+  console.log(`DUP-W7 FULL_PATH_FINAL=${JSON.stringify(result.text)}`);
+  assert.equal(result.text, body);
+  assert.equal(result.mentions.length, 1);
+  proveMention("DUP-W7", body, result, result.mentions[0], "@Sender");
 });
 
 async function runOriginalReproductions() {
